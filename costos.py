@@ -32,7 +32,7 @@ def mostrar_modulo_costos():
         return unidad_base
 
     def cargar_y_marcar(archivo):
-        df = pd.read_excel(archivo)
+        df = pd.read_excel(archivo, dtype=str)
         cols_upper = df.columns.astype(str).str.upper().str.replace(' ', '').str.replace('.', '')
         if not (any('COD' in c and 'PROD' in c for c in cols_upper) or any('IDPRODUCTO' in c for c in cols_upper)):
             for i in range(min(15, len(df))):
@@ -66,6 +66,14 @@ def mostrar_modulo_costos():
                 c_norm = str(col).upper().replace(' ', '').replace('.', '')
                 if all(p in c_norm for p in k): return pd.to_numeric(df[col], errors='coerce').fillna(0)
         return pd.Series(0, index=df.index)
+
+    def proteger_cuentas_nulas(df_m, fallback="SIN CUENTA REGISTRADA"):
+        """Evita que el groupby borre el dinero de los items sin cuenta asignada"""
+        if 'Cuenta_Contable' in df_m.columns:
+            df_m['Cuenta_Contable'] = df_m['Cuenta_Contable'].fillna(fallback)
+            mask = df_m['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
+            df_m.loc[mask, 'Cuenta_Contable'] = fallback
+        return df_m
 
     meses_texto = {1:"ENERO", 2:"FEBRERO", 3:"MARZO", 4:"ABRIL", 5:"MAYO", 6:"JUNIO", 7:"JULIO", 8:"AGOSTO", 9:"SEPTIEMBRE", 10:"OCTUBRE", 11:"NOVIEMBRE", 12:"DICIEMBRE"}
     lista_meses = list(meses_texto.values())
@@ -155,6 +163,11 @@ def mostrar_modulo_costos():
                             df_com_m = pd.merge(df_compras, df_dic, on='Codigo', how='left')
                             df_fin_m = pd.merge(df_final, df_dic, on='Codigo', how='left')
 
+                            # Protegemos el dinero para que no desaparezca en el groupby si falta la cuenta
+                            df_ini_m = proteger_cuentas_nulas(df_ini_m)
+                            df_com_m = proteger_cuentas_nulas(df_com_m)
+                            df_fin_m = proteger_cuentas_nulas(df_fin_m)
+
                             df_ini_m['Valor'] = get_num(df_ini_m, [['EXISTENCIAS'], ['SALDO']]) * get_num(df_ini_m, [['COSTO', 'U']])
                             df_fin_m['Valor'] = get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]) * get_num(df_fin_m, [['COSTO', 'U']])
                             df_com_m['Valor'] = get_num(df_com_m, [['TOTAL'], ['MONTO']])
@@ -168,9 +181,9 @@ def mostrar_modulo_costos():
                             todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
                             consumo_por_cuenta = {}; costo_operativo = 0.0
                             
-                            cuentas_invalidas = ["", "NAN", "NAT", "NO APLICA", "0", "0.0", "NONE"]
+                            # Solo filtramos los que DIGAN explícitamente "NO APLICA" o sean "0"
+                            cuentas_invalidas = ["NO APLICA", "0", "0.0"]
                             for cta in todas_cuentas:
-                                if pd.isna(cta): continue
                                 cta_str = str(cta).strip().upper().replace(".0", "")
                                 val = grp_ini.get(cta, 0) + grp_comp.get(cta, 0) + grp_tras.get(cta, 0) - grp_fin.get(cta, 0)
                                 if val != 0 and cta_str not in cuentas_invalidas: 
@@ -268,7 +281,7 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (RESTRICCIÓN BLINDADA POR CACHÉ)
+    # PESTAÑA 2: TRASLADOS (CON SALVAVIDAS DE CATEGORÍA)
     # ==========================================
     with tab2:
         st.subheader("🚚 Registro Automático de Traslados Nexus")
@@ -280,12 +293,12 @@ def mostrar_modulo_costos():
         with ct3:
             unidad_t = st.selectbox("Unidad que recibe (Destino):", ["CAFETERIA", "DESPENSA"], key="uni_reg")
             
-        st.info(f"💡 El sistema extraerá solo los traslados que apliquen para el módulo **{unidad_t}** y validará que no se repitan.")
+        st.info(f"💡 Se filtrarán los servicios. Si un producto válido no tiene cuenta, se agrupará por su categoría de Nexus.")
         
         arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
         if arch_t:
             try:
-                df_t_raw = pd.read_excel(arch_t, usecols="I,K,N,AA,AB,AC", names=['Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], skiprows=1)
+                df_t_raw = pd.read_excel(arch_t, usecols="I,K,N,AA,AB,AC", names=['Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], skiprows=1, dtype=str)
                 df_t_raw['Codigo'] = df_t_raw['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                 df_t_raw['Origen'] = df_t_raw['Origen'].astype(str).str.strip().str.upper()
                 df_t_raw['Destino'] = df_t_raw['Destino'].astype(str).str.strip().str.upper()
@@ -304,12 +317,20 @@ def mostrar_modulo_costos():
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                     df_f_t = pd.merge(df_validos, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
                     
-                    df_f_t = df_f_t.dropna(subset=['Cuenta_Contable'])
-                    cuentas_invalidas = ["", "NAN", "NAT", "NO APLICA", "0", "0.0", "NONE"]
+                    # SALVAVIDAS: Si no encuentra cuenta, usa el nombre de la Categoria
+                    df_f_t['Cuenta_Contable'] = df_f_t['Cuenta_Contable'].fillna(df_f_t['Categoria'])
+                    
+                    # Corrección si la base tiene vacíos puros
+                    nulos_textuales = ["", "NAN", "NAT", "NONE"]
+                    mask = df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(nulos_textuales)
+                    df_f_t.loc[mask, 'Cuenta_Contable'] = df_f_t.loc[mask, 'Categoria']
+                    
+                    # Solo eliminamos los que EXPLÍCITAMENTE dice "NO APLICA"
+                    cuentas_invalidas = ["NO APLICA", "0", "0.0"]
                     df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
                     
                     if df_f_t.empty:
-                        st.warning("⚠️ Los movimientos detectados no tienen cuentas contables asignadas válidas.")
+                        st.warning("⚠️ Todos los movimientos detectados corresponden a cuentas 'NO APLICA'.")
                     else:
                         st.success(f"✅ Se identificaron {len(df_f_t)} movimientos listos para registro en {unidad_t}.")
                         st.dataframe(df_f_t, use_container_width=True)
@@ -337,7 +358,6 @@ def mostrar_modulo_costos():
                         st.divider()
                         if st.button("💾 Guardar Traslados en Historial"):
                             with st.spinner("Validando integridad y limpiando caché..."):
-                                # EL SECRETO: Forzar a Streamlit a leer la base fresca de Google Sheets
                                 st.cache_data.clear() 
                                 df_historico = obtener_dataframe("Historico_Traslados")
                                 
@@ -369,14 +389,14 @@ def mostrar_modulo_costos():
                                         fecha_h = date.today().strftime('%d/%m/%Y')
                                         filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
                                         ws_t.append_rows(filas_t)
-                                        st.cache_data.clear() # Limpiamos de nuevo para que la pantalla se entere
+                                        st.cache_data.clear() 
                                         st.success("✅ Traslados guardados con éxito. Base actualizada.")
                                 else:
                                     ws_t = conectar_hoja("Historico_Traslados")
                                     fecha_h = date.today().strftime('%d/%m/%Y')
                                     filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
                                     ws_t.append_rows(filas_t)
-                                    st.cache_data.clear() # Limpiamos de nuevo
+                                    st.cache_data.clear() 
                                     st.success("✅ Base inicializada. Traslados guardados con éxito.")
 
             except Exception as e: st.error(f"Error: {e}")
