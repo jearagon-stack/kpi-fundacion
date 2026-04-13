@@ -12,7 +12,7 @@ def mostrar_modulo_costos():
     tab1, tab2, tab3 = st.tabs(["📝 Generar Cierre", "🚚 Partidas de Traslados", "🔍 Consultar Histórico"])
 
     # ==========================================
-    # FUNCIONES DE APOYO (RESTAURADAS AL 100%)
+    # FUNCIONES DE APOYO (INTEGRAS)
     # ==========================================
     def generar_excel_bytes(filas):
         df_p = pd.DataFrame(filas)
@@ -86,16 +86,22 @@ def mostrar_modulo_costos():
         pesos, nombres_meses = [], []
 
         if es_consolidado:
-            num_meses = st.radio("¿Dividir en cuántos meses?", [2, 3], horizontal=True)
-            st.markdown(f"**Distribución de costos para el periodo que finaliza en {meses_texto[mes_cierre]}:**")
-            cols_dist = st.columns(num_meses)
+            # CORRECCIÓN: Ahora podés elegir desde 1 hasta el número del mes seleccionado
+            num_meses = st.number_input("¿Dividir en cuántos meses?", min_value=1, max_value=mes_cierre, value=min(mes_cierre, 3))
+            
+            st.markdown(f"**Distribución de costos para el periodo de {num_meses} meses finalizando en {meses_texto[mes_cierre]}:**")
+            
+            # Usamos columnas dinámicas. Si son muchos meses, se ajustan automáticamente.
+            cols_dist = st.columns(num_meses) if num_meses <= 6 else [st.container() for _ in range(num_meses)]
+            
             for i in range(num_meses):
-                # LÓGICA CORREGIDA: Amarramos la secuencia al mes_cierre
-                # Si mes_cierre es 6 y num_meses es 3 -> i=0(Mes 4), i=1(Mes 5), i=2(Mes 6)
                 idx_sugerido = mes_cierre - (num_meses - 1) + i
-                if idx_sugerido < 1: idx_sugerido += 12 # Ajuste para años anteriores
+                if idx_sugerido < 1: idx_sugerido += 12
                 
-                with cols_dist[i]:
+                # Si hay muchas columnas, las ponemos en filas para que no se vea amontonado
+                target = cols_dist[i] if num_meses <= 6 else st
+                
+                with target:
                     n = st.selectbox(f"Mes {i+1}:", options=lista_meses, index=idx_sugerido-1, key=f"n_gen_{i}")
                     p = st.number_input(f"% Venta {n}", min_value=0.0, max_value=100.0, value=100.0/num_meses, key=f"p_gen_{i}")
                     pesos.append(p / 100); nombres_meses.append(n)
@@ -108,7 +114,6 @@ def mostrar_modulo_costos():
             df_ventas['Fecha_DT'] = pd.to_datetime(df_ventas['Fecha'], format='%d/%m/%Y', errors='coerce')
             filtro_v = (df_ventas['Fecha_DT'].dt.year == anio_cierre) & (df_ventas['Unidad'] == unidad_cierre)
             if es_consolidado:
-                # El filtro de ventas ahora toma el rango dinámico seleccionado
                 meses_indices = [list(meses_texto.keys())[list(meses_texto.values()).index(m)] for m in nombres_meses]
                 filtro_v &= df_ventas['Fecha_DT'].dt.month.isin(meses_indices)
             else:
@@ -199,7 +204,7 @@ def mostrar_modulo_costos():
                             fecha_hoy = date.today().strftime('%d/%m/%Y')
                             if ws_res and ws_det:
                                 ws_res.append_row([fecha_hoy, mes_cierre, anio_cierre, unidad_cierre, round(grp_ini.sum(),2), round(grp_comp.sum(),2), round(grp_fin.sum(),2), round(costo_diferido_anterior,2), round(costo_dif_mes,2), round(costo_real,2)])
-                                # --- Lógica de Detalle (Recuperada) ---
+                                # --- Lógica de Detalle (Audit Trail) ---
                                 df_det_c = pd.concat([df_ini_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Inicial'}),
                                                    df_com_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Compra'}),
                                                    df_fin_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Final'})]).fillna(0)
@@ -215,7 +220,7 @@ def mostrar_modulo_costos():
             except Exception as e: st.error(f"Error: {e}")
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (Mantenida)
+    # PESTAÑA 2: TRASLADOS
     # ==========================================
     with tab2:
         st.subheader("🚚 Registro de Traslados Nexus")
@@ -242,7 +247,7 @@ def mostrar_modulo_costos():
                 st.success("✅ Traslados registrados satisfactoriamente.")
 
     # ==========================================
-    # PESTAÑA 3: CONSULTA HISTORIAL (Mantenida)
+    # PESTAÑA 3: CONSULTA HISTORIAL
     # ==========================================
     with tab3:
         st.subheader("🔍 Consulta de Historial Operativo")
