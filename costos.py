@@ -268,7 +268,7 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS
+    # PESTAÑA 2: TRASLADOS (RESTRICCIÓN BLINDADA POR CACHÉ)
     # ==========================================
     with tab2:
         st.subheader("🚚 Registro Automático de Traslados Nexus")
@@ -280,7 +280,7 @@ def mostrar_modulo_costos():
         with ct3:
             unidad_t = st.selectbox("Unidad que recibe (Destino):", ["CAFETERIA", "DESPENSA"], key="uni_reg")
             
-        st.info(f"💡 El sistema extraerá solo los traslados que apliquen para el módulo **{unidad_t}**. Filtraremos montos cero y servicios.")
+        st.info(f"💡 El sistema extraerá solo los traslados que apliquen para el módulo **{unidad_t}** y validará que no se repitan.")
         
         arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
         if arch_t:
@@ -309,7 +309,7 @@ def mostrar_modulo_costos():
                     df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
                     
                     if df_f_t.empty:
-                        st.warning("⚠️ Los movimientos detectados no tienen cuentas contables asignadas válidas. Asigne las cuentas en el Maestro para poder generar partidas.")
+                        st.warning("⚠️ Los movimientos detectados no tienen cuentas contables asignadas válidas.")
                     else:
                         st.success(f"✅ Se identificaron {len(df_f_t)} movimientos listos para registro en {unidad_t}.")
                         st.dataframe(df_f_t, use_container_width=True)
@@ -336,35 +336,47 @@ def mostrar_modulo_costos():
 
                         st.divider()
                         if st.button("💾 Guardar Traslados en Historial"):
-                            with st.spinner("Validando integridad de datos..."):
+                            with st.spinner("Validando integridad y limpiando caché..."):
+                                # EL SECRETO: Forzar a Streamlit a leer la base fresca de Google Sheets
+                                st.cache_data.clear() 
                                 df_historico = obtener_dataframe("Historico_Traslados")
                                 
-                                # SOLUCIÓN AL ERROR: Usamos .get() para que no importe si la columna tiene o no tilde.
-                                def crear_llave(row):
-                                    cod_seguro = str(row.get('Codigo', row.get('Código', ''))).strip()
-                                    return f"{int(float(row['Mes']))}|{int(float(row['Año']))}|{str(row['Origen']).strip()}|{str(row['Destino']).strip()}|{cod_seguro}"
-                                
+                                def normalizar_llave(mes, anio, origen, destino, codigo):
+                                    m = str(mes).replace('.0', '').strip()
+                                    a = str(anio).replace('.0', '').strip()
+                                    o = str(origen).strip().upper()
+                                    d = str(destino).strip().upper()
+                                    c = str(codigo).strip().upper()
+                                    return f"{m}|{a}|{o}|{d}|{c}"
+
                                 if not df_historico.empty:
-                                    df_historico['llave'] = df_historico.apply(crear_llave, axis=1)
-                                    llaves_nuevas = [f"{m_t}|{a_t}|{str(r['Origen']).strip()}|{str(r['Destino']).strip()}|{str(r['Codigo']).strip()}" for _, r in df_f_t.iterrows()]
+                                    def crear_llave_hist(row):
+                                        cod = row.get('Codigo', row.get('Código', ''))
+                                        return normalizar_llave(row.get('Mes', ''), row.get('Año', ''), row.get('Origen', ''), row.get('Destino', ''), cod)
+                                    
+                                    df_historico['llave'] = df_historico.apply(crear_llave_hist, axis=1)
+                                    llaves_nuevas = [normalizar_llave(m_t, a_t, r['Origen'], r['Destino'], r['Codigo']) for _, r in df_f_t.iterrows()]
+                                    
                                     duplicados = [l for l in llaves_nuevas if l in df_historico['llave'].values]
                                     
                                     if duplicados:
-                                        st.error(f"❌ **MOVIMIENTOS DUPLICADOS DETECTADOS:** Ya existen registros para este periodo ({m_t}/{a_t}) con los mismos destinos y productos.")
-                                        st.warning("Verifique el archivo para no duplicar datos.")
-                                        with st.expander("Ver detalle de llaves duplicadas"):
+                                        st.error(f"❌ **MOVIMIENTOS DUPLICADOS DETECTADOS:** El sistema abortó la operación porque ya hay registros guardados de este periodo ({m_t}/{a_t}).")
+                                        st.warning("Verifica en Google Sheets que no estés subiendo el mismo Excel dos veces.")
+                                        with st.expander("Ver detalle de llaves duplicadas (Interno)"):
                                             st.write(duplicados)
                                     else:
                                         ws_t = conectar_hoja("Historico_Traslados")
                                         fecha_h = date.today().strftime('%d/%m/%Y')
                                         filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
                                         ws_t.append_rows(filas_t)
-                                        st.success("✅ Traslados guardados con éxito.")
+                                        st.cache_data.clear() # Limpiamos de nuevo para que la pantalla se entere
+                                        st.success("✅ Traslados guardados con éxito. Base actualizada.")
                                 else:
                                     ws_t = conectar_hoja("Historico_Traslados")
                                     fecha_h = date.today().strftime('%d/%m/%Y')
                                     filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
                                     ws_t.append_rows(filas_t)
+                                    st.cache_data.clear() # Limpiamos de nuevo
                                     st.success("✅ Base inicializada. Traslados guardados con éxito.")
 
             except Exception as e: st.error(f"Error: {e}")
