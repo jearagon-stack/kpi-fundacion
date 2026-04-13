@@ -128,6 +128,12 @@ def mostrar_modulo_costos():
                 def limpiar_cod(s): return s.astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                 for df in [df_dic, df_inicial, df_compras, df_final]: df['Codigo'] = limpiar_cod(df['Codigo'])
                 
+                # RESTAURADO: Filtro para limpiar la "basura" de los inventarios
+                basura = ['G222', 'G231', '21455979']
+                df_inicial = df_inicial[~df_inicial['Codigo'].isin(basura)]
+                df_compras = df_compras[~df_compras['Codigo'].isin(basura)]
+                df_final = df_final[~df_final['Codigo'].isin(basura)]
+
                 df_ini_m = pd.merge(df_inicial, df_dic, on='Codigo', how='left')
                 df_com_m = pd.merge(df_compras, df_dic, on='Codigo', how='left')
                 df_fin_m = pd.merge(df_final, df_dic, on='Codigo', how='left')
@@ -144,9 +150,16 @@ def mostrar_modulo_costos():
                 todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
                 consumo_por_cuenta = {}; costo_operativo = 0.0
                 
+                # NUEVO: "El Colador". Evitamos que las cuentas vacías o "No Aplica" sumen al costo.
+                cuentas_invalidas = ["", "NAN", "NAT", "NO APLICA", "0", "0.0", "NONE"]
+
                 for cta in todas_cuentas:
+                    cta_str = str(cta).strip().upper().replace(".0", "")
                     val = grp_ini.get(cta, 0) + grp_comp.get(cta, 0) + grp_tras.get(cta, 0) - grp_fin.get(cta, 0)
-                    if val != 0: consumo_por_cuenta[cta] = val; costo_operativo += val
+                    
+                    if val != 0 and cta_str not in cuentas_invalidas: 
+                        consumo_por_cuenta[cta_str] = val
+                        costo_operativo += val
                 
                 costo_dif_mes = costo_operativo * porcentaje_subsidio
                 costo_real = costo_operativo - costo_dif_mes + costo_diferido_anterior
@@ -155,18 +168,15 @@ def mostrar_modulo_costos():
                 r1.metric("Inicial", f"${grp_ini.sum():,.2f}"); r2.metric("Compras", f"${grp_comp.sum():,.2f}")
                 r3.metric("Final", f"${grp_fin.sum():,.2f}"); r4.metric("Diferido", f"${costo_dif_mes:,.2f}"); r5.metric("Real", f"${costo_real:,.2f}")
 
-                # --- 1. RESTAURACIÓN DEL DETALLE DE MOVIMIENTOS ---
                 st.divider()
                 if st.checkbox("📂 Ver Detalle de Movimientos / Cuentas"):
                     df_det_view = pd.DataFrame(list(consumo_por_cuenta.items()), columns=['Cuenta Contable', 'Consumo (Impacto)'])
                     st.dataframe(df_det_view, use_container_width=True)
 
-                # --- 2. GUARDADO EN MEMORIA PARA VALIDACIÓN (EL PUENTE) ---
                 st.session_state['datos_auditoria'] = {
                     'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real
                 }
                 
-                # --- 3. LÓGICA DE BOTONES SEPARADOS ---
                 if not st.session_state.get('auditoria_aprobada', False):
                     st.warning("⚠️ Los datos están en memoria. Ve al módulo **'VALIDACIÓN DE COSTOS'** en el menú izquierdo para aprobar este periodo.")
                 else:
@@ -178,13 +188,9 @@ def mostrar_modulo_costos():
                         f_v = [["410104", "", conc_v, round(c_op, 2), 0.00, ""]]
                         
                         for c, m in dict_consumo.items():
-                            cta_str = str(c).replace(".0","").strip()
-                            # LIMPIEZA DE CELDAS VACÍAS Y NO APLICA (Tu corrección de Excel)
-                            if cta_str == "" or cta_str.lower() in ["nan", "nat", "no aplica"]: continue
-                            
                             m_perc = m * (c_op / total_op_base) if total_op_base > 0 else 0
-                            if m_perc > 0.01: # Evitar centavos residuales
-                                f_v.append([cta_str, "", conc_v, 0.00, round(m_perc, 2), ""])
+                            if m_perc > 0.01: # Evitar centavos residuales en el Excel
+                                f_v.append([c, "", conc_v, 0.00, round(m_perc, 2), ""])
                         
                         conc_p = f"RECONOCIMIENTO DE COSTO DE LO VENDIDO EN PROCESO CAFETERIA {label_m} {anio_cierre}"
                         f_p = [["410104", "", conc_p, round(c_ant, 2), 0.00, ""], ["110602", "", conc_p, 0.00, round(c_ant, 2), ""]]
@@ -219,7 +225,7 @@ def mostrar_modulo_costos():
                                         u_r = extraer_subunidad(r['ORIGEN_ARCHIVO'], unidad_cierre)
                                         filas_g.append([fecha_hoy, mes_cierre, anio_cierre, u_r, str(r['Cuenta_Contable']), round(r['Inicial'],2), round(r['Compra'],2), round(r['Final'],2), round(r['Consumo'],2), r['Codigo'], r['ORIGEN_ARCHIVO']])
                                 if filas_g: ws_det.append_rows(filas_g)
-                                st.session_state['auditoria_aprobada'] = False # Reseteamos para el próximo
+                                st.session_state['auditoria_aprobada'] = False
                                 st.cache_data.clear()
                                 st.success("✅ Guardado Completo.")
             except Exception as e: st.error(f"Error: {e}")
