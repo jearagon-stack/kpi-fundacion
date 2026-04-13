@@ -67,7 +67,7 @@ def mostrar_modulo_costos():
     lista_meses = list(meses_texto.values())
 
     # ==========================================
-    # PESTAÑA 1: GENERAR CIERRE (INCLUYE MEMORIA)
+    # PESTAÑA 1: GENERAR CIERRE (INCLUYE MEMORIA AISLADA)
     # ==========================================
     with tab1:
         st.subheader("1. Cierre Contable")
@@ -259,7 +259,7 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (NUEVA LÓGICA CON ORIGEN/DESTINO AUTOMÁTICO)
+    # PESTAÑA 2: TRASLADOS (NUEVA LÓGICA CON CANTIDAD)
     # ==========================================
     with tab2:
         st.subheader("🚚 Registro Automático de Traslados Nexus")
@@ -269,13 +269,14 @@ def mostrar_modulo_costos():
         with ct2:
             a_t = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
             
-        st.info("💡 El Origen y Destino se extraen automáticamente del archivo. Se filtrarán montos cero y servicios.")
+        st.info("💡 El Origen, Destino y Cantidad se extraen automáticamente. Se filtrarán montos cero y servicios.")
         
-        arch_t = st.file_uploader("Reporte Nexus (I:Cod, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
+        # NOTA: Se añadió la letra K para la Cantidad. Cambiarla si es necesario.
+        arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cantidad, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
         if arch_t:
             try:
-                # Lectura de las 5 columnas clave
-                df_t_raw = pd.read_excel(arch_t, usecols="I,N,AA,AB,AC", names=['Codigo', 'Monto', 'Categoria', 'Origen', 'Destino'], skiprows=1)
+                # Lectura de las 6 columnas clave, incluyendo Cantidad (K)
+                df_t_raw = pd.read_excel(arch_t, usecols="I,K,N,AA,AB,AC", names=['Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], skiprows=1)
                 
                 # Normalización
                 df_t_raw['Codigo'] = df_t_raw['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
@@ -283,6 +284,7 @@ def mostrar_modulo_costos():
                 df_t_raw['Destino'] = df_t_raw['Destino'].astype(str).str.strip().str.upper()
                 df_t_raw['Categoria'] = df_t_raw['Categoria'].astype(str).str.strip().str.upper()
                 df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0)
+                df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0)
                 
                 # SÚPER FILTRO: Destinos válidos, Monto > 0 y que NO sea SERVICIO
                 destinos_validos = ["TERRAZA", "DESPENSA", "CENTRO SOHO"]
@@ -303,14 +305,14 @@ def mostrar_modulo_costos():
                     cuentas_invalidas = ["", "NAN", "NAT", "NO APLICA", "0", "0.0", "NONE"]
                     df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
                     
-                    st.success(f"✅ Se extrajeron {len(df_f_t)} movimientos válidos (omitiendo servicios y montos nulos).")
+                    st.success(f"✅ Se extrajeron {len(df_f_t)} movimientos válidos.")
                     st.dataframe(df_f_t, use_container_width=True)
                     
                     st.markdown("#### 📥 Partidas Generadas Automáticamente:")
                     
                     # Agrupar por ORIGEN y DESTINO para separar las partidas
                     grupos = df_f_t.groupby(['Origen', 'Destino'])
-                    cols_descarga = st.columns(min(len(grupos), 4)) # Máximo 4 botones por fila
+                    cols_descarga = st.columns(min(len(grupos), 4))
                     
                     for idx, ((origen_val, destino_val), df_grupo) in enumerate(grupos):
                         grp_t = df_grupo.groupby('Cuenta_Contable')['Monto'].sum()
@@ -322,7 +324,6 @@ def mostrar_modulo_costos():
                         for c, m in grp_t.items():
                             if m > 0.01: f_p_t.append([str(c).replace(".0",""), "", conc_t, 0, round(m, 2), ""])
                         
-                        # Distribuir los botones en las columnas
                         with cols_descarga[idx % len(cols_descarga)]:
                             st.download_button(f"⬇️ {destino_val} (desde {origen_val})", generar_excel_bytes(f_p_t), f"Traslado_{origen_val}_A_{destino_val}_{meses_texto[m_t]}.xlsx", key=f"dl_t_{idx}")
                     
@@ -330,9 +331,10 @@ def mostrar_modulo_costos():
                     if st.button("💾 Guardar Traslados en Historial"):
                         ws_t = conectar_hoja("Historico_Traslados")
                         fecha_h = date.today().strftime('%d/%m/%Y')
-                        filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus"] for _, r in df_f_t.iterrows()]
+                        # Se añade r['Cantidad'] en la décima posición (Columna J de Sheets)
+                        filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
                         ws_t.append_rows(filas_t)
-                        st.success("✅ Traslados guardados correctamente. Serán sumados al costo de estos destinos.")
+                        st.success("✅ Traslados y Cantidades guardados correctamente.")
                         
             except Exception as e:
                 st.error(f"Error procesando archivo. Verifica que contenga las columnas AB (Origen) y AC (Destino). Detalle: {e}")
