@@ -68,7 +68,6 @@ def mostrar_modulo_costos():
         return pd.Series(0, index=df.index)
 
     def proteger_cuentas_nulas(df_m, fallback="SIN CUENTA REGISTRADA"):
-        """Evita que el groupby borre el dinero de los items sin cuenta asignada"""
         if 'Cuenta_Contable' in df_m.columns:
             df_m['Cuenta_Contable'] = df_m['Cuenta_Contable'].fillna(fallback)
             mask = df_m['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
@@ -129,11 +128,13 @@ def mostrar_modulo_costos():
             df_hist_tras = obtener_dataframe("Historico_Traslados")
             traslados_mes = 0.0
             if not df_hist_tras.empty:
+                # SOLUCIÓN DEL ERROR: Forzar a que el monto que viene de Sheets sea número matemático
+                df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0)
                 destinos_a_buscar = mapa_subunidades.get(unidad_cierre, [unidad_cierre])
                 f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
                       (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
                       (df_hist_tras['Destino'].isin(destinos_a_buscar))
-                traslados_mes = pd.to_numeric(df_hist_tras[f_t]['Monto'], errors='coerce').sum()
+                traslados_mes = df_hist_tras[f_t]['Monto'].sum()
 
             porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
             st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados Recibidos: ${traslados_mes:,.2f}")
@@ -163,7 +164,6 @@ def mostrar_modulo_costos():
                             df_com_m = pd.merge(df_compras, df_dic, on='Codigo', how='left')
                             df_fin_m = pd.merge(df_final, df_dic, on='Codigo', how='left')
 
-                            # Protegemos el dinero para que no desaparezca en el groupby si falta la cuenta
                             df_ini_m = proteger_cuentas_nulas(df_ini_m)
                             df_com_m = proteger_cuentas_nulas(df_com_m)
                             df_fin_m = proteger_cuentas_nulas(df_fin_m)
@@ -181,7 +181,6 @@ def mostrar_modulo_costos():
                             todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
                             consumo_por_cuenta = {}; costo_operativo = 0.0
                             
-                            # Solo filtramos los que DIGAN explícitamente "NO APLICA" o sean "0"
                             cuentas_invalidas = ["NO APLICA", "0", "0.0"]
                             for cta in todas_cuentas:
                                 cta_str = str(cta).strip().upper().replace(".0", "")
@@ -281,7 +280,7 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (CON SALVAVIDAS DE CATEGORÍA)
+    # PESTAÑA 2: TRASLADOS
     # ==========================================
     with tab2:
         st.subheader("🚚 Registro Automático de Traslados Nexus")
@@ -293,7 +292,7 @@ def mostrar_modulo_costos():
         with ct3:
             unidad_t = st.selectbox("Unidad que recibe (Destino):", ["CAFETERIA", "DESPENSA"], key="uni_reg")
             
-        st.info(f"💡 Se filtrarán los servicios. Si un producto válido no tiene cuenta, se agrupará por su categoría de Nexus.")
+        st.info(f"💡 El sistema extraerá solo los traslados que apliquen para el módulo **{unidad_t}** y validará que no se repitan.")
         
         arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
         if arch_t:
@@ -317,15 +316,11 @@ def mostrar_modulo_costos():
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                     df_f_t = pd.merge(df_validos, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
                     
-                    # SALVAVIDAS: Si no encuentra cuenta, usa el nombre de la Categoria
                     df_f_t['Cuenta_Contable'] = df_f_t['Cuenta_Contable'].fillna(df_f_t['Categoria'])
-                    
-                    # Corrección si la base tiene vacíos puros
                     nulos_textuales = ["", "NAN", "NAT", "NONE"]
                     mask = df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(nulos_textuales)
                     df_f_t.loc[mask, 'Cuenta_Contable'] = df_f_t.loc[mask, 'Categoria']
                     
-                    # Solo eliminamos los que EXPLÍCITAMENTE dice "NO APLICA"
                     cuentas_invalidas = ["NO APLICA", "0", "0.0"]
                     df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
                     
@@ -419,7 +414,12 @@ def mostrar_modulo_costos():
                 c1, c2, c3, c4, c5 = st.columns(5)
                 c1.metric("Inicial", f"${v_ini:,.2f}"); c2.metric("Compras", f"${v_com:,.2f}")
                 c3.metric("Final", f"${v_fin:,.2f}"); c4.metric("Diferido", f"${v_dif:,.2f}"); c5.metric("Real", f"${v_real:,.2f}")
-                df_det_h = df_detalle[(df_detalle['Mes'].astype(str).str.replace('.0','') == m_f) & (df_detalle['Año'].astype(str).str.replace('.0','') == a_f)]
+                
+                # FIX AL HISTORIAL: Evitar sumar texto como si fueran números
+                df_det_h = df_detalle[(df_detalle['Mes'].astype(str).str.replace('.0','') == m_f) & (df_detalle['Año'].astype(str).str.replace('.0','') == a_f)].copy()
+                if not df_det_h.empty:
+                    df_det_h['Consumo'] = pd.to_numeric(df_det_h['Consumo'], errors='coerce').fillna(0)
+                
                 if st.checkbox("📂 Ver Detalle de Movimientos", key="chk_det"):
                     st.dataframe(df_det_h, use_container_width=True)
                 st.divider(); st.markdown("#### 📥 Reconstruir Partidas Nexus")
