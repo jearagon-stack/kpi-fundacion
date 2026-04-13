@@ -148,7 +148,6 @@ def mostrar_modulo_costos():
             f_t_in = None; f_t_out = None
             if not df_hist_tras.empty:
                 df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0.0)
-                unidades_buscar = mapa_subunidades.get(unidad_cierre, [unidad_cierre])
                 
                 if es_consolidado:
                     meses_indices = [list(meses_texto.keys())[list(meses_texto.values()).index(m)] for m in nombres_meses]
@@ -158,8 +157,11 @@ def mostrar_modulo_costos():
                     filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
                                   (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre)
                 
-                f_t_in = filtro_base & (df_hist_tras['Destino'].isin(unidades_buscar))
-                f_t_out = filtro_base & (df_hist_tras['Origen'].isin(unidades_buscar))
+                mask_dest = df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+                mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+                
+                f_t_in = filtro_base & mask_dest & (~mask_orig)
+                f_t_out = filtro_base & mask_orig & (~mask_dest)
                 
                 monto_in = df_hist_tras[f_t_in]['Monto'].sum()
                 monto_out = df_hist_tras[f_t_out]['Monto'].sum()
@@ -471,7 +473,7 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS
+    # PESTAÑA 2: TRASLADOS (CON FILTRO DE INGRESOS ESTRICTO)
     # ==========================================
     with tab2:
         st.subheader("🚚 Registro Automático de Traslados Nexus")
@@ -481,9 +483,10 @@ def mostrar_modulo_costos():
         with ct2:
             a_t = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
         with ct3:
-            unidad_t = st.selectbox("Unidad que interactúa:", ["CAFETERIA", "DESPENSA"], key="uni_reg")
+            # Volvimos a la etiqueta original que describe mejor la acción
+            unidad_t = st.selectbox("Unidad que recibe (Destino):", ["CAFETERIA", "DESPENSA"], key="uni_reg")
             
-        st.info(f"💡 El sistema procesará todos los traslados que crucen la frontera de **{unidad_t}** (Entradas y Salidas). Se ignoran movimientos internos.")
+        st.info(f"💡 El sistema procesará exclusivamente los traslados que **INGRESEN** a {unidad_t} desde otras unidades.")
         
         arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
         if arch_t:
@@ -496,25 +499,29 @@ def mostrar_modulo_costos():
                 df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0.0)
                 df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0.0)
                 
-                subunidades_validas = mapa_subunidades.get(unidad_t, [unidad_t])
-                
+                # 1. Definir si Origen/Destino son parte de la unidad seleccionada
                 condicion_destino = df_t_raw['Destino'].apply(lambda x: es_de_unidad(x, unidad_t))
                 condicion_origen = df_t_raw['Origen'].apply(lambda x: es_de_unidad(x, unidad_t))
                 
-                filtro_externo = condicion_destino != condicion_origen
+                # 2. FILTRO ESTRICTO DE INGRESOS: El destino SÍ es la unidad, pero el origen NO lo es (viene de afuera)
+                filtro_ingreso = condicion_destino & (~condicion_origen)
+                
+                # 3. Ignorar fantasmas
                 filtro_no_ignorado = ~df_t_raw['Destino'].isin(destinos_ignorados)
+                
+                # 4. Filtrar montos 0 y servicios
                 filtro_base = (df_t_raw['Monto'] > 0) & (df_t_raw['Categoria'] != 'SERVICIO')
                 
-                df_validos = df_t_raw[filtro_externo & filtro_no_ignorado & filtro_base]
+                df_validos = df_t_raw[filtro_ingreso & filtro_no_ignorado & filtro_base]
                 
                 if df_validos.empty:
-                    st.warning(f"⚠️ No hay traslados válidos de entrada o salida para {unidad_t} (se ignoraron los movimientos hacia {destinos_ignorados}).")
+                    st.warning(f"⚠️ No hay traslados de ingreso válidos hacia {unidad_t}.")
                 else:
                     df_dic_t = obtener_dataframe("Categorias_Costos")
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                     df_f_t = pd.merge(df_validos, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
                     
-                    # === NUEVO EDITOR INTERACTIVO EN PESTAÑA 2 ===
+                    # === EDITOR INTERACTIVO DE CUENTAS (Para los ingresos huérfanos) ===
                     mask_nulas = df_f_t['Cuenta_Contable'].isna() | df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
                     
                     if mask_nulas.any():
@@ -541,7 +548,6 @@ def mostrar_modulo_costos():
                             use_container_width=True
                         )
                         
-                        # Aplicar los cambios en tiempo real
                         codigos_omitir = edited_huerfanos[edited_huerfanos['Accion'] == 'Omitir (No guardar)']['Codigo'].tolist()
                         df_asignar = edited_huerfanos[edited_huerfanos['Accion'] == 'Escribir Cuenta Manual']
                         df_cat = edited_huerfanos[edited_huerfanos['Accion'] == 'Usar Categoría Nativa']
@@ -555,15 +561,15 @@ def mostrar_modulo_costos():
                             
                         for _, row in df_cat.iterrows():
                             df_f_t.loc[df_f_t['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = row['Categoria']
-                    # ==============================================
-
+                    # =================================================================
+                    
                     cuentas_invalidas = ["NO APLICA", "0", "0.0", "OMITIDO_MANUAL"]
                     df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
                     
                     if df_f_t.empty:
                         st.error("❌ Todos los movimientos detectados fueron omitidos o corresponden a cuentas 'NO APLICA'.")
                     else:
-                        st.success(f"✅ Se identificaron {len(df_f_t)} movimientos reales de entrada/salida listos para {unidad_t}.")
+                        st.success(f"✅ Se identificaron {len(df_f_t)} movimientos reales de INGRESO listos para {unidad_t}.")
                         st.dataframe(df_f_t, use_container_width=True)
                         
                         st.markdown("#### 📥 Partidas Generadas Automáticamente:")
@@ -618,7 +624,7 @@ def mostrar_modulo_costos():
                                         fecha_h = date.today().strftime('%d/%m/%Y')
                                         filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_nuevos.iterrows()]
                                         ws_t.append_rows(filas_t)
-                                        st.success(f"✅ Se guardaron {len(df_nuevos)} traslados nuevos con éxito.")
+                                        st.success(f"✅ Se guardaron {len(df_nuevos)} traslados de ingreso con éxito.")
                                         
                                     if not df_duplicados.empty:
                                         st.warning(f"⚠️ Se omitieron {len(df_duplicados)} traslados que ya estaban registrados en la base de datos para este periodo.")
