@@ -13,7 +13,7 @@ def mostrar_modulo_costos():
     # FUNCIONES DE APOYO Y MAPEO DE UNIDADES
     # ==========================================
     mapa_subunidades = {
-        "CAFETERIA": ["TERRAZA", "CENTRO SOHO", "CAFETERIA CENTRAL", "CAFETERIA", "CAFETERIA ABASTECIMIENTO"], # <-- Aquí agregué la bodega
+        "CAFETERIA": ["TERRAZA", "CENTRO SOHO", "CAFETERIA CENTRAL", "CAFETERIA", "CAFETERIA ABASTECIMIENTO"],
         "DESPENSA":  ["DESPENSA"]
     }
 
@@ -339,8 +339,10 @@ def mostrar_modulo_costos():
                             with st.spinner("Validando integridad de datos..."):
                                 df_historico = obtener_dataframe("Historico_Traslados")
                                 
+                                # SOLUCIÓN AL ERROR: Usamos .get() para que no importe si la columna tiene o no tilde.
                                 def crear_llave(row):
-                                    return f"{int(float(row['Mes']))}|{int(float(row['Año']))}|{str(row['Origen']).strip()}|{str(row['Destino']).strip()}|{str(row['Código']).strip()}"
+                                    cod_seguro = str(row.get('Codigo', row.get('Código', ''))).strip()
+                                    return f"{int(float(row['Mes']))}|{int(float(row['Año']))}|{str(row['Origen']).strip()}|{str(row['Destino']).strip()}|{cod_seguro}"
                                 
                                 if not df_historico.empty:
                                     df_historico['llave'] = df_historico.apply(crear_llave, axis=1)
