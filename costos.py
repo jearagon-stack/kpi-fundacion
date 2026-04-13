@@ -64,9 +64,7 @@ def mostrar_modulo_costos():
         for k in keys:
             for col in df.columns:
                 c_norm = str(col).upper().replace(' ', '').replace('.', '')
-                if all(p in c_norm for p in k): 
-                    # BLINDAJE: Fuerzo a que el resultado siempre sea un número (float64)
-                    return pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+                if all(p in c_norm for p in k): return pd.to_numeric(df[col], errors='coerce').fillna(0.0)
         return pd.Series(0.0, index=df.index)
 
     def proteger_cuentas_nulas(df_m, fallback="SIN CUENTA REGISTRADA"):
@@ -147,9 +145,12 @@ def mostrar_modulo_costos():
             with col_u2: arch_com = st.file_uploader("2. Compras", type=["xlsx"], accept_multiple_files=True)
             with col_u3: arch_fin = st.file_uploader("3. Inv. Final", type=["xlsx"], accept_multiple_files=True)
 
+            # CHECKBOX PARA FORZAR (Si el usuario decide ignorar los que faltan)
+            forzar_calculo = st.checkbox("⚠️ Forzar cálculo (Aplicará el salvavidas o ignorará códigos sin cuenta)")
+
             if arch_ini and arch_com and arch_fin:
                 if st.button("⚙️ Procesar Archivos y Guardar en Memoria", type="primary", use_container_width=True):
-                    with st.spinner("Procesando miles de filas..."):
+                    with st.spinner("Realizando validación cruzada..."):
                         try:
                             df_inicial = consolidar(arch_ini); df_compras = consolidar(arch_com); df_final = consolidar(arch_fin)
                             df_dic = obtener_dataframe("Categorias_Costos")
@@ -165,11 +166,27 @@ def mostrar_modulo_costos():
                             df_com_m = pd.merge(df_compras, df_dic, on='Codigo', how='left')
                             df_fin_m = pd.merge(df_final, df_dic, on='Codigo', how='left')
 
+                            # ---------------------------------------------------------
+                            # NUEVO: PRE-CHECK DE AUDITORÍA DE CÓDIGOS (EL GATEKEEPER)
+                            # ---------------------------------------------------------
+                            def detectar_huerfanos(df):
+                                if df.empty: return pd.DataFrame()
+                                mask = df['Cuenta_Contable'].isna() | df['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
+                                return df[mask][['Codigo', 'ORIGEN_ARCHIVO']]
+
+                            df_faltantes = pd.concat([detectar_huerfanos(df_ini_m), detectar_huerfanos(df_com_m), detectar_huerfanos(df_fin_m)]).drop_duplicates(subset=['Codigo'])
+
+                            if not df_faltantes.empty and not forzar_calculo:
+                                st.error("🚨 **ALERTA: PRODUCTOS SIN CUENTA CONTABLE DETECTADOS**")
+                                st.warning("El cálculo ha sido detenido para evitar errores. Se encontraron códigos que no existen en el Maestro (Google Sheets). \n\n**¿Qué hacer?**\n1. Ve a Google Sheets y ponles una cuenta a los siguientes códigos.\n2. Vuelve a presionar el botón rojo.\n3. O si prefieres que el sistema les aplique el salvavidas de categoría, marca la casilla 'Forzar Cálculo' arriba y vuelve a presionar.")
+                                st.dataframe(df_faltantes, use_container_width=True)
+                                st.stop() # DETIENE LA EJECUCIÓN AQUÍ HASTA QUE SE RESUELVA
+                            # ---------------------------------------------------------
+
                             df_ini_m = proteger_cuentas_nulas(df_ini_m)
                             df_com_m = proteger_cuentas_nulas(df_com_m)
                             df_fin_m = proteger_cuentas_nulas(df_fin_m)
 
-                            # BLINDAJE MATEMÁTICO: Fuerza a que el producto de las columnas sea siempre número
                             df_ini_m['Valor'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * pd.to_numeric(get_num(df_ini_m, [['COSTO', 'U']]), errors='coerce').fillna(0.0)
                             df_fin_m['Valor'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U']]), errors='coerce').fillna(0.0)
                             df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO']]), errors='coerce').fillna(0.0)
@@ -181,31 +198,45 @@ def mostrar_modulo_costos():
                             grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum() if not df_hist_tras.empty else pd.Series(0.0)
 
                             todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
-                            consumo_por_cuenta = {}; costo_operativo = 0.0
+                            consumo_por_cuenta = {}
+                            
+                            # ACÁ SE LIMPIAN LOS TOTALES PARA QUE CUADREN CON LA PANTALLA
+                            total_ini_val = 0.0
+                            total_com_val = 0.0
+                            total_tras_val = 0.0
+                            total_fin_val = 0.0
+                            costo_operativo = 0.0
                             
                             cuentas_invalidas = ["NO APLICA", "0", "0.0"]
                             for cta in todas_cuentas:
                                 if pd.isna(cta): continue
                                 cta_str = str(cta).strip().upper().replace(".0", "")
                                 
-                                # BLINDAJE MATEMÁTICO: Evita que sume palabras usando float()
                                 v_ini = float(grp_ini.get(cta, 0.0))
-                                v_comp = float(grp_comp.get(cta, 0.0))
+                                v_com = float(grp_comp.get(cta, 0.0))
                                 v_tras = float(grp_tras.get(cta, 0.0))
                                 v_fin = float(grp_fin.get(cta, 0.0))
                                 
-                                val = v_ini + v_comp + v_tras - v_fin
-                                
-                                if val != 0 and cta_str not in cuentas_invalidas: 
-                                    consumo_por_cuenta[cta_str] = val
-                                    costo_operativo += val
+                                if cta_str not in cuentas_invalidas: 
+                                    total_ini_val += v_ini
+                                    total_com_val += v_com
+                                    total_tras_val += v_tras
+                                    total_fin_val += v_fin
+                                    
+                                    val = v_ini + v_com + v_tras - v_fin
+                                    if val != 0:
+                                        consumo_por_cuenta[cta_str] = val
+                                        costo_operativo += val
                             
                             costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                             costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
                             st.session_state['memoria_cierre'] = {
                                 'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
-                                'grp_ini_sum': float(grp_ini.sum()), 'grp_comp_sum': float(grp_comp.sum()), 'grp_fin_sum': float(grp_fin.sum()),
+                                'grp_ini_sum': total_ini_val, 
+                                'grp_comp_sum': total_com_val, 
+                                'grp_tras_sum': total_tras_val, # Se agrega traslado a memoria
+                                'grp_fin_sum': total_fin_val,
                                 'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
                                 'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
                                 'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
@@ -219,12 +250,14 @@ def mostrar_modulo_costos():
             mem = st.session_state['memoria_cierre']
             st.success(f"📦 **DATOS EN MEMORIA:** Cierre de {mem['unidad_cierre']} - Periodo: {meses_texto[mem['mes_cierre']]} {mem['anio_cierre']}")
             
-            r1, r2, r3, r4, r5 = st.columns(5)
-            r1.metric("Inicial", f"${mem['grp_ini_sum']:,.2f}")
-            r2.metric("Compras", f"${mem['grp_comp_sum']:,.2f}")
-            r3.metric("Final", f"${mem['grp_fin_sum']:,.2f}")
-            r4.metric("Diferido", f"${mem['costo_dif_mes']:,.2f}")
-            r5.metric("Real", f"${mem['costo_real']:,.2f}")
+            # AHORA SON 6 COLUMNAS PARA QUE EL TRASLADO SE VEA CLARAMENTE SUMADO
+            r1, r2, r3, r4, r5, r6 = st.columns(6)
+            r1.metric("Inicial (+)", f"${mem['grp_ini_sum']:,.2f}")
+            r2.metric("Compras (+)", f"${mem['grp_comp_sum']:,.2f}")
+            r3.metric("Traslados (+)", f"${mem['grp_tras_sum']:,.2f}")
+            r4.metric("Final (-)", f"${mem['grp_fin_sum']:,.2f}")
+            r5.metric("Diferido (-)", f"${mem['costo_dif_mes']:,.2f}")
+            r6.metric("Real (=)", f"${mem['costo_real']:,.2f}")
 
             st.divider()
             if st.checkbox("📂 Ver Detalle de Movimientos / Cuentas"):
