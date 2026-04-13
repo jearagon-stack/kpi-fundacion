@@ -64,8 +64,10 @@ def mostrar_modulo_costos():
         for k in keys:
             for col in df.columns:
                 c_norm = str(col).upper().replace(' ', '').replace('.', '')
-                if all(p in c_norm for p in k): return pd.to_numeric(df[col], errors='coerce').fillna(0)
-        return pd.Series(0, index=df.index)
+                if all(p in c_norm for p in k): 
+                    # BLINDAJE: Fuerzo a que el resultado siempre sea un número (float64)
+                    return pd.to_numeric(df[col], errors='coerce').fillna(0.0)
+        return pd.Series(0.0, index=df.index)
 
     def proteger_cuentas_nulas(df_m, fallback="SIN CUENTA REGISTRADA"):
         if 'Cuenta_Contable' in df_m.columns:
@@ -128,8 +130,7 @@ def mostrar_modulo_costos():
             df_hist_tras = obtener_dataframe("Historico_Traslados")
             traslados_mes = 0.0
             if not df_hist_tras.empty:
-                # SOLUCIÓN DEL ERROR: Forzar a que el monto que viene de Sheets sea número matemático
-                df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0)
+                df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0.0)
                 destinos_a_buscar = mapa_subunidades.get(unidad_cierre, [unidad_cierre])
                 f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
                       (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
@@ -168,9 +169,10 @@ def mostrar_modulo_costos():
                             df_com_m = proteger_cuentas_nulas(df_com_m)
                             df_fin_m = proteger_cuentas_nulas(df_fin_m)
 
-                            df_ini_m['Valor'] = get_num(df_ini_m, [['EXISTENCIAS'], ['SALDO']]) * get_num(df_ini_m, [['COSTO', 'U']])
-                            df_fin_m['Valor'] = get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]) * get_num(df_fin_m, [['COSTO', 'U']])
-                            df_com_m['Valor'] = get_num(df_com_m, [['TOTAL'], ['MONTO']])
+                            # BLINDAJE MATEMÁTICO: Fuerza a que el producto de las columnas sea siempre número
+                            df_ini_m['Valor'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * pd.to_numeric(get_num(df_ini_m, [['COSTO', 'U']]), errors='coerce').fillna(0.0)
+                            df_fin_m['Valor'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U']]), errors='coerce').fillna(0.0)
+                            df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO']]), errors='coerce').fillna(0.0)
 
                             grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum()
                             grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
@@ -183,18 +185,27 @@ def mostrar_modulo_costos():
                             
                             cuentas_invalidas = ["NO APLICA", "0", "0.0"]
                             for cta in todas_cuentas:
+                                if pd.isna(cta): continue
                                 cta_str = str(cta).strip().upper().replace(".0", "")
-                                val = grp_ini.get(cta, 0) + grp_comp.get(cta, 0) + grp_tras.get(cta, 0) - grp_fin.get(cta, 0)
+                                
+                                # BLINDAJE MATEMÁTICO: Evita que sume palabras usando float()
+                                v_ini = float(grp_ini.get(cta, 0.0))
+                                v_comp = float(grp_comp.get(cta, 0.0))
+                                v_tras = float(grp_tras.get(cta, 0.0))
+                                v_fin = float(grp_fin.get(cta, 0.0))
+                                
+                                val = v_ini + v_comp + v_tras - v_fin
+                                
                                 if val != 0 and cta_str not in cuentas_invalidas: 
                                     consumo_por_cuenta[cta_str] = val
                                     costo_operativo += val
                             
-                            costo_dif_mes = costo_operativo * porcentaje_subsidio
-                            costo_real = costo_operativo - costo_dif_mes + costo_diferido_anterior
+                            costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
+                            costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
                             st.session_state['memoria_cierre'] = {
                                 'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
-                                'grp_ini_sum': grp_ini.sum(), 'grp_comp_sum': grp_comp.sum(), 'grp_fin_sum': grp_fin.sum(),
+                                'grp_ini_sum': float(grp_ini.sum()), 'grp_comp_sum': float(grp_comp.sum()), 'grp_fin_sum': float(grp_fin.sum()),
                                 'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
                                 'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
                                 'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
@@ -302,8 +313,8 @@ def mostrar_modulo_costos():
                 df_t_raw['Origen'] = df_t_raw['Origen'].astype(str).str.strip().str.upper()
                 df_t_raw['Destino'] = df_t_raw['Destino'].astype(str).str.strip().str.upper()
                 df_t_raw['Categoria'] = df_t_raw['Categoria'].astype(str).str.strip().str.upper()
-                df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0)
-                df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0)
+                df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0.0)
+                df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0.0)
                 
                 destinos_validos = mapa_subunidades.get(unidad_t, [unidad_t])
                 
@@ -415,10 +426,9 @@ def mostrar_modulo_costos():
                 c1.metric("Inicial", f"${v_ini:,.2f}"); c2.metric("Compras", f"${v_com:,.2f}")
                 c3.metric("Final", f"${v_fin:,.2f}"); c4.metric("Diferido", f"${v_dif:,.2f}"); c5.metric("Real", f"${v_real:,.2f}")
                 
-                # FIX AL HISTORIAL: Evitar sumar texto como si fueran números
                 df_det_h = df_detalle[(df_detalle['Mes'].astype(str).str.replace('.0','') == m_f) & (df_detalle['Año'].astype(str).str.replace('.0','') == a_f)].copy()
                 if not df_det_h.empty:
-                    df_det_h['Consumo'] = pd.to_numeric(df_det_h['Consumo'], errors='coerce').fillna(0)
+                    df_det_h['Consumo'] = pd.to_numeric(df_det_h['Consumo'], errors='coerce').fillna(0.0)
                 
                 if st.checkbox("📂 Ver Detalle de Movimientos", key="chk_det"):
                     st.dataframe(df_det_h, use_container_width=True)
