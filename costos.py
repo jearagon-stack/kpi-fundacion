@@ -158,7 +158,6 @@ def mostrar_modulo_costos():
             with col_u3: arch_fin = st.file_uploader("3. Inv. Final", type=["xlsx"], accept_multiple_files=True)
 
             if arch_ini and arch_com and arch_fin:
-                
                 if 'huerfanos_df' not in st.session_state:
                     forzar_calculo = st.checkbox("⚠️ Forzar cálculo ciego (Omitir revisión de cuentas)")
                     
@@ -464,11 +463,11 @@ def mostrar_modulo_costos():
         with ct2:
             a_t = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
         with ct3:
-            unidad_t = st.selectbox("Unidad que recibe (Destino):", ["CAFETERIA", "DESPENSA"], key="uni_reg")
+            unidad_t = st.selectbox("Unidad que interactúa:", ["CAFETERIA", "DESPENSA"], key="uni_reg")
             
-        st.info(f"💡 El sistema extraerá solo los traslados que apliquen para el módulo **{unidad_t}** y validará que no se repitan.")
+        st.info(f"💡 El sistema procesará todos los traslados que entren o salgan de **{unidad_t}**.")
         
-        # CORRECCIÓN CLAVE AQUÍ: header=0 para que NO se salte la primera línea de datos (Ej: Los huevos de $174.99)
+        # CORRECCIÓN CLAVE AQUÍ: header=0 para no saltar la primera línea de datos
         arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
         if arch_t:
             try:
@@ -480,12 +479,16 @@ def mostrar_modulo_costos():
                 df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0.0)
                 df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0.0)
                 
-                destinos_validos = mapa_subunidades.get(unidad_t, [unidad_t])
+                subunidades_validas = mapa_subunidades.get(unidad_t, [unidad_t])
                 
-                df_validos = df_t_raw[(df_t_raw['Destino'].isin(destinos_validos)) & (df_t_raw['Monto'] > 0) & (df_t_raw['Categoria'] != 'SERVICIO')]
+                # FILTRO MEJORADO: Analiza si el Destino O el Origen pertenecen a la unidad seleccionada
+                condicion_destino = df_t_raw['Destino'].isin(subunidades_validas)
+                condicion_origen = df_t_raw['Origen'].isin(subunidades_validas)
+                
+                df_validos = df_t_raw[(condicion_destino | condicion_origen) & (df_t_raw['Monto'] > 0) & (df_t_raw['Categoria'] != 'SERVICIO')]
                 
                 if df_validos.empty:
-                    st.warning(f"⚠️ No hay traslados válidos (monto > 0, no servicios) hacia ninguna bodega de {unidad_t}.")
+                    st.warning(f"⚠️ No hay traslados válidos (entradas o salidas) que involucren a {unidad_t}.")
                 else:
                     df_dic_t = obtener_dataframe("Categorias_Costos")
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
@@ -545,22 +548,28 @@ def mostrar_modulo_costos():
                                         return normalizar_llave(row.get('Mes', ''), row.get('Año', ''), row.get('Origen', ''), row.get('Destino', ''), cod)
                                     
                                     df_historico['llave'] = df_historico.apply(crear_llave_hist, axis=1)
-                                    llaves_nuevas = [normalizar_llave(m_t, a_t, r['Origen'], r['Destino'], r['Codigo']) for _, r in df_f_t.iterrows()]
+                                    llaves_existentes = set(df_historico['llave'].values)
                                     
-                                    duplicados = [l for l in llaves_nuevas if l in df_historico['llave'].values]
+                                    df_f_t['llave_temp'] = [normalizar_llave(m_t, a_t, r['Origen'], r['Destino'], r['Codigo']) for _, r in df_f_t.iterrows()]
                                     
-                                    if duplicados:
-                                        st.error(f"❌ **MOVIMIENTOS DUPLICADOS DETECTADOS:** El sistema abortó la operación porque ya hay registros guardados de este periodo ({m_t}/{a_t}).")
-                                        st.warning("Verifica en Google Sheets que no estés subiendo el mismo Excel dos veces.")
-                                        with st.expander("Ver detalle de llaves duplicadas (Interno)"):
-                                            st.write(duplicados)
-                                    else:
+                                    # SEPARAMOS LO NUEVO DE LO VIEJO (UPSERT)
+                                    df_nuevos = df_f_t[~df_f_t['llave_temp'].isin(llaves_existentes)]
+                                    df_duplicados = df_f_t[df_f_t['llave_temp'].isin(llaves_existentes)]
+                                    
+                                    if not df_nuevos.empty:
                                         ws_t = conectar_hoja("Historico_Traslados")
                                         fecha_h = date.today().strftime('%d/%m/%Y')
-                                        filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
+                                        filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_nuevos.iterrows()]
                                         ws_t.append_rows(filas_t)
-                                        st.cache_data.clear() 
-                                        st.success("✅ Traslados guardados con éxito. Base actualizada.")
+                                        st.success(f"✅ Se guardaron {len(df_nuevos)} traslados nuevos con éxito.")
+                                        
+                                    if not df_duplicados.empty:
+                                        st.warning(f"⚠️ Se omitieron {len(df_duplicados)} traslados que ya estaban registrados en la base de datos para este periodo.")
+                                    
+                                    if df_nuevos.empty and not df_duplicados.empty:
+                                        st.error("❌ No se guardó ningún dato nuevo porque todos los movimientos del archivo ya existían en el historial.")
+                                        
+                                    st.cache_data.clear() 
                                 else:
                                     ws_t = conectar_hoja("Historico_Traslados")
                                     fecha_h = date.today().strftime('%d/%m/%Y')
