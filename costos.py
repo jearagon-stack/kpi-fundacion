@@ -13,7 +13,7 @@ def mostrar_modulo_costos():
     # FUNCIONES DE APOYO Y MAPEO DE UNIDADES
     # ==========================================
     mapa_subunidades = {
-        "CAFETERIA": ["TERRAZA", "CENTRO SOHO", "CAFETERIA CENTRAL", "CAFETERIA"],
+        "CAFETERIA": ["TERRAZA", "CENTRO SOHO", "CAFETERIA CENTRAL", "CAFETERIA", "CAFETERIA ABASTECIMIENTO"], # <-- Aquí agregué la bodega
         "DESPENSA":  ["DESPENSA"]
     }
 
@@ -309,7 +309,7 @@ def mostrar_modulo_costos():
                     df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
                     
                     if df_f_t.empty:
-                        st.warning("⚠️ Los movimientos detectados no tienen cuentas contables asignadas válidas. No se generarán partidas.")
+                        st.warning("⚠️ Los movimientos detectados no tienen cuentas contables asignadas válidas. Asigne las cuentas en el Maestro para poder generar partidas.")
                     else:
                         st.success(f"✅ Se identificaron {len(df_f_t)} movimientos listos para registro en {unidad_t}.")
                         st.dataframe(df_f_t, use_container_width=True)
