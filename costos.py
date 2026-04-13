@@ -12,7 +12,6 @@ def mostrar_modulo_costos():
     # ==========================================
     # FUNCIONES DE APOYO Y MAPEO DE UNIDADES
     # ==========================================
-    # Este diccionario le enseña al sistema qué bodegas pertenecen a qué unidad
     mapa_subunidades = {
         "CAFETERIA": ["TERRAZA", "CENTRO SOHO", "CAFETERIA CENTRAL", "CAFETERIA"],
         "DESPENSA":  ["DESPENSA"]
@@ -119,7 +118,6 @@ def mostrar_modulo_costos():
                 ventas_mes = pd.to_numeric(df_ventas[filtro_v]['Venta_Real'], errors='coerce').sum()
                 subsidio_mes = pd.to_numeric(df_ventas[filtro_v]['Subsidio_UCA'], errors='coerce').sum()
 
-            # EXTRAER TRASLADOS CON EL MAPEO INTELIGENTE
             df_hist_tras = obtener_dataframe("Historico_Traslados")
             traslados_mes = 0.0
             if not df_hist_tras.empty:
@@ -165,7 +163,6 @@ def mostrar_modulo_costos():
                             grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
                             grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum()
                             
-                            # Sumar traslados usando el mapeo de destinos
                             grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum() if not df_hist_tras.empty else pd.Series(0.0)
 
                             todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
@@ -271,7 +268,7 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (CON CONTEXTO DE MÓDULO)
+    # PESTAÑA 2: TRASLADOS
     # ==========================================
     with tab2:
         st.subheader("🚚 Registro Automático de Traslados Nexus")
@@ -281,7 +278,6 @@ def mostrar_modulo_costos():
         with ct2:
             a_t = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
         with ct3:
-            # Selector de contexto: el usuario elige para qué módulo está subiendo la data
             unidad_t = st.selectbox("Unidad que recibe (Destino):", ["CAFETERIA", "DESPENSA"], key="uni_reg")
             
         st.info(f"💡 El sistema extraerá solo los traslados que apliquen para el módulo **{unidad_t}**. Filtraremos montos cero y servicios.")
@@ -297,7 +293,6 @@ def mostrar_modulo_costos():
                 df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0)
                 df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0)
                 
-                # Obtenemos los destinos válidos según el selector de la interfaz
                 destinos_validos = mapa_subunidades.get(unidad_t, [unidad_t])
                 
                 df_validos = df_t_raw[(df_t_raw['Destino'].isin(destinos_validos)) & (df_t_raw['Monto'] > 0) & (df_t_raw['Categoria'] != 'SERVICIO')]
@@ -309,63 +304,66 @@ def mostrar_modulo_costos():
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                     df_f_t = pd.merge(df_validos, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
                     
-                    # FILTRO RADICAL DE CUENTAS "NONE" O VACÍAS
                     df_f_t = df_f_t.dropna(subset=['Cuenta_Contable'])
                     cuentas_invalidas = ["", "NAN", "NAT", "NO APLICA", "0", "0.0", "NONE"]
                     df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
                     
-                    st.success(f"✅ Se identificaron {len(df_f_t)} movimientos listos para registro en {unidad_t}.")
-                    st.dataframe(df_f_t, use_container_width=True)
-                    
-                    # Generar botones por Origen-Destino
-                    st.markdown("#### 📥 Partidas Generadas Automáticamente:")
-                    grupos = df_f_t.groupby(['Origen', 'Destino'])
-                    cols_descarga = st.columns(min(len(grupos), 4))
-                    
-                    for idx, ((origen_val, destino_val), df_grupo) in enumerate(grupos):
-                        grp_t = df_grupo.groupby('Cuenta_Contable')['Monto'].sum()
+                    if df_f_t.empty:
+                        st.warning("⚠️ Los movimientos detectados no tienen cuentas contables asignadas válidas. No se generarán partidas.")
+                    else:
+                        st.success(f"✅ Se identificaron {len(df_f_t)} movimientos listos para registro en {unidad_t}.")
+                        st.dataframe(df_f_t, use_container_width=True)
                         
-                        conc_t = f"TRASLADO DE {origen_val} A {destino_val}, {meses_texto[m_t]} {a_t}"
-                        f_p_t = []
-                        for c, m in grp_t.items():
-                            if m > 0.01: f_p_t.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0, ""])
-                        for c, m in grp_t.items():
-                            if m > 0.01: f_p_t.append([str(c).replace(".0",""), "", conc_t, 0, round(m, 2), ""])
+                        st.markdown("#### 📥 Partidas Generadas Automáticamente:")
+                        grupos = df_f_t.groupby(['Origen', 'Destino'])
+                        num_grupos = len(grupos)
                         
-                        with cols_descarga[idx % len(cols_descarga)]:
-                            st.download_button(f"⬇️ {destino_val} (desde {origen_val})", generar_excel_bytes(f_p_t), f"Traslado_{origen_val}_A_{destino_val}_{meses_texto[m_t]}.xlsx", key=f"dl_t_{idx}")
-
-                    st.divider()
-                    # --- RESTRICCIÓN DE DUPLICADOS ---
-                    if st.button("💾 Guardar Traslados en Historial"):
-                        with st.spinner("Validando integridad de datos..."):
-                            df_historico = obtener_dataframe("Historico_Traslados")
+                        if num_grupos > 0:
+                            cols_descarga = st.columns(min(num_grupos, 4))
                             
-                            def crear_llave(row):
-                                return f"{int(float(row['Mes']))}|{int(float(row['Año']))}|{str(row['Origen']).strip()}|{str(row['Destino']).strip()}|{str(row['Código']).strip()}"
-                            
-                            if not df_historico.empty:
-                                df_historico['llave'] = df_historico.apply(crear_llave, axis=1)
-                                llaves_nuevas = [f"{m_t}|{a_t}|{str(r['Origen']).strip()}|{str(r['Destino']).strip()}|{str(r['Codigo']).strip()}" for _, r in df_f_t.iterrows()]
-                                duplicados = [l for l in llaves_nuevas if l in df_historico['llave'].values]
+                            for idx, ((origen_val, destino_val), df_grupo) in enumerate(grupos):
+                                grp_t = df_grupo.groupby('Cuenta_Contable')['Monto'].sum()
                                 
-                                if duplicados:
-                                    st.error(f"❌ **MOVIMIENTOS DUPLICADOS DETECTADOS:** El sistema encontró que ya existen registros para este periodo ({m_t}/{a_t}) con los mismos destinos y productos.")
-                                    st.warning("Para subir nuevos datos, primero debes eliminar los registros anteriores del Google Sheets o verificar que el archivo no contenga información ya procesada.")
-                                    with st.expander("Ver detalle de llaves duplicadas"):
-                                        st.write(duplicados)
+                                conc_t = f"TRASLADO DE {origen_val} A {destino_val}, {meses_texto[m_t]} {a_t}"
+                                f_p_t = []
+                                for c, m in grp_t.items():
+                                    if m > 0.01: f_p_t.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0, ""])
+                                for c, m in grp_t.items():
+                                    if m > 0.01: f_p_t.append([str(c).replace(".0",""), "", conc_t, 0, round(m, 2), ""])
+                                
+                                with cols_descarga[idx % min(num_grupos, 4)]:
+                                    st.download_button(f"⬇️ {destino_val} (desde {origen_val})", generar_excel_bytes(f_p_t), f"Traslado_{origen_val}_A_{destino_val}_{meses_texto[m_t]}.xlsx", key=f"dl_t_{idx}")
+
+                        st.divider()
+                        if st.button("💾 Guardar Traslados en Historial"):
+                            with st.spinner("Validando integridad de datos..."):
+                                df_historico = obtener_dataframe("Historico_Traslados")
+                                
+                                def crear_llave(row):
+                                    return f"{int(float(row['Mes']))}|{int(float(row['Año']))}|{str(row['Origen']).strip()}|{str(row['Destino']).strip()}|{str(row['Código']).strip()}"
+                                
+                                if not df_historico.empty:
+                                    df_historico['llave'] = df_historico.apply(crear_llave, axis=1)
+                                    llaves_nuevas = [f"{m_t}|{a_t}|{str(r['Origen']).strip()}|{str(r['Destino']).strip()}|{str(r['Codigo']).strip()}" for _, r in df_f_t.iterrows()]
+                                    duplicados = [l for l in llaves_nuevas if l in df_historico['llave'].values]
+                                    
+                                    if duplicados:
+                                        st.error(f"❌ **MOVIMIENTOS DUPLICADOS DETECTADOS:** Ya existen registros para este periodo ({m_t}/{a_t}) con los mismos destinos y productos.")
+                                        st.warning("Verifique el archivo para no duplicar datos.")
+                                        with st.expander("Ver detalle de llaves duplicadas"):
+                                            st.write(duplicados)
+                                    else:
+                                        ws_t = conectar_hoja("Historico_Traslados")
+                                        fecha_h = date.today().strftime('%d/%m/%Y')
+                                        filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
+                                        ws_t.append_rows(filas_t)
+                                        st.success("✅ Traslados guardados con éxito.")
                                 else:
                                     ws_t = conectar_hoja("Historico_Traslados")
                                     fecha_h = date.today().strftime('%d/%m/%Y')
                                     filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
                                     ws_t.append_rows(filas_t)
-                                    st.success("✅ Traslados guardados con éxito. Registro único garantizado.")
-                            else:
-                                ws_t = conectar_hoja("Historico_Traslados")
-                                fecha_h = date.today().strftime('%d/%m/%Y')
-                                filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
-                                ws_t.append_rows(filas_t)
-                                st.success("✅ Base inicializada. Primeros traslados guardados con éxito.")
+                                    st.success("✅ Base inicializada. Traslados guardados con éxito.")
 
             except Exception as e: st.error(f"Error: {e}")
 
