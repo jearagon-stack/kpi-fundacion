@@ -80,6 +80,7 @@ def mostrar_modulo_costos():
         with col3: unidad_cierre = st.selectbox("Unidad:", ["CAFETERIA"])
 
         meses_texto = {1:"ENERO", 2:"FEBRERO", 3:"MARZO", 4:"ABRIL", 5:"MAYO", 6:"JUNIO", 7:"JULIO", 8:"AGOSTO", 9:"SEPTIEMBRE", 10:"OCTUBRE", 11:"NOVIEMBRE", 12:"DICIEMBRE"}
+        lista_meses = list(meses_texto.values())
         
         es_consolidado = (tipo_cierre == "Consolidación Especial (Multi-mes)")
         pesos, nombres_meses = [], []
@@ -88,16 +89,16 @@ def mostrar_modulo_costos():
             num_meses = st.radio("¿Dividir en cuántos meses?", [2, 3], horizontal=True)
             cols_dist = st.columns(num_meses)
             for i in range(num_meses):
-                # Lógica corregida: Mes seleccionado - cantidad + i + 1
-                idx = mes_cierre - num_meses + i + 1
-                if idx < 1: idx += 12 # Ajuste para cruce de año
+                # Lógica: Sugerir meses hacia atrás desde el seleccionado
+                idx_sugerido = mes_cierre - (num_meses - 1) + i
+                if idx_sugerido < 1: idx_sugerido += 12
+                
                 with cols_dist[i]:
-                    n = st.text_input(f"Mes {i+1}:", meses_texto.get(idx, "MES"), key=f"n_gen_{i}").upper()
+                    n = st.selectbox(f"Mes {i+1}:", options=lista_meses, index=idx_sugerido-1, key=f"n_gen_{i}")
                     p = st.number_input(f"% Venta {n}", min_value=0.0, max_value=100.0, value=100.0/num_meses, key=f"p_gen_{i}")
                     pesos.append(p / 100); nombres_meses.append(n)
 
         st.divider()
-        # --- Lógica de Ingresos ---
         df_ventas = obtener_dataframe("Historico_Ventas")
         ventas_mes = subsidio_mes = 0.0
         if not df_ventas.empty:
@@ -110,13 +111,10 @@ def mostrar_modulo_costos():
             ventas_mes = pd.to_numeric(df_ventas[filtro_v]['Venta_Real'], errors='coerce').sum()
             subsidio_mes = pd.to_numeric(df_ventas[filtro_v]['Subsidio_UCA'], errors='coerce').sum()
 
-        # --- Lógica de Traslados (Costo Recibido) ---
         df_hist_tras = obtener_dataframe("Historico_Traslados")
         traslados_mes = 0.0
         if not df_hist_tras.empty:
-            f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
-                  (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
-                  (df_hist_tras['Destino'] == unidad_cierre)
+            f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & (df_hist_tras['Destino'] == unidad_cierre)
             traslados_mes = pd.to_numeric(df_hist_tras[f_t]['Monto'], errors='coerce').sum()
 
         porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
@@ -147,11 +145,7 @@ def mostrar_modulo_costos():
                 grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum()
                 grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
                 grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum()
-
-                # Sumar traslados por cuenta
-                grp_tras = pd.Series(0.0, index=grp_ini.index)
-                if not df_hist_tras.empty:
-                    grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum()
+                grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum() if not df_hist_tras.empty else pd.Series(0.0)
 
                 todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
                 consumo_por_cuenta = {}; costo_operativo = 0.0
@@ -166,7 +160,6 @@ def mostrar_modulo_costos():
                 r1.metric("Inicial", f"${grp_ini.sum():,.2f}"); r2.metric("Compras", f"${grp_comp.sum():,.2f}")
                 r3.metric("Final", f"${grp_fin.sum():,.2f}"); r4.metric("Diferido", f"${costo_dif_mes:,.2f}"); r5.metric("Real", f"${costo_real:,.2f}")
 
-                # --- PROTOCOLO DE AUDITORÍA ---
                 es_apto = ejecutar_auditoria_costos(df_ini_m, df_com_m, df_fin_m, consumo_por_cuenta, ventas_mes, costo_real, mes_cierre, anio_cierre, unidad_cierre)
 
                 if es_apto:
@@ -195,13 +188,13 @@ def mostrar_modulo_costos():
                             mostrar_descargas_logic(costo_operativo*pesos[i], costo_dif_mes*pesos[i], costo_diferido_anterior*pesos[i], nombres_meses[i], consumo_por_cuenta, costo_operativo, f"cons_{i}")
 
                     if st.button("💾 Guardar Cierre", type="primary", use_container_width=True):
-                        with st.spinner("Guardando en base de datos..."):
+                        with st.spinner("Guardando..."):
                             st.cache_data.clear()
                             ws_res = conectar_hoja("Cierres_Costos"); ws_det = conectar_hoja("Detalle_Cuentas")
                             fecha_hoy = date.today().strftime('%d/%m/%Y')
                             if ws_res and ws_det:
                                 ws_res.append_row([fecha_hoy, mes_cierre, anio_cierre, unidad_cierre, round(grp_ini.sum(),2), round(grp_comp.sum(),2), round(grp_fin.sum(),2), round(costo_diferido_anterior,2), round(costo_dif_mes,2), round(costo_real,2)])
-                                # --- Lógica de Detalle (Fuga de inventario) ---
+                                # --- Lógica de Detalle (Audit Trail) ---
                                 df_det_c = pd.concat([df_ini_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Inicial'}),
                                                    df_com_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Compra'}),
                                                    df_fin_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Final'})]).fillna(0)
@@ -213,11 +206,11 @@ def mostrar_modulo_costos():
                                         u_r = extraer_subunidad(r['ORIGEN_ARCHIVO'], unidad_cierre)
                                         filas_g.append([fecha_hoy, mes_cierre, anio_cierre, u_r, str(r['Cuenta_Contable']), round(r['Inicial'],2), round(r['Compra'],2), round(r['Final'],2), round(r['Consumo'],2), r['Codigo'], r['ORIGEN_ARCHIVO']])
                                 if filas_g: ws_det.append_rows(filas_g)
-                                st.success("✅ Conformidad guardada en sistema.")
-            except Exception as e: st.error(f"Error en proceso: {e}")
+                                st.success("✅ Conformidad guardada.")
+            except Exception as e: st.error(f"Error: {e}")
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (CON GUARDADO)
+    # PESTAÑA 2: TRASLADOS
     # ==========================================
     with tab2:
         st.subheader("🚚 Registro de Traslados Nexus")
@@ -228,7 +221,6 @@ def mostrar_modulo_costos():
         with ct2:
             a_t = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
             destino_t = st.text_input("Bodega Destino:", "CAFETERIA").upper()
-
         arch_t = st.file_uploader("Reporte Nexus (I, N, AA)", type=["xlsx"], key="atf_reg")
         if arch_t:
             df_t_raw = pd.read_excel(arch_t, usecols="I,N,AA", names=['Codigo', 'Monto', 'Categoria'], skiprows=1)
@@ -245,36 +237,30 @@ def mostrar_modulo_costos():
                 st.success("✅ Traslados registrados satisfactoriamente.")
 
     # ==========================================
-    # PESTAÑA 3: CONSULTA HISTORIAL (RESTAURADO)
+    # PESTAÑA 3: CONSULTA HISTORIAL (RESTAURADA)
     # ==========================================
     with tab3:
         st.subheader("🔍 Consulta de Historial Operativo")
         if st.button("🔄 Actualizar Base", key="update_hist"): st.cache_data.clear()
         df_resumen = obtener_dataframe("Cierres_Costos"); df_detalle = obtener_dataframe("Detalle_Cuentas")
-
         if not df_resumen.empty:
             df_resumen['Periodo'] = df_resumen['Mes'].astype(str).str.replace('.0','') + "/" + df_resumen['Año'].astype(str).str.replace('.0','') + " - " + df_resumen['Unidad']
             per_sel = st.selectbox("Seleccione Cierre:", df_resumen['Periodo'].unique().tolist(), index=len(df_resumen['Periodo'].unique())-1)
-
             if per_sel:
                 fila = df_resumen[df_resumen['Periodo'] == per_sel].iloc[-1]
                 m_f, a_f = str(fila['Mes']).strip(), str(fila['Año']).strip()
                 v_ini, v_com, v_fin = float(fila.iloc[4]), float(fila.iloc[5]), float(fila.iloc[6])
                 v_ant, v_dif, v_real = float(fila.iloc[7]), float(fila.iloc[8]), float(fila.iloc[9])
-
                 c1, c2, c3, c4, c5 = st.columns(5)
                 c1.metric("Inicial", f"${v_ini:,.2f}"); c2.metric("Compras", f"${v_com:,.2f}")
                 c3.metric("Final", f"${v_fin:,.2f}"); c4.metric("Diferido", f"${v_dif:,.2f}"); c5.metric("Real", f"${v_real:,.2f}")
-
                 df_det_h = df_detalle[(df_detalle['Mes'].astype(str).str.replace('.0','') == m_f) & (df_detalle['Año'].astype(str).str.replace('.0','') == a_f)]
                 if st.checkbox("📂 Ver Detalle de Movimientos", key="chk_det"):
                     st.dataframe(df_det_h, use_container_width=True)
-
                 st.divider(); st.markdown("#### 📥 Reconstruir Partidas Nexus")
-                tipo_h = st.radio("Formato de Reconstrucción:", ["Cierre Estándar", "Cierre Consolidado"], key="th")
+                tipo_h = st.radio("Formato:", ["Cierre Estándar", "Cierre Consolidado"], key="th")
                 consumo_h = df_det_h.groupby('Cuenta')['Consumo'].sum().to_dict()
                 op_h = sum(consumo_h.values())
-
                 if tipo_h == "Cierre Estándar":
                     cv_h = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {m_f}/{a_f}."
                     fv_h = [["410104", "", cv_h, round(op_h, 2), 0, ""]]
