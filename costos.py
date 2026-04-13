@@ -17,6 +17,7 @@ def mostrar_modulo_costos():
         "DESPENSA":  ["DESPENSA"]
     }
 
+    # LA LISTA NEGRA: Destinos que el sistema ignorará por completo
     destinos_ignorados = [
         "CAFETERIA EVENTOS", 
         "CAFETERIA JARDINES", 
@@ -512,14 +513,8 @@ def mostrar_modulo_costos():
                 
                 df_validos = df_t_raw[filtro_externo & filtro_no_ignorado & filtro_base]
                 
-                # 5. REGLA ESTRICTA DE DESPENSA
-                if unidad_t == "CAFETERIA":
-                    # Si viene de Despensa, NO puede ir a otra cosa que no sea Abastecimiento
-                    filtro_despensa_invalida = (df_validos['Origen'] == 'DESPENSA') & (df_validos['Destino'] != 'CAFETERIA ABASTECIMIENTO')
-                    df_validos = df_validos[~filtro_despensa_invalida]
-                
                 if df_validos.empty:
-                    st.warning(f"⚠️ No hay traslados válidos de entrada o salida para {unidad_t}.")
+                    st.warning(f"⚠️ No hay traslados válidos de entrada o salida para {unidad_t} (se ignoraron los movimientos hacia {destinos_ignorados}).")
                 else:
                     df_dic_t = obtener_dataframe("Categorias_Costos")
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
