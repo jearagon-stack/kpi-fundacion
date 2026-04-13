@@ -145,44 +145,166 @@ def mostrar_modulo_costos():
             with col_u2: arch_com = st.file_uploader("2. Compras", type=["xlsx"], accept_multiple_files=True)
             with col_u3: arch_fin = st.file_uploader("3. Inv. Final", type=["xlsx"], accept_multiple_files=True)
 
-            # CHECKBOX PARA FORZAR (Si el usuario decide ignorar los que faltan)
-            forzar_calculo = st.checkbox("⚠️ Forzar cálculo (Aplicará el salvavidas o ignorará códigos sin cuenta)")
-
             if arch_ini and arch_com and arch_fin:
-                if st.button("⚙️ Procesar Archivos y Guardar en Memoria", type="primary", use_container_width=True):
-                    with st.spinner("Realizando validación cruzada..."):
-                        try:
-                            df_inicial = consolidar(arch_ini); df_compras = consolidar(arch_com); df_final = consolidar(arch_fin)
-                            df_dic = obtener_dataframe("Categorias_Costos")
-                            def limpiar_cod(s): return s.astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
-                            for df in [df_dic, df_inicial, df_compras, df_final]: df['Codigo'] = limpiar_cod(df['Codigo'])
-                            
-                            basura = ['G222', 'G231', '21455979']
-                            df_inicial = df_inicial[~df_inicial['Codigo'].isin(basura)]
-                            df_compras = df_compras[~df_compras['Codigo'].isin(basura)]
-                            df_final = df_final[~df_final['Codigo'].isin(basura)]
+                
+                # --- SI NO HAY HUÉRFANOS PENDIENTES DE RESOLVER ---
+                if 'huerfanos_df' not in st.session_state:
+                    forzar_calculo = st.checkbox("⚠️ Forzar cálculo ciego (Omitir revisión de cuentas)")
+                    
+                    if st.button("⚙️ Procesar Archivos y Guardar en Memoria", type="primary", use_container_width=True):
+                        with st.spinner("Realizando validación cruzada y buscando anomalías..."):
+                            try:
+                                df_inicial = consolidar(arch_ini); df_compras = consolidar(arch_com); df_final = consolidar(arch_fin)
+                                df_dic = obtener_dataframe("Categorias_Costos")
+                                def limpiar_cod(s): return s.astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                                for df in [df_dic, df_inicial, df_compras, df_final]: df['Codigo'] = limpiar_cod(df['Codigo'])
+                                
+                                basura = ['G222', 'G231', '21455979']
+                                df_inicial = df_inicial[~df_inicial['Codigo'].isin(basura)]
+                                df_compras = df_compras[~df_compras['Codigo'].isin(basura)]
+                                df_final = df_final[~df_final['Codigo'].isin(basura)]
 
-                            df_ini_m = pd.merge(df_inicial, df_dic, on='Codigo', how='left')
-                            df_com_m = pd.merge(df_compras, df_dic, on='Codigo', how='left')
-                            df_fin_m = pd.merge(df_final, df_dic, on='Codigo', how='left')
+                                df_ini_m = pd.merge(df_inicial, df_dic, on='Codigo', how='left')
+                                df_com_m = pd.merge(df_compras, df_dic, on='Codigo', how='left')
+                                df_fin_m = pd.merge(df_final, df_dic, on='Codigo', how='left')
 
-                            # ---------------------------------------------------------
-                            # NUEVO: PRE-CHECK DE AUDITORÍA DE CÓDIGOS (EL GATEKEEPER)
-                            # ---------------------------------------------------------
-                            def detectar_huerfanos(df):
-                                if df.empty: return pd.DataFrame()
-                                mask = df['Cuenta_Contable'].isna() | df['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
-                                return df[mask][['Codigo', 'ORIGEN_ARCHIVO']]
+                                # DETECTOR DE HUÉRFANOS
+                                def detectar_huerfanos(df):
+                                    if df.empty: return pd.DataFrame()
+                                    mask = df['Cuenta_Contable'].isna() | df['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
+                                    # Extraemos el código, la categoría nativa y el origen
+                                    return df[mask][['Codigo', 'Categoria', 'ORIGEN_ARCHIVO']]
 
-                            df_faltantes = pd.concat([detectar_huerfanos(df_ini_m), detectar_huerfanos(df_com_m), detectar_huerfanos(df_fin_m)]).drop_duplicates(subset=['Codigo'])
+                                df_faltantes = pd.concat([detectar_huerfanos(df_ini_m), detectar_huerfanos(df_com_m), detectar_huerfanos(df_fin_m)]).drop_duplicates(subset=['Codigo'])
 
-                            if not df_faltantes.empty and not forzar_calculo:
-                                st.error("🚨 **ALERTA: PRODUCTOS SIN CUENTA CONTABLE DETECTADOS**")
-                                st.warning("El cálculo ha sido detenido para evitar errores. Se encontraron códigos que no existen en el Maestro (Google Sheets). \n\n**¿Qué hacer?**\n1. Ve a Google Sheets y ponles una cuenta a los siguientes códigos.\n2. Vuelve a presionar el botón rojo.\n3. O si prefieres que el sistema les aplique el salvavidas de categoría, marca la casilla 'Forzar Cálculo' arriba y vuelve a presionar.")
-                                st.dataframe(df_faltantes, use_container_width=True)
-                                st.stop() # DETIENE LA EJECUCIÓN AQUÍ HASTA QUE SE RESUELVA
-                            # ---------------------------------------------------------
+                                grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum() if not df_hist_tras.empty else pd.Series(0.0)
 
+                                if not df_faltantes.empty and not forzar_calculo:
+                                    # PAUSA DE EMERGENCIA: Guardamos las bases crudas y mostramos el editor
+                                    st.session_state['pre_proceso'] = {
+                                        'ini': df_ini_m, 'com': df_com_m, 'fin': df_fin_m, 'grp_tras': grp_tras
+                                    }
+                                    st.session_state['huerfanos_df'] = df_faltantes
+                                    st.rerun()
+
+                                # SI NO HAY HUÉRFANOS (O SE FORZÓ), HACE EL CÁLCULO DIRECTO
+                                df_ini_m = proteger_cuentas_nulas(df_ini_m)
+                                df_com_m = proteger_cuentas_nulas(df_com_m)
+                                df_fin_m = proteger_cuentas_nulas(df_fin_m)
+
+                                df_ini_m['Valor'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * pd.to_numeric(get_num(df_ini_m, [['COSTO', 'U']]), errors='coerce').fillna(0.0)
+                                df_fin_m['Valor'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U']]), errors='coerce').fillna(0.0)
+                                df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO']]), errors='coerce').fillna(0.0)
+
+                                grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum()
+                                grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
+                                grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum()
+                                
+                                todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
+                                consumo_por_cuenta = {}
+                                total_ini_val = total_com_val = total_tras_val = total_fin_val = costo_operativo = 0.0
+                                
+                                cuentas_invalidas = ["NO APLICA", "0", "0.0", "OMITIDO_MANUAL"]
+                                for cta in todas_cuentas:
+                                    if pd.isna(cta): continue
+                                    cta_str = str(cta).strip().upper().replace(".0", "")
+                                    
+                                    v_ini = float(grp_ini.get(cta, 0.0))
+                                    v_com = float(grp_comp.get(cta, 0.0))
+                                    v_tras = float(grp_tras.get(cta, 0.0))
+                                    v_fin = float(grp_fin.get(cta, 0.0))
+                                    
+                                    if cta_str not in cuentas_invalidas: 
+                                        total_ini_val += v_ini; total_com_val += v_com
+                                        total_tras_val += v_tras; total_fin_val += v_fin
+                                        val = v_ini + v_com + v_tras - v_fin
+                                        if val != 0:
+                                            consumo_por_cuenta[cta_str] = val
+                                            costo_operativo += val
+                                
+                                costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
+                                costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
+
+                                st.session_state['memoria_cierre'] = {
+                                    'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
+                                    'grp_ini_sum': total_ini_val, 'grp_comp_sum': total_com_val, 
+                                    'grp_tras_sum': total_tras_val, 'grp_fin_sum': total_fin_val,
+                                    'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
+                                    'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
+                                    'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
+                                    'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
+                                }
+                                st.session_state['datos_auditoria'] = {'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real}
+                                st.rerun() 
+                            except Exception as e: st.error(f"Error procesando: {e}")
+
+                # --- SI HAY HUÉRFANOS Y ENTRAMOS EN MODO EDITOR ---
+                else:
+                    st.error("🚨 ALERTA: PRODUCTOS SIN CUENTA CONTABLE DETECTADOS")
+                    st.write("El sistema ha pausado el cálculo para que decidas qué hacer con estos códigos. Puedes asignarles una cuenta, usar su nombre de categoría o tirarlos a la basura (omitirlos) para que no afecten tu costo.")
+                    
+                    df_edit = st.session_state['huerfanos_df'].copy()
+                    if 'Accion' not in df_edit.columns:
+                        df_edit['Accion'] = "Omitir (No sumar al costo)"
+                        df_edit['Cuenta_Manual'] = ""
+
+                    edited_df = st.data_editor(
+                        df_edit,
+                        column_config={
+                            "Codigo": "Código Producto",
+                            "Categoria": "Categoría Nativa",
+                            "ORIGEN_ARCHIVO": "Archivo Origen",
+                            "Accion": st.column_config.SelectboxColumn(
+                                "¿Qué hacer?",
+                                options=["Omitir (No sumar al costo)", "Usar Categoría Nativa", "Escribir Cuenta Manual"],
+                                required=True
+                            ),
+                            "Cuenta_Manual": st.column_config.TextColumn(
+                                "Cuenta (Si es Manual)",
+                                help="Si elegiste 'Escribir Cuenta Manual', teclea aquí la cuenta (Ej: 110603 o Materia Prima)"
+                            )
+                        },
+                        hide_index=True,
+                        disabled=["Codigo", "Categoria", "ORIGEN_ARCHIVO"],
+                        use_container_width=True
+                    )
+
+                    col_b1, col_b2 = st.columns(2)
+                    if col_b1.button("✅ Aplicar Decisiones y Generar Cierre", type="primary", use_container_width=True):
+                        with st.spinner("Aplicando reglas y calculando..."):
+                            df_ini_m = st.session_state['pre_proceso']['ini']
+                            df_com_m = st.session_state['pre_proceso']['com']
+                            df_fin_m = st.session_state['pre_proceso']['fin']
+                            grp_tras = st.session_state['pre_proceso']['grp_tras']
+
+                            codigos_omitir = edited_df[edited_df['Accion'] == 'Omitir (No sumar al costo)']['Codigo'].tolist()
+                            df_asignar = edited_df[edited_df['Accion'] == 'Escribir Cuenta Manual']
+                            df_categoria = edited_df[edited_df['Accion'] == 'Usar Categoría Nativa']
+
+                            def aplicar_reglas_auditor(df_obj):
+                                df = df_obj.copy()
+                                # 1. Omitir
+                                mask_omitir = df['Codigo'].isin(codigos_omitir)
+                                if mask_omitir.any(): df.loc[mask_omitir, 'Cuenta_Contable'] = 'OMITIDO_MANUAL'
+                                
+                                # 2. Cuenta Manual
+                                for _, row in df_asignar.iterrows():
+                                    c_manual = str(row['Cuenta_Manual']).strip()
+                                    if c_manual == "": c_manual = "SIN CUENTA REGISTRADA"
+                                    df.loc[df['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = c_manual
+                                
+                                # 3. Categoria Nativa
+                                for _, row in df_categoria.iterrows():
+                                    cat_val = str(row['Categoria']).strip()
+                                    df.loc[df['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = cat_val
+                                
+                                return df
+
+                            df_ini_m = aplicar_reglas_auditor(df_ini_m)
+                            df_com_m = aplicar_reglas_auditor(df_com_m)
+                            df_fin_m = aplicar_reglas_auditor(df_fin_m)
+
+                            # Blindaje matemático estándar
                             df_ini_m = proteger_cuentas_nulas(df_ini_m)
                             df_com_m = proteger_cuentas_nulas(df_com_m)
                             df_fin_m = proteger_cuentas_nulas(df_fin_m)
@@ -195,19 +317,12 @@ def mostrar_modulo_costos():
                             grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
                             grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum()
                             
-                            grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum() if not df_hist_tras.empty else pd.Series(0.0)
-
                             todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
                             consumo_por_cuenta = {}
+                            total_ini_val = total_com_val = total_tras_val = total_fin_val = costo_operativo = 0.0
                             
-                            # ACÁ SE LIMPIAN LOS TOTALES PARA QUE CUADREN CON LA PANTALLA
-                            total_ini_val = 0.0
-                            total_com_val = 0.0
-                            total_tras_val = 0.0
-                            total_fin_val = 0.0
-                            costo_operativo = 0.0
-                            
-                            cuentas_invalidas = ["NO APLICA", "0", "0.0"]
+                            # OMITIDO_MANUAL se ignora matemáticamente aquí
+                            cuentas_invalidas = ["NO APLICA", "0", "0.0", "OMITIDO_MANUAL"]
                             for cta in todas_cuentas:
                                 if pd.isna(cta): continue
                                 cta_str = str(cta).strip().upper().replace(".0", "")
@@ -218,11 +333,8 @@ def mostrar_modulo_costos():
                                 v_fin = float(grp_fin.get(cta, 0.0))
                                 
                                 if cta_str not in cuentas_invalidas: 
-                                    total_ini_val += v_ini
-                                    total_com_val += v_com
-                                    total_tras_val += v_tras
-                                    total_fin_val += v_fin
-                                    
+                                    total_ini_val += v_ini; total_com_val += v_com
+                                    total_tras_val += v_tras; total_fin_val += v_fin
                                     val = v_ini + v_com + v_tras - v_fin
                                     if val != 0:
                                         consumo_por_cuenta[cta_str] = val
@@ -233,24 +345,30 @@ def mostrar_modulo_costos():
 
                             st.session_state['memoria_cierre'] = {
                                 'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
-                                'grp_ini_sum': total_ini_val, 
-                                'grp_comp_sum': total_com_val, 
-                                'grp_tras_sum': total_tras_val, # Se agrega traslado a memoria
-                                'grp_fin_sum': total_fin_val,
+                                'grp_ini_sum': total_ini_val, 'grp_comp_sum': total_com_val, 
+                                'grp_tras_sum': total_tras_val, 'grp_fin_sum': total_fin_val,
                                 'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
                                 'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
                                 'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
                                 'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
                             }
                             st.session_state['datos_auditoria'] = {'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real}
-                            st.rerun() 
-                        except Exception as e: st.error(f"Error procesando: {e}")
+                            
+                            # Limpieza de estados temporales
+                            del st.session_state['huerfanos_df']
+                            del st.session_state['pre_proceso']
+                            st.rerun()
 
+                    if col_b2.button("❌ Cancelar y Limpiar Archivos"):
+                        del st.session_state['huerfanos_df']
+                        del st.session_state['pre_proceso']
+                        st.rerun()
+
+        # --- FASE C: MEMORIA GUARDADA ---
         else:
             mem = st.session_state['memoria_cierre']
             st.success(f"📦 **DATOS EN MEMORIA:** Cierre de {mem['unidad_cierre']} - Periodo: {meses_texto[mem['mes_cierre']]} {mem['anio_cierre']}")
             
-            # AHORA SON 6 COLUMNAS PARA QUE EL TRASLADO SE VEA CLARAMENTE SUMADO
             r1, r2, r3, r4, r5, r6 = st.columns(6)
             r1.metric("Inicial (+)", f"${mem['grp_ini_sum']:,.2f}")
             r2.metric("Compras (+)", f"${mem['grp_comp_sum']:,.2f}")
