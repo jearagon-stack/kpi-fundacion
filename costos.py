@@ -3,17 +3,12 @@ import pandas as pd
 from datetime import date
 from utils import obtener_dataframe, conectar_hoja
 import io
-from validacion import ejecutar_auditoria_costos
 
 def mostrar_modulo_costos():
     st.title("Contabilidad de Costos")
 
-    # --- Pestañas Originales ---
     tab1, tab2, tab3 = st.tabs(["📝 Generar Cierre", "🚚 Partidas de Traslados", "🔍 Consultar Histórico"])
 
-    # ==========================================
-    # FUNCIONES DE APOYO (RESTAURADAS AL 100%)
-    # ==========================================
     def generar_excel_bytes(filas):
         df_p = pd.DataFrame(filas)
         output = io.BytesIO()
@@ -25,8 +20,7 @@ def mostrar_modulo_costos():
         nombre_upper = str(nombre_archivo).upper()
         subunidades = ["POLIDEPORTIVO", "ICAS", "JARDINES", "EVENTOS", "CENTRAL", "ABASTECIMIENTO"]
         for sub in subunidades:
-            if sub in nombre_upper:
-                return f"{unidad_base} {sub}"
+            if sub in nombre_upper: return f"{unidad_base} {sub}"
         return unidad_base
 
     def cargar_y_marcar(archivo):
@@ -65,9 +59,6 @@ def mostrar_modulo_costos():
                 if all(p in c_norm for p in k): return pd.to_numeric(df[col], errors='coerce').fillna(0)
         return pd.Series(0, index=df.index)
 
-    # ==========================================
-    # PESTAÑA 1: GENERAR CIERRE
-    # ==========================================
     with tab1:
         st.subheader("1. Cierre Contable")
         col_config1, col_config2 = st.columns([2, 1])
@@ -86,11 +77,8 @@ def mostrar_modulo_costos():
         pesos, nombres_meses = [], []
 
         if es_consolidado:
-            # Ahora el valor por defecto es el mismo número del mes seleccionado
             num_meses = st.number_input("¿Dividir en cuántos meses?", min_value=1, max_value=12, value=mes_cierre)
-            st.markdown(f"**Distribución de costos para el periodo de {num_meses} meses finalizando en {meses_texto[mes_cierre]}:**")
-            
-            # Lógica para mostrar 3 meses por fila y evitar el error de "target"
+            st.markdown(f"**Distribución de costos para {num_meses} meses finalizando en {meses_texto[mes_cierre]}:**")
             for i in range(0, num_meses, 3):
                 cols = st.columns(3)
                 for j in range(3):
@@ -98,14 +86,12 @@ def mostrar_modulo_costos():
                     if idx_actual < num_meses:
                         idx_sugerido = mes_cierre - (num_meses - 1) + idx_actual
                         if idx_sugerido < 1: idx_sugerido += 12
-                        
                         with cols[j]:
                             n = st.selectbox(f"Mes {idx_actual+1}:", options=lista_meses, index=idx_sugerido-1, key=f"n_gen_{idx_actual}")
                             p = st.number_input(f"% Venta {n}", min_value=0.0, max_value=100.0, value=100.0/num_meses, key=f"p_gen_{idx_actual}")
                             pesos.append(p / 100); nombres_meses.append(n)
 
         st.divider()
-        # --- Lógica de Ingresos ---
         df_ventas = obtener_dataframe("Historico_Ventas")
         ventas_mes = subsidio_mes = 0.0
         if not df_ventas.empty:
@@ -125,6 +111,7 @@ def mostrar_modulo_costos():
             f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & (df_hist_tras['Destino'] == unidad_cierre)
             traslados_mes = pd.to_numeric(df_hist_tras[f_t]['Monto'], errors='coerce').sum()
 
+        porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
         st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados: ${traslados_mes:,.2f}")
 
         costo_diferido_anterior = st.number_input("Costo Diferido de Arrastre (110602):", min_value=0.0, value=0.0)
@@ -156,11 +143,11 @@ def mostrar_modulo_costos():
 
                 todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
                 consumo_por_cuenta = {}; costo_operativo = 0.0
+                
                 for cta in todas_cuentas:
                     val = grp_ini.get(cta, 0) + grp_comp.get(cta, 0) + grp_tras.get(cta, 0) - grp_fin.get(cta, 0)
                     if val != 0: consumo_por_cuenta[cta] = val; costo_operativo += val
                 
-                porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
                 costo_dif_mes = costo_operativo * porcentaje_subsidio
                 costo_real = costo_operativo - costo_dif_mes + costo_diferido_anterior
 
@@ -168,16 +155,36 @@ def mostrar_modulo_costos():
                 r1.metric("Inicial", f"${grp_ini.sum():,.2f}"); r2.metric("Compras", f"${grp_comp.sum():,.2f}")
                 r3.metric("Final", f"${grp_fin.sum():,.2f}"); r4.metric("Diferido", f"${costo_dif_mes:,.2f}"); r5.metric("Real", f"${costo_real:,.2f}")
 
-                es_apto = ejecutar_auditoria_costos(df_ini_m, df_com_m, df_fin_m, consumo_por_cuenta, ventas_mes, costo_real, mes_cierre, anio_cierre, unidad_cierre)
+                # --- 1. RESTAURACIÓN DEL DETALLE DE MOVIMIENTOS ---
+                st.divider()
+                if st.checkbox("📂 Ver Detalle de Movimientos / Cuentas"):
+                    df_det_view = pd.DataFrame(list(consumo_por_cuenta.items()), columns=['Cuenta Contable', 'Consumo (Impacto)'])
+                    st.dataframe(df_det_view, use_container_width=True)
 
-                if es_apto:
+                # --- 2. GUARDADO EN MEMORIA PARA VALIDACIÓN (EL PUENTE) ---
+                st.session_state['datos_auditoria'] = {
+                    'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real
+                }
+                
+                # --- 3. LÓGICA DE BOTONES SEPARADOS ---
+                if not st.session_state.get('auditoria_aprobada', False):
+                    st.warning("⚠️ Los datos están en memoria. Ve al módulo **'VALIDACIÓN DE COSTOS'** en el menú izquierdo para aprobar este periodo.")
+                else:
+                    st.success("✅ Protocolo de Integridad Aprobado. Proceda con las descargas y el cierre.")
+                    
                     def mostrar_descargas_logic(c_op, c_dif, c_ant, label_m, dict_consumo, total_op_base, key_suffix):
                         st.markdown(f"#### 📥 Partidas: **{label_m}**")
                         conc_v = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {label_m} {anio_cierre}."
                         f_v = [["410104", "", conc_v, round(c_op, 2), 0.00, ""]]
+                        
                         for c, m in dict_consumo.items():
+                            cta_str = str(c).replace(".0","").strip()
+                            # LIMPIEZA DE CELDAS VACÍAS Y NO APLICA (Tu corrección de Excel)
+                            if cta_str == "" or cta_str.lower() in ["nan", "nat", "no aplica"]: continue
+                            
                             m_perc = m * (c_op / total_op_base) if total_op_base > 0 else 0
-                            if m_perc > 0: f_v.append([str(c).replace(".0",""), "", conc_v, 0.00, round(m_perc, 2), ""])
+                            if m_perc > 0.01: # Evitar centavos residuales
+                                f_v.append([cta_str, "", conc_v, 0.00, round(m_perc, 2), ""])
                         
                         conc_p = f"RECONOCIMIENTO DE COSTO DE LO VENDIDO EN PROCESO CAFETERIA {label_m} {anio_cierre}"
                         f_p = [["410104", "", conc_p, round(c_ant, 2), 0.00, ""], ["110602", "", conc_p, 0.00, round(c_ant, 2), ""]]
@@ -195,14 +202,12 @@ def mostrar_modulo_costos():
                         for i in range(len(pesos)):
                             mostrar_descargas_logic(costo_operativo*pesos[i], costo_dif_mes*pesos[i], costo_diferido_anterior*pesos[i], nombres_meses[i], consumo_por_cuenta, costo_operativo, f"cons_{i}")
 
-                    if st.button("💾 Guardar Cierre", type="primary", use_container_width=True):
+                    if st.button("💾 Cerrar Periodo y Guardar Base", type="primary", use_container_width=True):
                         with st.spinner("Guardando..."):
-                            st.cache_data.clear()
                             ws_res = conectar_hoja("Cierres_Costos"); ws_det = conectar_hoja("Detalle_Cuentas")
                             fecha_hoy = date.today().strftime('%d/%m/%Y')
                             if ws_res and ws_det:
                                 ws_res.append_row([fecha_hoy, mes_cierre, anio_cierre, unidad_cierre, round(grp_ini.sum(),2), round(grp_comp.sum(),2), round(grp_fin.sum(),2), round(costo_diferido_anterior,2), round(costo_dif_mes,2), round(costo_real,2)])
-                                # --- Lógica de Detalle ---
                                 df_det_c = pd.concat([df_ini_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Inicial'}),
                                                    df_com_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Compra'}),
                                                    df_fin_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Final'})]).fillna(0)
@@ -214,12 +219,11 @@ def mostrar_modulo_costos():
                                         u_r = extraer_subunidad(r['ORIGEN_ARCHIVO'], unidad_cierre)
                                         filas_g.append([fecha_hoy, mes_cierre, anio_cierre, u_r, str(r['Cuenta_Contable']), round(r['Inicial'],2), round(r['Compra'],2), round(r['Final'],2), round(r['Consumo'],2), r['Codigo'], r['ORIGEN_ARCHIVO']])
                                 if filas_g: ws_det.append_rows(filas_g)
-                                st.success("✅ Conformidad guardada.")
+                                st.session_state['auditoria_aprobada'] = False # Reseteamos para el próximo
+                                st.cache_data.clear()
+                                st.success("✅ Guardado Completo.")
             except Exception as e: st.error(f"Error: {e}")
 
-    # ==========================================
-    # PESTAÑA 2: TRASLADOS
-    # ==========================================
     with tab2:
         st.subheader("🚚 Registro de Traslados Nexus")
         ct1, ct2 = st.columns(2)
@@ -244,9 +248,6 @@ def mostrar_modulo_costos():
                 ws_t.append_rows(filas_t)
                 st.success("✅ Traslados registrados satisfactoriamente.")
 
-    # ==========================================
-    # PESTAÑA 3: CONSULTA HISTORIAL
-    # ==========================================
     with tab3:
         st.subheader("🔍 Consulta de Historial Operativo")
         if st.button("🔄 Actualizar Base", key="update_hist"): st.cache_data.clear()
@@ -273,5 +274,7 @@ def mostrar_modulo_costos():
                     cv_h = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {m_f}/{a_f}."
                     fv_h = [["410104", "", cv_h, round(op_h, 2), 0, ""]]
                     for c, m in consumo_h.items():
-                        if m > 0: fv_h.append([str(c).replace(".0",""), "", cv_h, 0, round(m, 2), ""])
+                        cta_str = str(c).replace(".0","").strip()
+                        if cta_str != "" and cta_str.lower() not in ["nan", "nat", "no aplica"]:
+                            if m > 0.01: fv_h.append([cta_str, "", cv_h, 0, round(m, 2), ""])
                     st.download_button(f"⬇️ Bajar P1 {m_f}", generar_excel_bytes(fv_h), f"H_P1_{m_f}.xlsx", key="hp1_std")
