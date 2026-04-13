@@ -1,7 +1,7 @@
 import streamlit as st
 import urllib.parse
 from datetime import datetime, timedelta
-import auth, gastos, ventas, costos
+import auth, gastos, ventas, costos, validacion  # <--- Importamos el nuevo módulo
 from utils import conectar_hoja, obtener_dataframe
 
 st.set_page_config(page_title="Auditoría DTE Pro", layout="wide")
@@ -16,6 +16,7 @@ st.markdown(ocultar_elementos, unsafe_allow_html=True)
 
 usuarios_validos = auth.obtener_usuarios_db()
 
+# --- Gestión de Sesión ---
 if "logged_in" not in st.session_state:
     st.session_state.logged_in = False
 if "last_activity" not in st.session_state:
@@ -73,13 +74,15 @@ if not st.session_state.logged_in:
                     st.error("❌ Usuario o contraseña incorrectos.")
     st.stop() 
 
+# --- Sidebar y Menú ---
 with st.sidebar:
     st.title("Menú Principal")
-    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS"]
+    # Agregamos la opción de VALIDACIÓN DE COSTOS al menú
+    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS"]
+    
     if st.session_state.rol_actual == "ADMIN":
         opciones_menu.append("CONFIGURACIÓN")
         
-    # --- NUEVO SISTEMA DE MEMORIA PARA SOBREVIVIR AL F5 ---
     if "menu_opcion" not in st.session_state:
         st.session_state.menu_opcion = st.query_params.get("modulo", opciones_menu[0])
         
@@ -87,7 +90,6 @@ with st.sidebar:
         st.session_state.menu_opcion = opciones_menu[0]
         
     def actualizar_url_modulo():
-        # Cuando haces clic, guarda el módulo en la URL
         st.query_params["modulo"] = st.session_state.menu_radio
         st.session_state.menu_opcion = st.session_state.menu_radio
         
@@ -98,7 +100,6 @@ with st.sidebar:
         key="menu_radio",
         on_change=actualizar_url_modulo
     )
-    # ------------------------------------------------------
     
     st.divider()
     st.markdown(f"👤 Usuario: **{st.session_state.usuario_actual}**")
@@ -113,12 +114,15 @@ with st.sidebar:
             del st.session_state["menu_opcion"]
         st.rerun()
 
+# --- Lógica de Navegación ---
 if opcion == "KPI DE REGISTROS":
     gastos.mostrar_modulo_gastos()
 elif opcion == "KPI DE VENTAS":
     ventas.mostrar_modulo_ventas()
 elif opcion == "CONTABILIDAD DE COSTOS":
     costos.mostrar_modulo_costos()
+elif opcion == "VALIDACIÓN DE COSTOS":
+    validacion.mostrar_modulo_validacion()  # <--- Llamada al nuevo módulo independiente
 elif opcion == "CONFIGURACIÓN":
     st.title("⚙️ Configuración del Sistema")
     st.markdown("Desde aquí puedes administrar los accesos a la plataforma de forma rápida.")
