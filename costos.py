@@ -130,9 +130,18 @@ def mostrar_modulo_costos():
             if not df_hist_tras.empty:
                 df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0.0)
                 destinos_a_buscar = mapa_subunidades.get(unidad_cierre, [unidad_cierre])
-                f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
-                      (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
-                      (df_hist_tras['Destino'].isin(destinos_a_buscar))
+                
+                # --- NUEVA LÓGICA PARA TRASLADOS MULTI-MES ---
+                if es_consolidado:
+                    meses_indices = [list(meses_texto.keys())[list(meses_texto.values()).index(m)] for m in nombres_meses]
+                    f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_indices)) & \
+                          (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
+                          (df_hist_tras['Destino'].isin(destinos_a_buscar))
+                else:
+                    f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
+                          (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
+                          (df_hist_tras['Destino'].isin(destinos_a_buscar))
+                          
                 traslados_mes = df_hist_tras[f_t]['Monto'].sum()
 
             porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
@@ -147,7 +156,6 @@ def mostrar_modulo_costos():
 
             if arch_ini and arch_com and arch_fin:
                 
-                # --- SI NO HAY HUÉRFANOS PENDIENTES DE RESOLVER ---
                 if 'huerfanos_df' not in st.session_state:
                     forzar_calculo = st.checkbox("⚠️ Forzar cálculo ciego (Omitir revisión de cuentas)")
                     
@@ -168,11 +176,9 @@ def mostrar_modulo_costos():
                                 df_com_m = pd.merge(df_compras, df_dic, on='Codigo', how='left')
                                 df_fin_m = pd.merge(df_final, df_dic, on='Codigo', how='left')
 
-                                # DETECTOR DE HUÉRFANOS
                                 def detectar_huerfanos(df):
                                     if df.empty: return pd.DataFrame()
                                     mask = df['Cuenta_Contable'].isna() | df['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
-                                    # Extraemos el código, la categoría nativa y el origen
                                     return df[mask][['Codigo', 'Categoria', 'ORIGEN_ARCHIVO']]
 
                                 df_faltantes = pd.concat([detectar_huerfanos(df_ini_m), detectar_huerfanos(df_com_m), detectar_huerfanos(df_fin_m)]).drop_duplicates(subset=['Codigo'])
@@ -180,14 +186,12 @@ def mostrar_modulo_costos():
                                 grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum() if not df_hist_tras.empty else pd.Series(0.0)
 
                                 if not df_faltantes.empty and not forzar_calculo:
-                                    # PAUSA DE EMERGENCIA: Guardamos las bases crudas y mostramos el editor
                                     st.session_state['pre_proceso'] = {
                                         'ini': df_ini_m, 'com': df_com_m, 'fin': df_fin_m, 'grp_tras': grp_tras
                                     }
                                     st.session_state['huerfanos_df'] = df_faltantes
                                     st.rerun()
 
-                                # SI NO HAY HUÉRFANOS (O SE FORZÓ), HACE EL CÁLCULO DIRECTO
                                 df_ini_m = proteger_cuentas_nulas(df_ini_m)
                                 df_com_m = proteger_cuentas_nulas(df_com_m)
                                 df_fin_m = proteger_cuentas_nulas(df_fin_m)
@@ -238,7 +242,6 @@ def mostrar_modulo_costos():
                                 st.rerun() 
                             except Exception as e: st.error(f"Error procesando: {e}")
 
-                # --- SI HAY HUÉRFANOS Y ENTRAMOS EN MODO EDITOR ---
                 else:
                     st.error("🚨 ALERTA: PRODUCTOS SIN CUENTA CONTABLE DETECTADOS")
                     st.write("El sistema ha pausado el cálculo para que decidas qué hacer con estos códigos. Puedes asignarles una cuenta, usar su nombre de categoría o tirarlos a la basura (omitirlos) para que no afecten tu costo.")
@@ -283,17 +286,14 @@ def mostrar_modulo_costos():
 
                             def aplicar_reglas_auditor(df_obj):
                                 df = df_obj.copy()
-                                # 1. Omitir
                                 mask_omitir = df['Codigo'].isin(codigos_omitir)
                                 if mask_omitir.any(): df.loc[mask_omitir, 'Cuenta_Contable'] = 'OMITIDO_MANUAL'
                                 
-                                # 2. Cuenta Manual
                                 for _, row in df_asignar.iterrows():
                                     c_manual = str(row['Cuenta_Manual']).strip()
                                     if c_manual == "": c_manual = "SIN CUENTA REGISTRADA"
                                     df.loc[df['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = c_manual
                                 
-                                # 3. Categoria Nativa
                                 for _, row in df_categoria.iterrows():
                                     cat_val = str(row['Categoria']).strip()
                                     df.loc[df['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = cat_val
@@ -304,7 +304,6 @@ def mostrar_modulo_costos():
                             df_com_m = aplicar_reglas_auditor(df_com_m)
                             df_fin_m = aplicar_reglas_auditor(df_fin_m)
 
-                            # Blindaje matemático estándar
                             df_ini_m = proteger_cuentas_nulas(df_ini_m)
                             df_com_m = proteger_cuentas_nulas(df_com_m)
                             df_fin_m = proteger_cuentas_nulas(df_fin_m)
@@ -321,7 +320,6 @@ def mostrar_modulo_costos():
                             consumo_por_cuenta = {}
                             total_ini_val = total_com_val = total_tras_val = total_fin_val = costo_operativo = 0.0
                             
-                            # OMITIDO_MANUAL se ignora matemáticamente aquí
                             cuentas_invalidas = ["NO APLICA", "0", "0.0", "OMITIDO_MANUAL"]
                             for cta in todas_cuentas:
                                 if pd.isna(cta): continue
@@ -354,7 +352,6 @@ def mostrar_modulo_costos():
                             }
                             st.session_state['datos_auditoria'] = {'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real}
                             
-                            # Limpieza de estados temporales
                             del st.session_state['huerfanos_df']
                             del st.session_state['pre_proceso']
                             st.rerun()
@@ -364,7 +361,6 @@ def mostrar_modulo_costos():
                         del st.session_state['pre_proceso']
                         st.rerun()
 
-        # --- FASE C: MEMORIA GUARDADA ---
         else:
             mem = st.session_state['memoria_cierre']
             st.success(f"📦 **DATOS EN MEMORIA:** Cierre de {mem['unidad_cierre']} - Periodo: {meses_texto[mem['mes_cierre']]} {mem['anio_cierre']}")
