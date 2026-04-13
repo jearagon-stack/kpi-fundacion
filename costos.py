@@ -66,12 +66,11 @@ def mostrar_modulo_costos():
     lista_meses = list(meses_texto.values())
 
     # ==========================================
-    # PESTAÑA 1: GENERAR CIERRE (CON MEMORIA AISLADA)
+    # PESTAÑA 1: GENERAR CIERRE
     # ==========================================
     with tab1:
         st.subheader("1. Cierre Contable")
 
-        # --- FASE A: CONFIGURACIÓN Y SUBIDA DE ARCHIVOS (Solo se ve si NO hay memoria) ---
         if 'memoria_cierre' not in st.session_state:
             col_config1, col_config2 = st.columns([2, 1])
             with col_config1:
@@ -101,7 +100,6 @@ def mostrar_modulo_costos():
                                 pesos.append(p / 100); nombres_meses.append(n)
 
             st.divider()
-            # Búsqueda de Ventas y Traslados
             df_ventas = obtener_dataframe("Historico_Ventas")
             ventas_mes = subsidio_mes = 0.0
             if not df_ventas.empty:
@@ -140,7 +138,6 @@ def mostrar_modulo_costos():
                             def limpiar_cod(s): return s.astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                             for df in [df_dic, df_inicial, df_compras, df_final]: df['Codigo'] = limpiar_cod(df['Codigo'])
                             
-                            # Filtro de basura nativa
                             basura = ['G222', 'G231', '21455979']
                             df_inicial = df_inicial[~df_inicial['Codigo'].isin(basura)]
                             df_compras = df_compras[~df_compras['Codigo'].isin(basura)]
@@ -162,9 +159,7 @@ def mostrar_modulo_costos():
                             todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
                             consumo_por_cuenta = {}; costo_operativo = 0.0
                             
-                            # Colador de Cuentas Inválidas (NaN, No Aplica)
                             cuentas_invalidas = ["", "NAN", "NAT", "NO APLICA", "0", "0.0", "NONE"]
-
                             for cta in todas_cuentas:
                                 cta_str = str(cta).strip().upper().replace(".0", "")
                                 val = grp_ini.get(cta, 0) + grp_comp.get(cta, 0) + grp_tras.get(cta, 0) - grp_fin.get(cta, 0)
@@ -175,7 +170,6 @@ def mostrar_modulo_costos():
                             costo_dif_mes = costo_operativo * porcentaje_subsidio
                             costo_real = costo_operativo - costo_dif_mes + costo_diferido_anterior
 
-                            # GUARDAR EN MEMORIA
                             st.session_state['memoria_cierre'] = {
                                 'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
                                 'grp_ini_sum': grp_ini.sum(), 'grp_comp_sum': grp_comp.sum(), 'grp_fin_sum': grp_fin.sum(),
@@ -184,19 +178,14 @@ def mostrar_modulo_costos():
                                 'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
                                 'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
                             }
-                            st.session_state['datos_auditoria'] = {
-                                'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real
-                            }
-                            st.rerun() # Refresca la pantalla para mostrar la FASE B
+                            st.session_state['datos_auditoria'] = {'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real}
+                            st.rerun() 
                         except Exception as e: st.error(f"Error procesando: {e}")
 
-        # --- FASE B: DATOS EN MEMORIA (Inmunes a cambios de módulo) ---
         else:
             mem = st.session_state['memoria_cierre']
-            
             st.success(f"📦 **DATOS EN MEMORIA:** Cierre de {mem['unidad_cierre']} - Periodo: {meses_texto[mem['mes_cierre']]} {mem['anio_cierre']}")
-            st.write("Tu información ha sido calculada. Puedes navegar a otros módulos sin perder el progreso.")
-
+            
             r1, r2, r3, r4, r5 = st.columns(5)
             r1.metric("Inicial", f"${mem['grp_ini_sum']:,.2f}")
             r2.metric("Compras", f"${mem['grp_comp_sum']:,.2f}")
@@ -262,7 +251,6 @@ def mostrar_modulo_costos():
                                     filas_g.append([fecha_hoy, mem['mes_cierre'], mem['anio_cierre'], u_r, str(r['Cuenta_Contable']), round(r['Inicial'],2), round(r['Compra'],2), round(r['Final'],2), round(r['Consumo'],2), r['Codigo'], r['ORIGEN_ARCHIVO']])
                             if filas_g: ws_det.append_rows(filas_g)
                             
-                            # Limpieza final de memorias
                             del st.session_state['memoria_cierre']
                             del st.session_state['datos_auditoria']
                             st.session_state['auditoria_aprobada'] = False
@@ -270,31 +258,73 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS
+    # PESTAÑA 2: TRASLADOS (NUEVA LÓGICA AUTOMÁTICA)
     # ==========================================
     with tab2:
-        st.subheader("🚚 Registro de Traslados Nexus")
+        st.subheader("🚚 Registro de Traslados Nexus (Lote)")
         ct1, ct2 = st.columns(2)
         with ct1:
             m_t = st.selectbox("Mes:", range(1, 13), index=date.today().month - 1, key="mt_reg")
             origen_t = st.text_input("Bodega Origen:", "ABASTECIMIENTO").upper()
         with ct2:
             a_t = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
-            destino_t = st.text_input("Bodega Destino:", "CAFETERIA").upper()
-        arch_t = st.file_uploader("Reporte Nexus (I, N, AA)", type=["xlsx"], key="atf_reg")
+            st.info("💡 Destino: Se lee automáticamente de la columna 'BodegaIngreso' (AC)")
+            
+        arch_t = st.file_uploader("Reporte Nexus de Salidas (I:Cod, N:Monto, AA:Cat, AC:Destino)", type=["xlsx"], key="atf_reg")
+        
         if arch_t:
-            df_t_raw = pd.read_excel(arch_t, usecols="I,N,AA", names=['Codigo', 'Monto', 'Categoria'], skiprows=1)
-            df_t_raw['Codigo'] = df_t_raw['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
-            df_dic_t = obtener_dataframe("Categorias_Costos")
-            df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
-            df_f_t = pd.merge(df_t_raw, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
-            st.dataframe(df_f_t, use_container_width=True)
-            if st.button("💾 Guardar Traslados en Historial"):
-                ws_t = conectar_hoja("Historico_Traslados")
-                fecha_h = date.today().strftime('%d/%m/%Y')
-                filas_t = [[fecha_h, m_t, a_t, origen_t, destino_t, str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus"] for _, r in df_f_t.iterrows()]
-                ws_t.append_rows(filas_t)
-                st.success("✅ Traslados registrados satisfactoriamente.")
+            try:
+                # Leemos las 4 columnas clave
+                df_t_raw = pd.read_excel(arch_t, usecols="I,N,AA,AC", names=['Codigo', 'Monto', 'Categoria', 'Destino'], skiprows=1)
+                
+                # Limpieza
+                df_t_raw['Codigo'] = df_t_raw['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                df_t_raw['Destino'] = df_t_raw['Destino'].astype(str).str.strip().str.upper()
+                df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0)
+                
+                # FILTRO: Solo dejamos los destinos válidos
+                destinos_validos = ["TERRAZA", "DESPENSA", "CENTRO SOHO"]
+                df_validos = df_t_raw[df_t_raw['Destino'].isin(destinos_validos)]
+                
+                if df_validos.empty:
+                    st.warning("⚠️ No se encontraron traslados para TERRAZA, DESPENSA o CENTRO SOHO en este archivo.")
+                else:
+                    df_dic_t = obtener_dataframe("Categorias_Costos")
+                    df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                    df_f_t = pd.merge(df_validos, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
+                    
+                    st.success(f"✅ Se encontraron {len(df_f_t)} traslados válidos.")
+                    st.dataframe(df_f_t, use_container_width=True)
+                    
+                    # Generación dinámica de botones de descarga por destino
+                    destinos_encontrados = df_f_t['Destino'].unique()
+                    st.markdown("#### 📥 Partidas Generadas:")
+                    cols_descarga = st.columns(len(destinos_encontrados))
+                    
+                    for idx, dest in enumerate(destinos_encontrados):
+                        df_dest = df_f_t[df_f_t['Destino'] == dest]
+                        grp_t = df_dest.groupby('Cuenta_Contable')['Monto'].sum()
+                        
+                        conc_t = f"TRASLADO DE {origen_t} A {dest}, {meses_texto[m_t]} {a_t}"
+                        f_p_t = []
+                        for c, m in grp_t.items():
+                            if m > 0: f_p_t.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0, ""])
+                        for c, m in grp_t.items():
+                            if m > 0: f_p_t.append([str(c).replace(".0",""), "", conc_t, 0, round(m, 2), ""])
+                        
+                        with cols_descarga[idx]:
+                            st.download_button(f"⬇️ Bajar {dest}", generar_excel_bytes(f_p_t), f"Traslado_{dest}_{meses_texto[m_t]}.xlsx", key=f"dl_t_{dest}")
+                    
+                    st.divider()
+                    if st.button("💾 Guardar Traslados en Historial"):
+                        ws_t = conectar_hoja("Historico_Traslados")
+                        fecha_h = date.today().strftime('%d/%m/%Y')
+                        filas_t = [[fecha_h, m_t, a_t, origen_t, r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus"] for _, r in df_f_t.iterrows()]
+                        ws_t.append_rows(filas_t)
+                        st.success("✅ Todos los traslados fueron registrados en la base de datos.")
+                        
+            except Exception as e:
+                st.error(f"Error procesando archivo. Asegúrese de que tenga la columna AC (BodegaIngreso). Error: {e}")
 
     # ==========================================
     # PESTAÑA 3: CONSULTA HISTORIAL
