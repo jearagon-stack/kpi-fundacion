@@ -22,23 +22,21 @@ def mostrar_modulo_costos():
 
         col1, col2, col3 = st.columns(3)
         with col1:
-            mes_cierre = st.selectbox("Mes a costear (o mes final):", range(1, 13), index=date.today().month - 1)
+            mes_cierre = st.selectbox("Mes a costear:", range(1, 13), index=date.today().month - 1)
         with col2:
             anio_cierre = st.number_input("Año:", min_value=2024, max_value=2030, value=date.today().year)
         with col3:
-            unidad_cierre = st.selectbox("Unidad a consolidar:", ["CAFETERIA"])
+            unidad_cierre = st.selectbox("Unidad:", ["CAFETERIA"])
 
         meses_texto = {1:"ENERO", 2:"FEBRERO", 3:"MARZO", 4:"ABRIL", 5:"MAYO", 6:"JUNIO", 7:"JULIO", 8:"AGOSTO", 9:"SEPTIEMBRE", 10:"OCTUBRE", 11:"NOVIEMBRE", 12:"DICIEMBRE"}
         mes_txt = meses_texto[mes_cierre]
 
         es_consolidado = (tipo_cierre == "Consolidación Especial (Multi-mes)")
-        pesos = []
-        nombres_meses = []
+        pesos, nombres_meses = [], []
 
         if es_consolidado:
             st.warning("⚠️ Modo Consolidación: El costo total se agrupará y luego se distribuirá en las partidas de cada mes.")
-            num_meses = st.radio("¿En cuántos meses vas a dividir el costo?", [2, 3], horizontal=True)
-            
+            num_meses = st.radio("¿Dividir en cuántos meses?", [2, 3], horizontal=True)
             cols_dist = st.columns(num_meses)
             if num_meses == 2:
                 with cols_dist[0]:
@@ -66,22 +64,17 @@ def mostrar_modulo_costos():
 
         st.divider()
 
-        # --- CÁLCULO DE INGRESOS Y SUBSIDIOS ---
         df_ventas = obtener_dataframe("Historico_Ventas")
         ventas_mes = subsidio_mes = 0.0
-        
         if not df_ventas.empty:
             df_ventas['Fecha_DT'] = pd.to_datetime(df_ventas['Fecha'], format='%d/%m/%Y', errors='coerce')
             df_ventas['Venta_Real'] = pd.to_numeric(df_ventas['Venta_Real'], errors='coerce').fillna(0)
             df_ventas['Subsidio_UCA'] = pd.to_numeric(df_ventas.get('Subsidio_UCA', 0), errors='coerce').fillna(0)
-            
             filtro = (df_ventas['Fecha_DT'].dt.year == anio_cierre) & (df_ventas['Unidad'] == unidad_cierre)
             if es_consolidado:
-                meses_cons = range(mes_cierre - len(pesos) + 1, mes_cierre + 1)
-                filtro &= df_ventas['Fecha_DT'].dt.month.isin(meses_cons)
+                filtro &= df_ventas['Fecha_DT'].dt.month.isin(range(mes_cierre-len(pesos)+1, mes_cierre+1))
             else:
                 filtro &= (df_ventas['Fecha_DT'].dt.month == mes_cierre)
-            
             ventas_mes = df_ventas[filtro]['Venta_Real'].sum()
             subsidio_mes = df_ventas[filtro]['Subsidio_UCA'].sum()
 
@@ -103,10 +96,10 @@ def mostrar_modulo_costos():
                 def cargar_y_marcar(archivo):
                     df = pd.read_excel(archivo)
                     cols_upper = df.columns.astype(str).str.upper().str.replace(' ', '').str.replace('.', '')
-                    if not (any('COD' in c and 'PROD' in c for c in cols_upper) or any('IDPRODUCTO' in c for c in cols_upper)):
+                    if not (any('COD' in c and 'PROD' in c for c in cols_upper)):
                         for i in range(min(15, len(df))):
-                            row_str = df.iloc[i].astype(str).str.upper().str.replace(' ', '').str.replace('.', '')
-                            if any('COD' in val and 'PROD' in val for val in row_str) or any('IDPRODUCTO' in val for val in row_str):
+                            row_str = df.iloc[i].astype(str).str.upper().str.replace(' ', '')
+                            if any('COD' in val and 'PROD' in val for val in row_str):
                                 df.columns = df.iloc[i].astype(str).str.strip()
                                 df = df.iloc[i+1:].reset_index(drop=True); break
                     col_rename = {}
@@ -139,10 +132,6 @@ def mostrar_modulo_costos():
                 df_com_m = pd.merge(df_compras, df_diccionario, on='Codigo', how='left')
                 df_fin_m = pd.merge(df_final, df_diccionario, on='Codigo', how='left')
 
-                df_ini_m = df_ini_m[df_ini_m['Categoria_Nexus'].str.strip() != 'SERVICIO']
-                df_com_m = df_com_m[df_com_m['Categoria_Nexus'].str.strip() != 'SERVICIO']
-                df_fin_m = df_fin_m[df_fin_m['Categoria_Nexus'].str.strip() != 'SERVICIO']
-
                 def get_num(df, keys):
                     for k in keys:
                         for col in df.columns:
@@ -150,9 +139,9 @@ def mostrar_modulo_costos():
                             if all(p in c_norm for p in k): return pd.to_numeric(df[col], errors='coerce').fillna(0)
                     return pd.Series(0, index=df.index)
 
-                df_ini_m['Valor'] = get_num(df_ini_m, [['EXISTENCIAS', 'FINAL'], ['SALDO', 'FINAL'], ['CANTIDAD']]) * get_num(df_ini_m, [['COSTO', 'U'], ['COSTO', 'UNITARIO'], ['PRECIO']])
-                df_fin_m['Valor'] = get_num(df_fin_m, [['EXISTENCIAS', 'FINAL'], ['SALDO', 'FINAL'], ['CANTIDAD']]) * get_num(df_fin_m, [['COSTO', 'U'], ['COSTO', 'UNITARIO'], ['PRECIO']])
-                df_com_m['Valor'] = get_num(df_com_m, [['TOTAL'], ['MONTO']])
+                df_ini_m['Valor'] = get_num(df_ini_m, [['EXISTENCIAS'],['SALDO']]) * get_num(df_ini_m, [['COSTO','U']])
+                df_fin_m['Valor'] = get_num(df_fin_m, [['EXISTENCIAS'],['SALDO']]) * get_num(df_fin_m, [['COSTO','U']])
+                df_com_m['Valor'] = get_num(df_com_m, [['TOTAL'],['MONTO']])
 
                 grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum(); grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum(); grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum()
                 
@@ -165,6 +154,7 @@ def mostrar_modulo_costos():
                 costo_dif_mes = costo_operativo * porcentaje_subsidio
                 costo_real = costo_operativo - costo_dif_mes + costo_diferido_anterior
 
+                # Métricas
                 r1, r2, r3, r4, r5 = st.columns(5)
                 r1.metric("Inicial", f"${df_ini_m['Valor'].sum():,.2f}"); r2.metric("Compras", f"${df_com_m['Valor'].sum():,.2f}")
                 r3.metric("Final", f"${df_fin_m['Valor'].sum():,.2f}"); r4.metric("Diferido", f"${costo_dif_mes:,.2f}"); r5.metric("Real", f"${costo_real:,.2f}")
@@ -175,19 +165,19 @@ def mostrar_modulo_costos():
                         pd.DataFrame(filas).to_excel(writer, index=False, header=False, sheet_name='Hoja1')
                     return output.getvalue()
 
-                def mostrar_descargas(c_op, c_dif, c_ant, label_mes):
-                    st.markdown(f"#### 📥 Partidas: **{label_mes}**")
-                    conc_v = f"RECONOCIMIENTO COSTO VENTA CAFETERIA, {label_mes} {anio_cierre}."
+                def mostrar_descargas(c_op, c_dif, c_ant, label):
+                    st.markdown(f"#### 📥 Partidas: **{label}**")
+                    conc_v = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {label} {anio_cierre}."
                     f_v = [["410104", "", conc_v, round(c_op, 2), 0.00, ""]]
                     for c, m in consumo_por_cuenta.items():
                         m_perc = m * (c_op / costo_operativo) if costo_operativo > 0 else 0
                         if m_perc > 0: f_v.append([str(c).replace(".0",""), "", conc_v, 0.00, round(m_perc, 2), ""])
-                    f_p = [["410104", "", "PROCESO ANT", round(c_ant, 2), 0.00, ""], ["110602", "", "PROCESO ANT", 0.00, round(c_ant, 2), ""]]
+                    f_p = [["410104", "", "PROC. ANT.", round(c_ant, 2), 0.00, ""], ["110602", "", "PROC. ANT.", 0.00, round(c_ant, 2), ""]]
                     f_d = [["110602", "", "DIFERIMIENTO", round(c_dif, 2), 0.00, ""], ["410104", "", "DIFERIMIENTO", 0.00, round(c_dif, 2), ""]]
                     p1, p2, p3 = st.columns(3)
-                    with p1: st.download_button(f"⬇️ P1 {label_mes}", generar_excel_bytes(f_v), f"1_Costo_{label_mes}.xlsx", use_container_width=True)
-                    with p2: st.download_button(f"⬇️ P2 {label_mes}", generar_excel_bytes(f_p), f"2_Ant_{label_mes}.xlsx", use_container_width=True)
-                    with p3: st.download_button(f"⬇️ P3 {label_mes}", generar_excel_bytes(f_d), f"3_Dif_{label_mes}.xlsx", use_container_width=True)
+                    with p1: st.download_button(f"⬇️ P1 {label}", generar_excel_bytes(f_v), f"1_Costo_{label}.xlsx")
+                    with p2: st.download_button(f"⬇️ P2 {label}", generar_excel_bytes(f_p), f"2_Ant_{label}.xlsx")
+                    with p3: st.download_button(f"⬇️ P3 {label}", generar_excel_bytes(f_d), f"3_Dif_{label}.xlsx")
 
                 if not es_consolidado: mostrar_descargas(costo_operativo, costo_dif_mes, costo_diferido_anterior, mes_txt)
                 else:
@@ -230,80 +220,94 @@ def mostrar_modulo_costos():
         st.subheader("🚚 Partidas de Traslados")
         ct1, ct2 = st.columns(2)
         with ct1:
-            mes_t = st.selectbox("Mes:", range(1, 13), index=date.today().month-1, key="mt")
+            mes_t = st.selectbox("Mes:", range(1, 13), index=date.today().month - 1, key="mt")
             orig_t = st.text_input("Origen:", "ABASTECIMIENTO").upper()
-        with ct2:
+        with col_t2 if 'col_t2' in locals() else ct2:
             anio_t = st.number_input("Año:", min_value=2024, value=date.today().year, key="at")
             dest_t = st.text_input("Destino:", "DESPENSA").upper()
-        arch_t = st.file_uploader("Subir Traslados Nexus (I, N, AA)", type=["xlsx"], accept_multiple_files=True, key="atf")
+
+        arch_t = st.file_uploader("Subir Traslados (I, N, AA)", type=["xlsx", "xls"], accept_multiple_files=True, key="atf")
         if arch_t:
             try:
-                dfs_t = [pd.read_excel(a, usecols="I,N,AA", names=['Codigo','Monto','Categoria'], header=None, skiprows=1) for a in arch_t]
+                dfs_t = [pd.read_excel(a, usecols="I,N,AA", names=['Codigo', 'Monto', 'Categoria'], header=None, skiprows=1) for a in arch_t]
                 df_t_c = pd.concat(dfs_t, ignore_index=True)
                 df_t_c['Monto'] = pd.to_numeric(df_t_c['Monto'], errors='coerce').fillna(0)
                 df_t_c = df_t_c[(df_t_c['Monto'] > 0) & (df_t_c['Categoria'].astype(str).str.upper() != 'SERVICIO')]
                 df_t_c['Codigo'] = df_t_c['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
-                df_dic_t = obtener_dataframe("Categorias_Costos"); df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                
+                df_dic_t = obtener_dataframe("Categorias_Costos")
+                df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                 df_f_t = pd.merge(df_t_c, df_dic_t, on='Codigo', how='left')
-                if df_f_t['Cuenta_Contable'].isna().any():
-                    st.error(f"Cod. faltantes: {df_f_t[df_f_t['Cuenta_Contable'].isna()]['Codigo'].unique()}")
-                else:
-                    grp_t = df_f_t.groupby('Cuenta_Contable')['Monto'].sum()
-                    st.success(f"**Total traslados:** ${grp_t.sum():,.2f}")
-                    st.dataframe(grp_t.reset_index()); conc_t = f"TRASLADO {orig_t} A {dest_t}"
-                    filas_p = []
-                    for c, m in grp_t.items(): filas_p.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0.00, ""])
-                    for c, m in grp_t.items(): filas_p.append([str(c).replace(".0",""), "", conc_t, 0.00, round(m, 2), ""])
-                    st.download_button("⬇️ Descargar Traslado Nexus", generar_excel_bytes(filas_p), f"Traslado_{orig_t}.xlsx")
+                
+                huerf = df_f_t[df_f_t['Cuenta_Contable'].isna()]['Codigo'].unique().tolist()
+                if huerf: st.error(f"Códigos no encontrados: {huerf}"); st.stop()
+
+                grp_t = df_f_t.groupby('Cuenta_Contable')['Monto'].sum()
+                st.success(f"**Total traslados:** ${grp_t.sum():,.2f}")
+                st.dataframe(grp_t.reset_index(), use_container_width=True)
+
+                filas_p = []
+                conc_t = f"TRASLADO {orig_t} A {dest_t}, {meses_texto[mes_t]} {anio_t}"
+                for c, m in grp_t.items(): filas_p.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0.00, ""])
+                for c, m in grp_t.items(): filas_p.append([str(c).replace(".0",""), "", conc_t, 0.00, round(m, 2), ""])
+                st.download_button("⬇️ Descargar Traslado Nexus", generar_excel_bytes(filas_p), f"Traslado_{orig_t}.xlsx")
             except Exception as e: st.error(f"Error: {e}")
 
     # ==========================================
-    # PESTAÑA 3: CONSULTA DE HISTORIAL (COMPLETA)
+    # PESTAÑA 3: CONSULTA DE HISTORIAL (RESTORED AL 100%)
     # ==========================================
     with tab3:
         st.subheader("🔍 Consulta de Cierres Anteriores")
         if st.button("🔄 Actualizar Base"): st.cache_data.clear()
-        df_resumen = obtener_dataframe("Cierres_Costos"); df_detalle = obtener_dataframe("Detalle_Cuentas")
+
+        df_resumen = obtener_dataframe("Cierres_Costos")
+        df_detalle = obtener_dataframe("Detalle_Cuentas")
+
         if not df_resumen.empty and not df_detalle.empty:
-            df_resumen['Mes'] = df_resumen['Mes'].astype(str).str.replace('.0','')
-            df_resumen['Año'] = df_resumen['Año'].astype(str).str.replace('.0','')
-            df_resumen['Periodo'] = df_resumen['Mes'] + "/" + df_resumen['Año'] + " - " + df_resumen['Unidad']
+            df_resumen['Periodo'] = df_resumen['Mes'].astype(str).str.replace('.0','') + "/" + df_resumen['Año'].astype(str).str.replace('.0','') + " - " + df_resumen['Unidad']
             per_sel = st.selectbox("Seleccione Cierre:", df_resumen['Periodo'].unique().tolist(), index=len(df_resumen['Periodo'].unique())-1)
+
             if per_sel:
                 st.divider()
                 fila = df_resumen[df_resumen['Periodo'] == per_sel].iloc[-1]
-                m_f, a_f = str(fila['Mes']).strip(), str(fila['Año']).strip()
-                try:
-                    i_ini_h, i_com_h, i_fin_h = float(fila.iloc[4]), float(fila.iloc[5]), float(fila.iloc[6])
-                    c_ant_h, dif_h, c_real_h = float(fila.iloc[7]), float(fila.iloc[8]), float(fila.iloc[9])
-                except: i_ini_h = i_com_h = i_fin_h = c_ant_h = dif_h = c_real_h = 0.0
+                m_f, a_f = str(fila['Mes']).replace('.0',''), str(fila['Año']).replace('.0','')
+                
+                # Métricas específicas del histórico
                 c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("Inicial", f"${i_ini_h:,.2f}"); c2.metric("Compras", f"${i_com_h:,.2f}")
-                c3.metric("Final", f"${i_fin_h:,.2f}"); c4.metric("Diferido", f"${dif_h:,.2f}"); c5.metric("Real", f"${c_real_h:,.2f}")
+                c1.metric("Inicial", f"${float(fila.iloc[4]):,.2f}"); c2.metric("Compras", f"${float(fila.iloc[5]):,.2f}")
+                c3.metric("Final", f"${float(fila.iloc[6]):,.2f}"); c4.metric("Diferido", f"${float(fila.iloc[8]):,.2f}"); c5.metric("Real", f"${float(fila.iloc[9]):,.2f}")
 
-                # --- FILTRADO DE DETALLE PARA TABLAS Y PARTIDAS ---
+                # Checkboxes para ver detalles
+                ver_det = st.checkbox("📂 Ver Detalle Operativo (Movimientos)")
+                ver_res = st.checkbox("📊 Ver Resumen por Cuentas Contables")
+
+                # FILTRADO DEL DETALLE PARA TABLAS Y PARTIDAS
                 df_det_h = df_detalle[(df_detalle['Mes'].astype(str).str.replace('.0','') == m_f) & (df_detalle['Año'].astype(str).str.replace('.0','') == a_f)]
                 df_det_h['Consumo'] = pd.to_numeric(df_det_h['Consumo'], errors='coerce').fillna(0)
-                
-                # Checkboxes para ver detalles
-                if st.checkbox("📂 Ver Detalle Operativo (Movimientos)"):
-                    st.dataframe(df_det_h, use_container_width=True)
-                if st.checkbox("📊 Ver Resumen por Cuentas Contables"):
-                    st.table(df_det_h.groupby('Cuenta')['Consumo'].sum().reset_index())
 
+                if ver_det: st.dataframe(df_det_h, use_container_width=True)
+                if ver_res: st.table(df_det_h.groupby('Cuenta')['Consumo'].sum().reset_index())
+
+                # --- RECONSTRUCCIÓN DE PARTIDAS HISTÓRICAS ---
                 st.divider(); st.markdown("#### 📥 Partidas Nexus Reconstruidas")
                 if not df_det_h.empty:
                     cons_h = df_det_h.groupby('Cuenta')['Consumo'].sum().to_dict()
                     op_total_h = sum(cons_h.values())
-                    conc_v_h = f"COSTO {m_f}/{a_f}"; f_v_h = [["410104","",conc_v_h,round(op_total_h, 2), 0, ""]]
+                    ant_h, dif_h = float(fila.iloc[7]), float(fila.iloc[8])
+
+                    conc_v_h = f"COSTO {m_f}/{a_f}"; f_v_h = [["410104","",conc_v_h,round(op_total_h,2),0,""]]
                     for c, m in cons_h.items():
                         if m > 0: f_v_h.append([str(c).replace(".0",""), "", conc_v_h, 0, round(m, 2), ""])
-                    f_p_h = [["410104","","ANT",round(c_ant_h, 2),0,""], ["110602","","ANT",0,round(c_ant_h, 2),""]]
-                    f_d_h = [["110602","","DIF",round(dif_h, 2),0,""], ["410104","","DIF",0,round(dif_h, 2),""]]
+                    
+                    f_p_h = [["410104","","ANT",round(ant_h,2),0,""], ["110602","","ANT",0,round(ant_h,2),""]]
+                    f_d_h = [["110602","","DIF",round(dif_h,2),0,""], ["410104","","DIF",0,round(dif_h,2),""]]
+
+                    def gen_h(f):
+                        out = io.BytesIO()
+                        with pd.ExcelWriter(out, engine='openpyxl') as w: pd.DataFrame(f).to_excel(w, index=False, header=False)
+                        return out.getvalue()
 
                     ch1, ch2, ch3 = st.columns(3)
-                    with ch1: st.download_button("P1 Costo", generar_excel_bytes(f_v_h), f"H_P1_{m_f}.xlsx", use_container_width=True)
-                    with ch2: st.download_button("P2 Proc.Ant", generar_excel_bytes(f_p_h), f"H_P2_{m_f}.xlsx", use_container_width=True)
-                    with ch3: st.download_button("P3 Diferir", generar_excel_bytes(f_d_h), f"H_P3_{m_f}.xlsx", use_container_width=True)
-                else:
-                    st.warning("No se encontraron consumos para reconstruir las partidas.")
+                    with ch1: st.download_button("P1 Costo", gen_h(f_v_h), f"H_P1_{m_f}.xlsx", use_container_width=True)
+                    with ch2: st.download_button("P2 Proc.Ant", gen_h(f_p_h), f"H_P2_{m_f}.xlsx", use_container_width=True)
+                    with ch3: st.download_button("P3 Diferir", gen_h(f_d_h), f"H_P3_{m_f}.xlsx", use_container_width=True)
