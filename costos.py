@@ -125,27 +125,33 @@ def mostrar_modulo_costos():
                 ventas_mes = pd.to_numeric(df_ventas[filtro_v]['Venta_Real'], errors='coerce').sum()
                 subsidio_mes = pd.to_numeric(df_ventas[filtro_v]['Subsidio_UCA'], errors='coerce').sum()
 
+            # LÓGICA DE TRASLADOS NETOS (ENTRADAS MENOS SALIDAS)
             df_hist_tras = obtener_dataframe("Historico_Traslados")
-            traslados_mes = 0.0
+            traslados_neta = 0.0
+            f_t_in = None; f_t_out = None
             if not df_hist_tras.empty:
                 df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0.0)
-                destinos_a_buscar = mapa_subunidades.get(unidad_cierre, [unidad_cierre])
+                unidades_buscar = mapa_subunidades.get(unidad_cierre, [unidad_cierre])
                 
-                # --- NUEVA LÓGICA PARA TRASLADOS MULTI-MES ---
                 if es_consolidado:
                     meses_indices = [list(meses_texto.keys())[list(meses_texto.values()).index(m)] for m in nombres_meses]
-                    f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_indices)) & \
-                          (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
-                          (df_hist_tras['Destino'].isin(destinos_a_buscar))
+                    filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_indices)) & \
+                                  (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre)
                 else:
-                    f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
-                          (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
-                          (df_hist_tras['Destino'].isin(destinos_a_buscar))
-                          
-                traslados_mes = df_hist_tras[f_t]['Monto'].sum()
+                    filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
+                                  (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre)
+                
+                # Entradas: Destino es la unidad seleccionada
+                f_t_in = filtro_base & (df_hist_tras['Destino'].isin(unidades_buscar))
+                # Salidas: Origen es la unidad seleccionada
+                f_t_out = filtro_base & (df_hist_tras['Origen'].isin(unidades_buscar))
+                
+                monto_in = df_hist_tras[f_t_in]['Monto'].sum()
+                monto_out = df_hist_tras[f_t_out]['Monto'].sum()
+                traslados_neta = monto_in - monto_out
 
             porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
-            st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados Recibidos: ${traslados_mes:,.2f}")
+            st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados Netos (Entran - Salen): ${traslados_neta:,.2f}")
 
             costo_diferido_anterior = st.number_input("Costo Diferido de Arrastre (110602):", min_value=0.0, value=0.0)
             
@@ -183,11 +189,17 @@ def mostrar_modulo_costos():
 
                                 df_faltantes = pd.concat([detectar_huerfanos(df_ini_m), detectar_huerfanos(df_com_m), detectar_huerfanos(df_fin_m)]).drop_duplicates(subset=['Codigo'])
 
-                                grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum() if not df_hist_tras.empty else pd.Series(0.0)
+                                # Agrupamos traslados Entrantes y Salientes
+                                if not df_hist_tras.empty:
+                                    grp_tras_in = df_hist_tras[f_t_in].groupby('Cuenta_Contable')['Monto'].sum()
+                                    grp_tras_out = df_hist_tras[f_t_out].groupby('Cuenta_Contable')['Monto'].sum()
+                                else:
+                                    grp_tras_in = pd.Series(dtype=float); grp_tras_out = pd.Series(dtype=float)
 
                                 if not df_faltantes.empty and not forzar_calculo:
                                     st.session_state['pre_proceso'] = {
-                                        'ini': df_ini_m, 'com': df_com_m, 'fin': df_fin_m, 'grp_tras': grp_tras
+                                        'ini': df_ini_m, 'com': df_com_m, 'fin': df_fin_m, 
+                                        'grp_tras_in': grp_tras_in, 'grp_tras_out': grp_tras_out
                                     }
                                     st.session_state['huerfanos_df'] = df_faltantes
                                     st.rerun()
@@ -204,7 +216,7 @@ def mostrar_modulo_costos():
                                 grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
                                 grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum()
                                 
-                                todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
+                                todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras_in.index).union(grp_tras_out.index)
                                 consumo_por_cuenta = {}
                                 total_ini_val = total_com_val = total_tras_val = total_fin_val = costo_operativo = 0.0
                                 
@@ -215,13 +227,17 @@ def mostrar_modulo_costos():
                                     
                                     v_ini = float(grp_ini.get(cta, 0.0))
                                     v_com = float(grp_comp.get(cta, 0.0))
-                                    v_tras = float(grp_tras.get(cta, 0.0))
+                                    v_tras_entrada = float(grp_tras_in.get(cta, 0.0))
+                                    v_tras_salida = float(grp_tras_out.get(cta, 0.0))
                                     v_fin = float(grp_fin.get(cta, 0.0))
+                                    
+                                    v_tras_neta = v_tras_entrada - v_tras_salida
                                     
                                     if cta_str not in cuentas_invalidas: 
                                         total_ini_val += v_ini; total_com_val += v_com
-                                        total_tras_val += v_tras; total_fin_val += v_fin
-                                        val = v_ini + v_com + v_tras - v_fin
+                                        total_tras_val += v_tras_neta; total_fin_val += v_fin
+                                        
+                                        val = v_ini + v_com + v_tras_neta - v_fin
                                         if val != 0:
                                             consumo_por_cuenta[cta_str] = val
                                             costo_operativo += val
@@ -278,7 +294,8 @@ def mostrar_modulo_costos():
                             df_ini_m = st.session_state['pre_proceso']['ini']
                             df_com_m = st.session_state['pre_proceso']['com']
                             df_fin_m = st.session_state['pre_proceso']['fin']
-                            grp_tras = st.session_state['pre_proceso']['grp_tras']
+                            grp_tras_in = st.session_state['pre_proceso']['grp_tras_in']
+                            grp_tras_out = st.session_state['pre_proceso']['grp_tras_out']
 
                             codigos_omitir = edited_df[edited_df['Accion'] == 'Omitir (No sumar al costo)']['Codigo'].tolist()
                             df_asignar = edited_df[edited_df['Accion'] == 'Escribir Cuenta Manual']
@@ -316,7 +333,7 @@ def mostrar_modulo_costos():
                             grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
                             grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum()
                             
-                            todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
+                            todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras_in.index).union(grp_tras_out.index)
                             consumo_por_cuenta = {}
                             total_ini_val = total_com_val = total_tras_val = total_fin_val = costo_operativo = 0.0
                             
@@ -327,13 +344,16 @@ def mostrar_modulo_costos():
                                 
                                 v_ini = float(grp_ini.get(cta, 0.0))
                                 v_com = float(grp_comp.get(cta, 0.0))
-                                v_tras = float(grp_tras.get(cta, 0.0))
+                                v_tras_entrada = float(grp_tras_in.get(cta, 0.0))
+                                v_tras_salida = float(grp_tras_out.get(cta, 0.0))
                                 v_fin = float(grp_fin.get(cta, 0.0))
+                                
+                                v_tras_neta = v_tras_entrada - v_tras_salida
                                 
                                 if cta_str not in cuentas_invalidas: 
                                     total_ini_val += v_ini; total_com_val += v_com
-                                    total_tras_val += v_tras; total_fin_val += v_fin
-                                    val = v_ini + v_com + v_tras - v_fin
+                                    total_tras_val += v_tras_neta; total_fin_val += v_fin
+                                    val = v_ini + v_com + v_tras_neta - v_fin
                                     if val != 0:
                                         consumo_por_cuenta[cta_str] = val
                                         costo_operativo += val
@@ -368,7 +388,7 @@ def mostrar_modulo_costos():
             r1, r2, r3, r4, r5, r6 = st.columns(6)
             r1.metric("Inicial (+)", f"${mem['grp_ini_sum']:,.2f}")
             r2.metric("Compras (+)", f"${mem['grp_comp_sum']:,.2f}")
-            r3.metric("Traslados (+)", f"${mem['grp_tras_sum']:,.2f}")
+            r3.metric("Traslados Netos (+/-)", f"${mem['grp_tras_sum']:,.2f}")
             r4.metric("Final (-)", f"${mem['grp_fin_sum']:,.2f}")
             r5.metric("Diferido (-)", f"${mem['costo_dif_mes']:,.2f}")
             r6.metric("Real (=)", f"${mem['costo_real']:,.2f}")
