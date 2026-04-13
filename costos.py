@@ -3,10 +3,10 @@ import pandas as pd
 from datetime import date
 from utils import obtener_dataframe, conectar_hoja
 import io
-from validacion import ejecutar_auditoria_costos
 
 def mostrar_modulo_costos():
     st.title("Contabilidad de Costos")
+    # ... (todo el resto de tu código sigue igual hacia abajo)
 
     tab1, tab2, tab3 = st.tabs(["📝 Generar Cierre", "🚚 Partidas de Traslados", "🔍 Consultar Histórico"])
 
