@@ -6,13 +6,18 @@ import io
 
 def mostrar_modulo_costos():
     st.title("Contabilidad de Costos")
-    # ... (todo el resto de tu código sigue igual hacia abajo)
 
     tab1, tab2, tab3 = st.tabs(["📝 Generar Cierre", "🚚 Partidas de Traslados", "🔍 Consultar Histórico"])
 
     # ==========================================
-    # FUNCIONES DE APOYO
+    # FUNCIONES DE APOYO Y MAPEO DE UNIDADES
     # ==========================================
+    # Este diccionario le enseña al sistema qué bodegas pertenecen a qué unidad
+    mapa_subunidades = {
+        "CAFETERIA": ["TERRAZA", "CENTRO SOHO", "CAFETERIA CENTRAL", "CAFETERIA"],
+        "DESPENSA":  ["DESPENSA"]
+    }
+
     def generar_excel_bytes(filas):
         df_p = pd.DataFrame(filas)
         output = io.BytesIO()
@@ -67,7 +72,7 @@ def mostrar_modulo_costos():
     lista_meses = list(meses_texto.values())
 
     # ==========================================
-    # PESTAÑA 1: GENERAR CIERRE (INCLUYE MEMORIA AISLADA)
+    # PESTAÑA 1: GENERAR CIERRE
     # ==========================================
     with tab1:
         st.subheader("1. Cierre Contable")
@@ -80,7 +85,7 @@ def mostrar_modulo_costos():
             col1, col2, col3 = st.columns(3)
             with col1: mes_cierre = st.selectbox("Mes a costear:", range(1, 13), index=date.today().month - 1)
             with col2: anio_cierre = st.number_input("Año:", min_value=2024, max_value=2030, value=2026)
-            with col3: unidad_cierre = st.selectbox("Unidad:", ["CAFETERIA"])
+            with col3: unidad_cierre = st.selectbox("Unidad:", ["CAFETERIA", "DESPENSA"])
             
             es_consolidado = (tipo_cierre == "Consolidación Especial (Multi-mes)")
             pesos, nombres_meses = [], []
@@ -114,10 +119,14 @@ def mostrar_modulo_costos():
                 ventas_mes = pd.to_numeric(df_ventas[filtro_v]['Venta_Real'], errors='coerce').sum()
                 subsidio_mes = pd.to_numeric(df_ventas[filtro_v]['Subsidio_UCA'], errors='coerce').sum()
 
+            # EXTRAER TRASLADOS CON EL MAPEO INTELIGENTE
             df_hist_tras = obtener_dataframe("Historico_Traslados")
             traslados_mes = 0.0
             if not df_hist_tras.empty:
-                f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & (df_hist_tras['Destino'] == unidad_cierre)
+                destinos_a_buscar = mapa_subunidades.get(unidad_cierre, [unidad_cierre])
+                f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
+                      (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
+                      (df_hist_tras['Destino'].isin(destinos_a_buscar))
                 traslados_mes = pd.to_numeric(df_hist_tras[f_t]['Monto'], errors='coerce').sum()
 
             porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
@@ -155,6 +164,8 @@ def mostrar_modulo_costos():
                             grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum()
                             grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
                             grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum()
+                            
+                            # Sumar traslados usando el mapeo de destinos
                             grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum() if not df_hist_tras.empty else pd.Series(0.0)
 
                             todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras.index)
@@ -162,6 +173,7 @@ def mostrar_modulo_costos():
                             
                             cuentas_invalidas = ["", "NAN", "NAT", "NO APLICA", "0", "0.0", "NONE"]
                             for cta in todas_cuentas:
+                                if pd.isna(cta): continue
                                 cta_str = str(cta).strip().upper().replace(".0", "")
                                 val = grp_ini.get(cta, 0) + grp_comp.get(cta, 0) + grp_tras.get(cta, 0) - grp_fin.get(cta, 0)
                                 if val != 0 and cta_str not in cuentas_invalidas: 
@@ -210,7 +222,7 @@ def mostrar_modulo_costos():
                 
                 def mostrar_descargas_logic(c_op, c_dif, c_ant, label_m, dict_consumo, total_op_base, key_suffix):
                     st.markdown(f"#### 📥 Partidas: **{label_m}**")
-                    conc_v = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {label_m} {mem['anio_cierre']}."
+                    conc_v = f"RECONOCIMIENTO DE COSTO DE VENTA DE {mem['unidad_cierre']}, {label_m} {mem['anio_cierre']}."
                     f_v = [["410104", "", conc_v, round(c_op, 2), 0.00, ""]]
                     
                     for c, m in dict_consumo.items():
@@ -218,9 +230,9 @@ def mostrar_modulo_costos():
                         if m_perc > 0.01:
                             f_v.append([c, "", conc_v, 0.00, round(m_perc, 2), ""])
                     
-                    conc_p = f"RECONOCIMIENTO DE COSTO DE LO VENDIDO EN PROCESO CAFETERIA {label_m} {mem['anio_cierre']}"
+                    conc_p = f"RECONOCIMIENTO DE COSTO DE LO VENDIDO EN PROCESO {mem['unidad_cierre']} {label_m} {mem['anio_cierre']}"
                     f_p = [["410104", "", conc_p, round(c_ant, 2), 0.00, ""], ["110602", "", conc_p, 0.00, round(c_ant, 2), ""]]
-                    conc_d = f"DIFERIMIENTO DE COSTO EN PROCESO CAFETERIA {label_m} {mem['anio_cierre']}"
+                    conc_d = f"DIFERIMIENTO DE COSTO EN PROCESO {mem['unidad_cierre']} {label_m} {mem['anio_cierre']}"
                     f_d = [["110602", "", conc_d, round(c_dif, 2), 0.00, ""], ["410104", "", conc_d, 0.00, round(c_dif, 2), ""]]
 
                     p1, p2, p3 = st.columns(3)
@@ -259,26 +271,25 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (NUEVA LÓGICA CON CANTIDAD)
+    # PESTAÑA 2: TRASLADOS (CON CONTEXTO DE MÓDULO)
     # ==========================================
     with tab2:
         st.subheader("🚚 Registro Automático de Traslados Nexus")
-        ct1, ct2 = st.columns(2)
+        ct1, ct2, ct3 = st.columns(3)
         with ct1:
             m_t = st.selectbox("Mes:", range(1, 13), index=date.today().month - 1, key="mt_reg")
         with ct2:
             a_t = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
+        with ct3:
+            # Selector de contexto: el usuario elige para qué módulo está subiendo la data
+            unidad_t = st.selectbox("Unidad que recibe (Destino):", ["CAFETERIA", "DESPENSA"], key="uni_reg")
             
-        st.info("💡 El Origen, Destino y Cantidad se extraen automáticamente. Se filtrarán montos cero y servicios.")
+        st.info(f"💡 El sistema extraerá solo los traslados que apliquen para el módulo **{unidad_t}**. Filtraremos montos cero y servicios.")
         
-        # NOTA: Se añadió la letra K para la Cantidad. Cambiarla si es necesario.
-        arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cantidad, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
+        arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
         if arch_t:
             try:
-                # Lectura de las 6 columnas clave, incluyendo Cantidad (K)
                 df_t_raw = pd.read_excel(arch_t, usecols="I,K,N,AA,AB,AC", names=['Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], skiprows=1)
-                
-                # Normalización
                 df_t_raw['Codigo'] = df_t_raw['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                 df_t_raw['Origen'] = df_t_raw['Origen'].astype(str).str.strip().str.upper()
                 df_t_raw['Destino'] = df_t_raw['Destino'].astype(str).str.strip().str.upper()
@@ -286,31 +297,28 @@ def mostrar_modulo_costos():
                 df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0)
                 df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0)
                 
-                # SÚPER FILTRO: Destinos válidos, Monto > 0 y que NO sea SERVICIO
-                destinos_validos = ["TERRAZA", "DESPENSA", "CENTRO SOHO"]
-                df_validos = df_t_raw[
-                    (df_t_raw['Destino'].isin(destinos_validos)) & 
-                    (df_t_raw['Monto'] > 0) & 
-                    (df_t_raw['Categoria'] != 'SERVICIO')
-                ]
+                # Obtenemos los destinos válidos según el selector de la interfaz
+                destinos_validos = mapa_subunidades.get(unidad_t, [unidad_t])
+                
+                df_validos = df_t_raw[(df_t_raw['Destino'].isin(destinos_validos)) & (df_t_raw['Monto'] > 0) & (df_t_raw['Categoria'] != 'SERVICIO')]
                 
                 if df_validos.empty:
-                    st.warning("⚠️ No se encontraron traslados válidos (productos con monto > 0) hacia TERRAZA, DESPENSA o CENTRO SOHO.")
+                    st.warning(f"⚠️ No hay traslados válidos (monto > 0, no servicios) hacia ninguna bodega de {unidad_t}.")
                 else:
                     df_dic_t = obtener_dataframe("Categorias_Costos")
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                     df_f_t = pd.merge(df_validos, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
                     
-                    # Colador final de cuentas inválidas ("No Aplica")
+                    # FILTRO RADICAL DE CUENTAS "NONE" O VACÍAS
+                    df_f_t = df_f_t.dropna(subset=['Cuenta_Contable'])
                     cuentas_invalidas = ["", "NAN", "NAT", "NO APLICA", "0", "0.0", "NONE"]
                     df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
                     
-                    st.success(f"✅ Se extrajeron {len(df_f_t)} movimientos válidos.")
+                    st.success(f"✅ Se identificaron {len(df_f_t)} movimientos listos para registro en {unidad_t}.")
                     st.dataframe(df_f_t, use_container_width=True)
                     
+                    # Generar botones por Origen-Destino
                     st.markdown("#### 📥 Partidas Generadas Automáticamente:")
-                    
-                    # Agrupar por ORIGEN y DESTINO para separar las partidas
                     grupos = df_f_t.groupby(['Origen', 'Destino'])
                     cols_descarga = st.columns(min(len(grupos), 4))
                     
@@ -326,18 +334,40 @@ def mostrar_modulo_costos():
                         
                         with cols_descarga[idx % len(cols_descarga)]:
                             st.download_button(f"⬇️ {destino_val} (desde {origen_val})", generar_excel_bytes(f_p_t), f"Traslado_{origen_val}_A_{destino_val}_{meses_texto[m_t]}.xlsx", key=f"dl_t_{idx}")
-                    
+
                     st.divider()
+                    # --- RESTRICCIÓN DE DUPLICADOS ---
                     if st.button("💾 Guardar Traslados en Historial"):
-                        ws_t = conectar_hoja("Historico_Traslados")
-                        fecha_h = date.today().strftime('%d/%m/%Y')
-                        # Se añade r['Cantidad'] en la décima posición (Columna J de Sheets)
-                        filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
-                        ws_t.append_rows(filas_t)
-                        st.success("✅ Traslados y Cantidades guardados correctamente.")
-                        
-            except Exception as e:
-                st.error(f"Error procesando archivo. Verifica que contenga las columnas AB (Origen) y AC (Destino). Detalle: {e}")
+                        with st.spinner("Validando integridad de datos..."):
+                            df_historico = obtener_dataframe("Historico_Traslados")
+                            
+                            def crear_llave(row):
+                                return f"{int(float(row['Mes']))}|{int(float(row['Año']))}|{str(row['Origen']).strip()}|{str(row['Destino']).strip()}|{str(row['Código']).strip()}"
+                            
+                            if not df_historico.empty:
+                                df_historico['llave'] = df_historico.apply(crear_llave, axis=1)
+                                llaves_nuevas = [f"{m_t}|{a_t}|{str(r['Origen']).strip()}|{str(r['Destino']).strip()}|{str(r['Codigo']).strip()}" for _, r in df_f_t.iterrows()]
+                                duplicados = [l for l in llaves_nuevas if l in df_historico['llave'].values]
+                                
+                                if duplicados:
+                                    st.error(f"❌ **MOVIMIENTOS DUPLICADOS DETECTADOS:** El sistema encontró que ya existen registros para este periodo ({m_t}/{a_t}) con los mismos destinos y productos.")
+                                    st.warning("Para subir nuevos datos, primero debes eliminar los registros anteriores del Google Sheets o verificar que el archivo no contenga información ya procesada.")
+                                    with st.expander("Ver detalle de llaves duplicadas"):
+                                        st.write(duplicados)
+                                else:
+                                    ws_t = conectar_hoja("Historico_Traslados")
+                                    fecha_h = date.today().strftime('%d/%m/%Y')
+                                    filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
+                                    ws_t.append_rows(filas_t)
+                                    st.success("✅ Traslados guardados con éxito. Registro único garantizado.")
+                            else:
+                                ws_t = conectar_hoja("Historico_Traslados")
+                                fecha_h = date.today().strftime('%d/%m/%Y')
+                                filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
+                                ws_t.append_rows(filas_t)
+                                st.success("✅ Base inicializada. Primeros traslados guardados con éxito.")
+
+            except Exception as e: st.error(f"Error: {e}")
 
     # ==========================================
     # PESTAÑA 3: CONSULTA HISTORIAL
