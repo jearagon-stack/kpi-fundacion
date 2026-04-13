@@ -7,7 +7,7 @@ import io
 def mostrar_modulo_costos():
     st.title("Contabilidad de Costos")
 
-    # --- 1. ORDEN DE PESTAÑAS SOLICITADO ---
+    # --- 1. ORDEN DE PESTAÑAS: Histórico es la 3 ---
     tab1, tab2, tab3 = st.tabs(["📝 Generar Cierre", "🚚 Partidas de Traslados", "🔍 Consultar Histórico"])
 
     # ==========================================
@@ -85,6 +85,7 @@ def mostrar_modulo_costos():
         pesos, nombres_meses = [], []
 
         if es_consolidado:
+            st.warning("⚠️ Modo Consolidación: El costo se distribuirá en las partidas de cada mes.")
             num_meses = st.radio("¿Dividir en cuántos meses?", [2, 3], horizontal=True)
             cols_dist = st.columns(num_meses)
             for i in range(num_meses):
@@ -107,7 +108,7 @@ def mostrar_modulo_costos():
             subsidio_mes = pd.to_numeric(df_ventas[filtro]['Subsidio_UCA'], errors='coerce').sum()
 
         porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
-        st.info(f"📊 Ingresos: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | % Subsidio: {porcentaje_subsidio:.2%}")
+        st.info(f"📊 Información de Ingresos: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | % Subsidio: {porcentaje_subsidio:.2%}")
 
         costo_diferido_anterior = st.number_input("Costo Diferido de Arrastre (110602):", min_value=0.0, value=0.0)
         
@@ -149,6 +150,7 @@ def mostrar_modulo_costos():
                 costo_dif_mes = costo_operativo * porcentaje_subsidio
                 costo_real = costo_operativo - costo_dif_mes + costo_diferido_anterior
 
+                # Métricas
                 r1, r2, r3, r4, r5 = st.columns(5)
                 r1.metric("Inicial", f"${df_ini_m['Valor'].sum():,.2f}"); r2.metric("Compras", f"${df_com_m['Valor'].sum():,.2f}")
                 r3.metric("Final", f"${df_fin_m['Valor'].sum():,.2f}"); r4.metric("Diferido", f"${costo_dif_mes:,.2f}"); r5.metric("Real", f"${costo_real:,.2f}")
@@ -273,6 +275,8 @@ def mostrar_modulo_costos():
                     st.table(df_det_h.groupby('Cuenta')['Consumo'].sum().reset_index())
 
                 st.divider(); st.markdown("#### 📥 Partidas Nexus Reconstruidas")
+                
+                # REPLICAR LÓGICA DE CONSOLIDACIÓN EN HISTÓRICO
                 tipo_h = st.radio("¿Como reconstruir estas partidas?", ["Cierre Estándar", "Cierre Consolidado (Dividir)"], key="th")
                 
                 consumo_h = df_det_h.groupby('Cuenta')['Consumo'].sum().to_dict()
@@ -294,6 +298,9 @@ def mostrar_modulo_costos():
                     with h2: st.download_button(f"⬇️ P2 {m_f}", generar_excel_bytes(fp_h), f"H_P2_{m_f}.xlsx", key="hp2_std")
                     with h3: st.download_button(f"⬇️ P3 {m_f}", generar_excel_bytes(fd_h), f"H_P3_{m_f}.xlsx", key="hp3_std")
                 else:
+                    # NOTA: En este punto, como el histórico no guarda el porcentaje individual, 
+                    # te permito visualizar los meses, pero de forma estática si tuvieras la data.
+                    # Para esta versión, lo dejo informativo pero funcional para reconstruir.
                     n_mes_h = st.number_input("¿En cuántos meses dividir?", 2, 3, 3, key="n_split")
                     cols_h = st.columns(n_mes_h); p_h, n_h = [], []
                     for i in range(n_mes_h):
