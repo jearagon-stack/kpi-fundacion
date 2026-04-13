@@ -3,6 +3,7 @@ import pandas as pd
 from datetime import date
 from utils import obtener_dataframe, conectar_hoja
 import io
+from validacion import ejecutar_auditoria_costos
 
 def mostrar_modulo_costos():
     st.title("Contabilidad de Costos")
@@ -154,6 +155,8 @@ def mostrar_modulo_costos():
                 r1, r2, r3, r4, r5 = st.columns(5)
                 r1.metric("Inicial", f"${df_ini_m['Valor'].sum():,.2f}"); r2.metric("Compras", f"${df_com_m['Valor'].sum():,.2f}")
                 r3.metric("Final", f"${df_fin_m['Valor'].sum():,.2f}"); r4.metric("Diferido", f"${costo_dif_mes:,.2f}"); r5.metric("Real", f"${costo_real:,.2f}")
+                # --- NUEVO: MÓDULO DE AUDITORÍA ---
+                ejecutar_auditoria_costos(df_ini_m, df_com_m, df_fin_m, consumo_por_cuenta, ventas_mes, costo_real)
 
                 def mostrar_descargas_logic(c_op, c_dif, c_ant, label_m, dict_consumo, total_op_base, key_suffix):
                     st.markdown(f"#### 📥 Partidas: **{label_m}**")
