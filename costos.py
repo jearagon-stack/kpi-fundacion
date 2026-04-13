@@ -23,7 +23,8 @@ def mostrar_modulo_costos():
         "CAFETERIA JARDINES", 
         "CAFETERIA POLIDEPORTIVO", 
         "CAFETERIA ICAS", 
-        "PRODUCCION CAFETERIA CENTRAL"
+        "PRODUCCION CAFETERIA CENTRAL",
+        "CAFETERIA CENTRAL"  # <--- Agregado para bloquear movimientos internos hacia acá
     ]
 
     def generar_excel_bytes(filas):
