@@ -473,70 +473,67 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (CON FILTRO DE INGRESOS ESTRICTO)
-    # ==========================================
+    # =========================================================================
+    # PESTAÑA 2: REGISTRO DE TRASLADOS (INGRESO ESTRICTO + EDITOR DE CUENTAS)
+    # =========================================================================
     with tab2:
         st.subheader("🚚 Registro Automático de Traslados Nexus")
+
         ct1, ct2, ct3 = st.columns(3)
         with ct1:
             m_t = st.selectbox("Mes:", range(1, 13), index=date.today().month - 1, key="mt_reg")
         with ct2:
             a_t = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
         with ct3:
-            # Volvimos a la etiqueta original que describe mejor la acción
             unidad_t = st.selectbox("Unidad que recibe (Destino):", ["CAFETERIA", "DESPENSA"], key="uni_reg")
-            
-        st.info(f"💡 El sistema procesará exclusivamente los traslados que **INGRESEN** a {unidad_t} desde otras unidades.")
-        
+
+        st.info(f"💡 Filtro de Aduana: Solo se procesarán traslados que **INGRESEN** a {unidad_t} desde otras unidades.")
+
+        # Subida del reporte de Nexus
         arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
+
         if arch_t:
             try:
+                # Lectura forzada a texto para no perder ceros iniciales en códigos
                 df_t_raw = pd.read_excel(arch_t, usecols="I,K,N,AA,AB,AC", header=0, names=['Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], dtype=str)
+                
                 df_t_raw['Codigo'] = df_t_raw['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
-                df_t_raw['Origen'] = df_t_raw['Origen'].astype(str).str.strip().str.upper()
-                df_t_raw['Destino'] = df_t_raw['Destino'].astype(str).str.strip().str.upper()
-                df_t_raw['Categoria'] = df_t_raw['Categoria'].astype(str).str.strip().str.upper()
                 df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0.0)
                 df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0.0)
-                
-                # 1. Definir si Origen/Destino son parte de la unidad seleccionada
+
+                # --- APLICACIÓN DE LA REGLA DE ADUANA (SOLO INGRESOS EXTERNOS) ---
                 condicion_destino = df_t_raw['Destino'].apply(lambda x: es_de_unidad(x, unidad_t))
                 condicion_origen = df_t_raw['Origen'].apply(lambda x: es_de_unidad(x, unidad_t))
-                
-                # 2. FILTRO ESTRICTO DE INGRESOS: El destino SÍ es la unidad, pero el origen NO lo es (viene de afuera)
+
+                # FILTRO CLAVE: El destino es mi unidad, pero el origen NO es mi unidad
                 filtro_ingreso = condicion_destino & (~condicion_origen)
-                
-                # 3. Ignorar fantasmas
                 filtro_no_ignorado = ~df_t_raw['Destino'].isin(destinos_ignorados)
-                
-                # 4. Filtrar montos 0 y servicios
                 filtro_base = (df_t_raw['Monto'] > 0) & (df_t_raw['Categoria'] != 'SERVICIO')
-                
+
                 df_validos = df_t_raw[filtro_ingreso & filtro_no_ignorado & filtro_base]
-                
+
                 if df_validos.empty:
-                    st.warning(f"⚠️ No hay traslados de ingreso válidos hacia {unidad_t}.")
+                    st.warning(f"⚠️ No se detectaron ingresos válidos hacia {unidad_t} en este archivo.")
                 else:
+                    # Cruce con el Maestro de Cuentas
                     df_dic_t = obtener_dataframe("Categorias_Costos")
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                     df_f_t = pd.merge(df_validos, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
-                    
-                    # === EDITOR INTERACTIVO DE CUENTAS (Para los ingresos huérfanos) ===
+
+                    # === EDITOR INTERACTIVO (RESOLUCIÓN DE PRODUCTOS NUEVOS) ===
                     mask_nulas = df_f_t['Cuenta_Contable'].isna() | df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
-                    
+
                     if mask_nulas.any():
-                        st.warning("⚠️ **ATENCIÓN:** Hay códigos sin cuenta contable asignada en la base maestra. Selecciona una acción para cada uno:")
+                        st.warning("⚠️ Se detectaron códigos sin cuenta contable. Por favor, asignales una acción:")
                         huerfanos = df_f_t[mask_nulas][['Codigo', 'Categoria', 'Origen', 'Destino']].drop_duplicates(subset=['Codigo'])
                         huerfanos['Accion'] = "Usar Categoría Nativa"
                         huerfanos['Cuenta_Manual'] = ""
-                        
+
                         edited_huerfanos = st.data_editor(
                             huerfanos,
                             column_config={
                                 "Codigo": "Código",
-                                "Categoria": "Categoría",
-                                "Origen": "Origen",
-                                "Destino": "Destino",
+                                "Categoria": "Categoría Nativa",
                                 "Accion": st.column_config.SelectboxColumn(
                                     "¿Qué hacer?",
                                     options=["Omitir (No guardar)", "Usar Categoría Nativa", "Escribir Cuenta Manual"],
@@ -545,138 +542,138 @@ def mostrar_modulo_costos():
                                 "Cuenta_Manual": st.column_config.TextColumn("Cuenta Manual")
                             },
                             hide_index=True,
-                            use_container_width=True
+                            use_container_width=True,
+                            key="editor_traslados_final"
                         )
-                        
-                        codigos_omitir = edited_huerfanos[edited_huerfanos['Accion'] == 'Omitir (No guardar)']['Codigo'].tolist()
-                        df_asignar = edited_huerfanos[edited_huerfanos['Accion'] == 'Escribir Cuenta Manual']
-                        df_cat = edited_huerfanos[edited_huerfanos['Accion'] == 'Usar Categoría Nativa']
-                        
-                        df_f_t.loc[df_f_t['Codigo'].isin(codigos_omitir), 'Cuenta_Contable'] = 'OMITIDO_MANUAL'
-                        
-                        for _, row in df_asignar.iterrows():
-                            c_man = str(row['Cuenta_Manual']).strip()
-                            if c_man == "": c_man = "SIN CUENTA"
-                            df_f_t.loc[df_f_t['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = c_man
-                            
-                        for _, row in df_cat.iterrows():
-                            df_f_t.loc[df_f_t['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = row['Categoria']
-                    # =================================================================
-                    
-                    cuentas_invalidas = ["NO APLICA", "0", "0.0", "OMITIDO_MANUAL"]
-                    df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
-                    
-                    if df_f_t.empty:
-                        st.error("❌ Todos los movimientos detectados fueron omitidos o corresponden a cuentas 'NO APLICA'.")
-                    else:
-                        st.success(f"✅ Se identificaron {len(df_f_t)} movimientos reales de INGRESO listos para {unidad_t}.")
+
+                        # Aplicamos las decisiones del usuario al DataFrame principal
+                        for _, row in edited_huerfanos.iterrows():
+                            if row['Accion'] == 'Omitir (No guardar)':
+                                df_f_t.loc[df_f_t['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = 'OMITIDO_MANUAL'
+                            elif row['Accion'] == 'Escribir Cuenta Manual':
+                                df_f_t.loc[df_f_t['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = row['Cuenta_Manual']
+                            else:
+                                df_f_t.loc[df_f_t['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = row['Categoria']
+
+                    # Filtrado de exclusiones
+                    df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.upper().isin(["OMITIDO_MANUAL", "NO APLICA", "0", "0.0"])]
+
+                    if not df_f_t.empty:
+                        st.success(f"✅ {len(df_f_t)} Movimientos de ingreso listos para {unidad_t}.")
                         st.dataframe(df_f_t, use_container_width=True)
-                        
-                        st.markdown("#### 📥 Partidas Generadas Automáticamente:")
+
+                        st.markdown("#### 📥 Partidas de Traslado Listas para Descarga:")
                         grupos = df_f_t.groupby(['Origen', 'Destino'])
-                        num_grupos = len(grupos)
                         
-                        if num_grupos > 0:
-                            cols_descarga = st.columns(min(num_grupos, 4))
+                        for idx, ((origen_val, destino_val), df_grupo) in enumerate(grupos):
+                            grp_t = df_grupo.groupby('Cuenta_Contable')['Monto'].sum()
+                            conc_t = f"TRASLADO DE {origen_val} A {destino_val}, {meses_texto[m_t]} {a_t}"
                             
-                            for idx, ((origen_val, destino_val), df_grupo) in enumerate(grupos):
-                                grp_t = df_grupo.groupby('Cuenta_Contable')['Monto'].sum()
-                                
-                                conc_t = f"TRASLADO DE {origen_val} A {destino_val}, {meses_texto[m_t]} {a_t}"
-                                f_p_t = []
-                                for c, m in grp_t.items():
-                                    if m > 0.01: f_p_t.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0, ""])
-                                for c, m in grp_t.items():
-                                    if m > 0.01: f_p_t.append([str(c).replace(".0",""), "", conc_t, 0, round(m, 2), ""])
-                                
-                                with cols_descarga[idx % min(num_grupos, 4)]:
-                                    st.download_button(f"⬇️ {destino_val} (desde {origen_val})", generar_excel_bytes(f_p_t), f"Traslado_{origen_val}_A_{destino_val}_{meses_texto[m_t]}.xlsx", key=f"dl_t_{idx}")
+                            f_p_t = []
+                            for c, m in grp_t.items():
+                                if m > 0.01: f_p_t.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0.00, ""])
+                            for c, m in grp_t.items():
+                                if m > 0.01: f_p_t.append([str(c).replace(".0",""), "", conc_t, 0.00, round(m, 2), ""])
+                            
+                            st.download_button(f"⬇️ Partida {destino_val} (desde {origen_val})", generar_excel_bytes(f_p_t), f"Traslado_{destino_val}.xlsx", key=f"btn_tras_{idx}")
 
-                        st.divider()
-                        if st.button("💾 Guardar Traslados en Historial"):
-                            with st.spinner("Validando integridad y limpiando caché..."):
-                                st.cache_data.clear() 
-                                df_historico = obtener_dataframe("Historico_Traslados")
+                        # Botón para guardar en la base histórica
+                        if st.button("💾 Guardar Ingresos en Historial de Traslados", type="primary", use_container_width=True):
+                            with st.spinner("Validando integridad y guardando..."):
+                                st.cache_data.clear()
+                                df_hist_actual = obtener_dataframe("Historico_Traslados")
                                 
-                                def normalizar_llave(mes, anio, origen, destino, codigo):
-                                    m = str(mes).replace('.0', '').strip()
-                                    a = str(anio).replace('.0', '').strip()
-                                    o = str(origen).strip().upper()
-                                    d = str(destino).strip().upper()
-                                    c = str(codigo).strip().upper()
-                                    return f"{m}|{a}|{o}|{d}|{c}"
+                                # Generación de llave para evitar duplicidad
+                                def crear_key(r, mes, anio): return f"{mes}|{anio}|{r['Origen']}|{r['Destino']}|{r['Codigo']}"
+                                df_f_t['llave_temp'] = df_f_t.apply(lambda r: crear_key(r, m_t, a_t), axis=1)
 
-                                if not df_historico.empty:
-                                    def crear_llave_hist(row):
-                                        cod = row.get('Codigo', row.get('Código', ''))
-                                        return normalizar_llave(row.get('Mes', ''), row.get('Año', ''), row.get('Origen', ''), row.get('Destino', ''), cod)
-                                    
-                                    df_historico['llave'] = df_historico.apply(crear_llave_hist, axis=1)
-                                    llaves_existentes = set(df_historico['llave'].values)
-                                    
-                                    df_f_t['llave_temp'] = [normalizar_llave(m_t, a_t, r['Origen'], r['Destino'], r['Codigo']) for _, r in df_f_t.iterrows()]
-                                    
-                                    df_nuevos = df_f_t[~df_f_t['llave_temp'].isin(llaves_existentes)]
-                                    df_duplicados = df_f_t[df_f_t['llave_temp'].isin(llaves_existentes)]
-                                    
-                                    if not df_nuevos.empty:
-                                        ws_t = conectar_hoja("Historico_Traslados")
-                                        fecha_h = date.today().strftime('%d/%m/%Y')
-                                        filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_nuevos.iterrows()]
-                                        ws_t.append_rows(filas_t)
-                                        st.success(f"✅ Se guardaron {len(df_nuevos)} traslados de ingreso con éxito.")
-                                        
-                                    if not df_duplicados.empty:
-                                        st.warning(f"⚠️ Se omitieron {len(df_duplicados)} traslados que ya estaban registrados en la base de datos para este periodo.")
-                                    
-                                    if df_nuevos.empty and not df_duplicados.empty:
-                                        st.error("❌ No se guardó ningún dato nuevo porque todos los movimientos del archivo ya existían en el historial.")
-                                        
-                                    st.cache_data.clear() 
+                                if not df_hist_actual.empty:
+                                    df_hist_actual['llave'] = df_hist_actual.apply(lambda r: f"{r['Mes']}|{r['Año']}|{r['Origen']}|{r['Destino']}|{r.get('Codigo', r.get('Código',''))}", axis=1)
+                                    df_nuevos = df_f_t[~df_f_t['llave_temp'].isin(df_hist_actual['llave'].values)]
                                 else:
+                                    df_nuevos = df_f_t
+
+                                if not df_nuevos.empty:
                                     ws_t = conectar_hoja("Historico_Traslados")
-                                    fecha_h = date.today().strftime('%d/%m/%Y')
-                                    filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_f_t.iterrows()]
-                                    ws_t.append_rows(filas_t)
-                                    st.cache_data.clear() 
-                                    st.success("✅ Base inicializada. Traslados guardados con éxito.")
+                                    fecha_hoy = date.today().strftime('%d/%m/%Y')
+                                    filas_a_insertar = [[fecha_hoy, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_nuevos.iterrows()]
+                                    ws_t.append_rows(filas_a_insertar)
+                                    st.success(f"🎉 Se guardaron {len(df_nuevos)} registros nuevos con éxito.")
+                                else:
+                                    st.warning("⚠️ Los movimientos ya existen en el historial (Duplicados bloqueados).")
+                                
+                                st.cache_data.clear()
 
-            except Exception as e: st.error(f"Error: {e}")
+            except Exception as e:
+                st.error(f"Error crítico en Pestaña 2: {e}")
 
-    # ==========================================
-    # PESTAÑA 3: CONSULTA HISTORIAL
-    # ==========================================
+
+    # =========================================================================
+    # PESTAÑA 3: CONSULTA DE HISTORIAL OPERATIVO
+    # =========================================================================
     with tab3:
-        st.subheader("🔍 Consulta de Historial Operativo")
-        if st.button("🔄 Actualizar Base", key="update_hist"): st.cache_data.clear()
-        df_resumen = obtener_dataframe("Cierres_Costos"); df_detalle = obtener_dataframe("Detalle_Cuentas")
+        st.subheader("🔍 Consulta de Historial de Cierres")
+        
+        if st.button("🔄 Actualizar Base de Datos", key="update_hist_btn"):
+            st.cache_data.clear()
+
+        df_resumen = obtener_dataframe("Cierres_Costos")
+        df_detalle = obtener_dataframe("Detalle_Cuentas")
+
         if not df_resumen.empty:
+            # Crear selector de periodo amigable
             df_resumen['Periodo'] = df_resumen['Mes'].astype(str).str.replace('.0','') + "/" + df_resumen['Año'].astype(str).str.replace('.0','') + " - " + df_resumen['Unidad']
-            per_sel = st.selectbox("Seleccione Cierre:", df_resumen['Periodo'].unique().tolist(), index=len(df_resumen['Periodo'].unique())-1)
-            if per_sel:
-                fila = df_resumen[df_resumen['Periodo'] == per_sel].iloc[-1]
-                m_f, a_f = str(fila['Mes']).strip(), str(fila['Año']).strip()
-                v_ini, v_com, v_fin = float(fila.iloc[4]), float(fila.iloc[5]), float(fila.iloc[6])
-                v_ant, v_dif, v_real = float(fila.iloc[7]), float(fila.iloc[8]), float(fila.iloc[9])
-                c1, c2, c3, c4, c5 = st.columns(5)
-                c1.metric("Inicial", f"${v_ini:,.2f}"); c2.metric("Compras", f"${v_com:,.2f}")
-                c3.metric("Final", f"${v_fin:,.2f}"); c4.metric("Diferido", f"${v_dif:,.2f}"); c5.metric("Real", f"${v_real:,.2f}")
+            periodo_seleccionado = st.selectbox("Seleccione el Cierre a Consultar:", df_resumen['Periodo'].unique().tolist(), index=len(df_resumen['Periodo'].unique())-1)
+
+            if periodo_seleccionado:
+                fila_resumen = df_resumen[df_resumen['Periodo'] == periodo_seleccionado].iloc[-1]
                 
-                df_det_h = df_detalle[(df_detalle['Mes'].astype(str).str.replace('.0','') == m_f) & (df_detalle['Año'].astype(str).str.replace('.0','') == a_f)].copy()
+                mes_f, anio_f = str(fila_resumen['Mes']).strip(), str(fila_resumen['Año']).strip()
+                
+                # Conversión a números para métricas
+                v_ini = float(fila_resumen.iloc[4])
+                v_com = float(fila_resumen.iloc[5])
+                v_fin = float(fila_resumen.iloc[6])
+                v_ant = float(fila_resumen.iloc[7])
+                v_dif = float(fila_resumen.iloc[8])
+                v_real = float(fila_resumen.iloc[9])
+
+                # Visualización de métricas clave
+                m1, m2, m3, m4, m5 = st.columns(5)
+                m1.metric("Inicial", f"${v_ini:,.2f}")
+                m2.metric("Compras", f"${v_com:,.2f}")
+                m3.metric("Final", f"${v_fin:,.2f}")
+                m4.metric("Diferido", f"${v_dif:,.2f}")
+                m5.metric("Costo Real", f"${v_real:,.2f}")
+
+                # Detalle de movimientos
+                df_det_h = df_detalle[(df_detalle['Mes'].astype(str).str.replace('.0','') == mes_f) & (df_detalle['Año'].astype(str).str.replace('.0','') == anio_f)].copy()
+                
                 if not df_det_h.empty:
                     df_det_h['Consumo'] = pd.to_numeric(df_det_h['Consumo'], errors='coerce').fillna(0.0)
-                
-                if st.checkbox("📂 Ver Detalle de Movimientos", key="chk_det"):
-                    st.dataframe(df_det_h, use_container_width=True)
-                st.divider(); st.markdown("#### 📥 Reconstruir Partidas Nexus")
-                tipo_h = st.radio("Formato:", ["Cierre Estándar", "Cierre Consolidado"], key="th")
-                consumo_h = df_det_h.groupby('Cuenta')['Consumo'].sum().to_dict()
-                op_h = sum(consumo_h.values())
-                if tipo_h == "Cierre Estándar":
-                    cv_h = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {m_f}/{a_f}."
-                    fv_h = [["410104", "", cv_h, round(op_h, 2), 0, ""]]
-                    for c, m in consumo_h.items():
-                        cta_str = str(c).replace(".0","").strip()
-                        if cta_str != "" and cta_str.lower() not in ["nan", "nat", "no aplica"]:
-                            if m > 0.01: fv_h.append([cta_str, "", cv_h, 0, round(m, 2), ""])
-                    st.download_button(f"⬇️ Bajar P1 {m_f}", generar_excel_bytes(fv_h), f"H_P1_{m_f}.xlsx", key="hp1_std")
+                    
+                    if st.checkbox("📂 Ver Detalle de Cuentas / Movimientos", key="chk_ver_det"):
+                        st.dataframe(df_det_h, use_container_width=True)
+
+                    st.divider()
+                    st.markdown("#### 📥 Reconstruir Partidas Contables")
+                    
+                    formato_partida = st.radio("Tipo de Partida:", ["Cierre Estándar", "Cierre Consolidado"], key="radio_h")
+                    
+                    # Agrupar consumo por cuenta para regenerar partida
+                    dict_consumo_h = df_det_h.groupby('Cuenta')['Consumo'].sum().to_dict()
+                    total_op_h = sum(dict_consumo_h.values())
+
+                    if formato_partida == "Cierre Estándar":
+                        concepto_h = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {mes_f}/{anio_f}."
+                        partida_v = [["410104", "", concepto_h, round(total_op_h, 2), 0.00, ""]]
+                        
+                        for cta, monto in dict_consumo_h.items():
+                            cta_limpia = str(cta).replace(".0","").strip()
+                            if cta_limpia != "" and cta_limpia.lower() not in ["nan", "nat", "no aplica"]:
+                                if abs(monto) > 0.01:
+                                    partida_v.append([cta_limpia, "", concepto_h, 0.00, round(monto, 2), ""])
+                        
+                        st.download_button(f"⬇️ Descargar P1 ({mes_f}/{anio_f})", generar_excel_bytes(partida_v), f"H_P1_{mes_f}_{anio_f}.xlsx", key="btn_h_p1")
+        else:
+            st.info("Aún no existen cierres guardados en la base de datos.")
