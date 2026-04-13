@@ -85,13 +85,12 @@ def mostrar_modulo_costos():
         pesos, nombres_meses = [], []
 
         if es_consolidado:
-            st.warning("⚠️ Modo Consolidación: El costo se distribuirá en las partidas de cada mes.")
             num_meses = st.radio("¿Dividir en cuántos meses?", [2, 3], horizontal=True)
             cols_dist = st.columns(num_meses)
             for i in range(num_meses):
                 with cols_dist[i]:
-                    n = st.text_input(f"Mes {i+1}:", meses_texto.get(mes_cierre-num_meses+i+1, "MES")).upper()
-                    p = st.number_input(f"% Venta {n}", min_value=0.0, max_value=100.0, value=100.0/num_meses)
+                    n = st.text_input(f"Mes {i+1}:", meses_texto.get(mes_cierre-num_meses+i+1, "MES"), key=f"n_gen_{i}").upper()
+                    p = st.number_input(f"% Venta {n}", min_value=0.0, max_value=100.0, value=100.0/num_meses, key=f"p_gen_{i}")
                     pesos.append(p / 100); nombres_meses.append(n)
 
         st.divider()
@@ -150,12 +149,11 @@ def mostrar_modulo_costos():
                 costo_dif_mes = costo_operativo * porcentaje_subsidio
                 costo_real = costo_operativo - costo_dif_mes + costo_diferido_anterior
 
-                # Métricas
                 r1, r2, r3, r4, r5 = st.columns(5)
                 r1.metric("Inicial", f"${df_ini_m['Valor'].sum():,.2f}"); r2.metric("Compras", f"${df_com_m['Valor'].sum():,.2f}")
                 r3.metric("Final", f"${df_fin_m['Valor'].sum():,.2f}"); r4.metric("Diferido", f"${costo_dif_mes:,.2f}"); r5.metric("Real", f"${costo_real:,.2f}")
 
-                def mostrar_descargas_logic(c_op, c_dif, c_ant, label_m, dict_consumo, total_op_base):
+                def mostrar_descargas_logic(c_op, c_dif, c_ant, label_m, dict_consumo, total_op_base, key_suffix):
                     st.markdown(f"#### 📥 Partidas: **{label_m}**")
                     conc_v = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {label_m} {anio_cierre}."
                     f_v = [["410104", "", conc_v, round(c_op, 2), 0.00, ""]]
@@ -170,15 +168,15 @@ def mostrar_modulo_costos():
                     f_d = [["110602", "", conc_d, round(c_dif, 2), 0.00, ""], ["410104", "", conc_d, 0.00, round(c_dif, 2), ""]]
 
                     p1, p2, p3 = st.columns(3)
-                    with p1: st.download_button(f"⬇️ P1 {label_m}", generar_excel_bytes(f_v), f"1_Costo_{label_m}.xlsx", use_container_width=True)
-                    with p2: st.download_button(f"⬇️ P2 {label_m}", generar_excel_bytes(f_p), f"2_Ant_{label_m}.xlsx", use_container_width=True)
-                    with p3: st.download_button(f"⬇️ P3 {label_m}", generar_excel_bytes(f_d), f"3_Dif_{label_m}.xlsx", use_container_width=True)
+                    with p1: st.download_button(f"⬇️ P1 {label_m}", generar_excel_bytes(f_v), f"1_Costo_{label_m}.xlsx", key=f"gen_p1_{key_suffix}", use_container_width=True)
+                    with p2: st.download_button(f"⬇️ P2 {label_m}", generar_excel_bytes(f_p), f"2_Ant_{label_m}.xlsx", key=f"gen_p2_{key_suffix}", use_container_width=True)
+                    with p3: st.download_button(f"⬇️ P3 {label_m}", generar_excel_bytes(f_d), f"3_Dif_{label_m}.xlsx", key=f"gen_p3_{key_suffix}", use_container_width=True)
 
                 if not es_consolidado:
-                    mostrar_descargas_logic(costo_operativo, costo_dif_mes, costo_diferido_anterior, mes_txt, consumo_por_cuenta, costo_operativo)
+                    mostrar_descargas_logic(costo_operativo, costo_dif_mes, costo_diferido_anterior, mes_txt, consumo_por_cuenta, costo_operativo, "std")
                 else:
                     for i in range(len(pesos)):
-                        mostrar_descargas_logic(costo_operativo*pesos[i], costo_dif_mes*pesos[i], costo_diferido_anterior*pesos[i], nombres_meses[i], consumo_por_cuenta, costo_operativo)
+                        mostrar_descargas_logic(costo_operativo*pesos[i], costo_dif_mes*pesos[i], costo_diferido_anterior*pesos[i], nombres_meses[i], consumo_por_cuenta, costo_operativo, f"cons_{i}")
 
                 if st.button("💾 Guardar Cierre", type="primary", use_container_width=True):
                     with st.spinner("Guardando..."):
@@ -202,7 +200,7 @@ def mostrar_modulo_costos():
             except Exception as e: st.error(f"Error: {e}")
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (RESTAURADA)
+    # PESTAÑA 2: TRASLADOS
     # ==========================================
     with tab2:
         st.subheader("🚚 Partidas de Traslados")
@@ -229,21 +227,21 @@ def mostrar_modulo_costos():
                     st.error(f"Cod. no encontrados: {df_f_t[df_f_t['Cuenta_Contable'].isna()]['Codigo'].unique()}")
                 else:
                     grp_t = df_f_t.groupby('Cuenta_Contable')['Monto'].sum()
-                    st.success(f"Total: ${grp_t.sum():,.2f}")
+                    st.success(f"Total traslados: ${grp_t.sum():,.2f}")
                     st.dataframe(grp_t.reset_index())
                     conc_t = f"TRASLADO DE {origen_t} A {destino_t}, {meses_texto[m_t]} {a_t}"
                     f_p_t = []
                     for c, m in grp_t.items(): f_p_t.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0, ""])
                     for c, m in grp_t.items(): f_p_t.append([str(c).replace(".0",""), "", conc_t, 0, round(m, 2), ""])
                     st.download_button("⬇️ Bajar Traslado", generar_excel_bytes(f_p_t), f"Traslado_{origen_t}.xlsx")
-            except Exception as e: st.error(f"Error en traslados: {e}")
+            except Exception as e: st.error(f"Error: {e}")
 
     # ==========================================
-    # PESTAÑA 3: CONSULTA DE HISTORIAL (CORREGIDA)
+    # PESTAÑA 3: CONSULTA DE HISTORIAL
     # ==========================================
     with tab3:
         st.subheader("🔍 Consulta de Cierres Anteriores")
-        if st.button("🔄 Actualizar Base"): st.cache_data.clear()
+        if st.button("🔄 Actualizar Base", key="update_hist"): st.cache_data.clear()
 
         df_resumen = obtener_dataframe("Cierres_Costos"); df_detalle = obtener_dataframe("Detalle_Cuentas")
 
@@ -265,48 +263,43 @@ def mostrar_modulo_costos():
                 c1.metric("Inicial", f"${v_ini:,.2f}"); c2.metric("Compras", f"${v_com:,.2f}")
                 c3.metric("Final", f"${v_fin:,.2f}"); c4.metric("Diferido", f"${v_dif:,.2f}"); c5.metric("Real", f"${v_real:,.2f}")
 
-                # --- FILTRO DE DATOS ---
                 df_det_h = df_detalle[(df_detalle['Mes'].astype(str).str.replace('.0','') == m_f) & (df_detalle['Año'].astype(str).str.replace('.0','') == a_f)]
                 df_det_h['Consumo'] = pd.to_numeric(df_det_h['Consumo'], errors='coerce').fillna(0)
 
-                if st.checkbox("📂 Ver Detalle de Movimientos"):
+                if st.checkbox("📂 Ver Detalle de Movimientos", key="chk_det"):
                     st.dataframe(df_det_h, use_container_width=True)
 
-                if st.checkbox("📊 Ver Resumen por Cuentas"):
+                if st.checkbox("📊 Ver Resumen por Cuentas", key="chk_res"):
                     st.table(df_det_h.groupby('Cuenta')['Consumo'].sum().reset_index())
 
                 st.divider(); st.markdown("#### 📥 Partidas Nexus Reconstruidas")
-                
-                # REPLICAR LÓGICA DE CONSOLIDACIÓN EN HISTÓRICO
                 tipo_h = st.radio("¿Como reconstruir estas partidas?", ["Cierre Estándar", "Cierre Consolidado (Dividir)"], key="th")
                 
                 consumo_h = df_det_h.groupby('Cuenta')['Consumo'].sum().to_dict()
                 op_h = sum(consumo_h.values())
 
                 if tipo_h == "Cierre Estándar":
-                    def mostrar_btn_h(c_op, c_dif, c_ant, lbl, d_con, t_op):
-                        cv = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {lbl} {a_f}."
-                        fv = [["410104", "", cv, round(c_op, 2), 0, ""]]
-                        for c, m in d_con.items():
-                            mp = m * (c_op / t_op) if t_op > 0 else 0
-                            if mp > 0: fv.append([str(c).replace(".0",""), "", cv, 0, round(mp, 2), ""])
-                        cp = f"RECONOCIMIENTO DE COSTO DE LO VENDIDO EN PROCESO CAFETERIA {lbl} {a_f}"
-                        fp = [["410104", "", cp, round(c_ant, 2), 0, ""], ["110602", "", cp, 0, round(c_ant, 2), ""]]
-                        cd = f"DIFERIMIENTO DE COSTO EN PROCESO CAFETERIA {lbl} {a_f}"
-                        fd = [["110602", "", cd, round(c_dif, 2), 0, ""], ["410104", "", cd, 0, round(c_dif, 2), ""]]
-                        h1, h2, h3 = st.columns(3)
-                        with h1: st.download_button(f"P1 {lbl}", generar_excel_bytes(fv), f"H_P1_{lbl}.xlsx")
-                        with h2: st.download_button(f"P2 {lbl}", generar_excel_bytes(fp), f"H_P2_{lbl}.xlsx")
-                        with h3: st.download_button(f"P3 {lbl}", generar_excel_bytes(fd), f"H_P3_{lbl}.xlsx")
-
-                    mostrar_btn_h(op_h, v_dif, v_ant, m_f, consumo_h, op_h)
+                    cv_h = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {m_f}/{a_f}."
+                    fv_h = [["410104", "", cv_h, round(op_h, 2), 0, ""]]
+                    for c, m in consumo_h.items():
+                        if m > 0: fv_h.append([str(c).replace(".0",""), "", cv_h, 0, round(m, 2), ""])
+                    
+                    cp_h = f"RECONOCIMIENTO DE COSTO DE LO VENDIDO EN PROCESO CAFETERIA {m_f}/{a_f}"
+                    fp_h = [["410104", "", cp_h, round(v_ant, 2), 0, ""], ["110602", "", cp_h, 0, round(v_ant, 2), ""]]
+                    cd_h = f"DIFERIMIENTO DE COSTO EN PROCESO CAFETERIA {m_f}/{a_f}"
+                    fd_h = [["110602", "", cd_h, round(v_dif, 2), 0, ""], ["410104", "", cd_h, 0, round(v_dif, 2), ""]]
+                    
+                    h1, h2, h3 = st.columns(3)
+                    with h1: st.download_button(f"⬇️ P1 {m_f}", generar_excel_bytes(fv_h), f"H_P1_{m_f}.xlsx", key="hp1_std")
+                    with h2: st.download_button(f"⬇️ P2 {m_f}", generar_excel_bytes(fp_h), f"H_P2_{m_f}.xlsx", key="hp2_std")
+                    with h3: st.download_button(f"⬇️ P3 {m_f}", generar_excel_bytes(fd_h), f"H_P3_{m_f}.xlsx", key="hp3_std")
                 else:
-                    n_mes_h = st.number_input("¿En cuántos meses dividir?", 2, 3, 3)
+                    n_mes_h = st.number_input("¿En cuántos meses dividir?", 2, 3, 3, key="n_split")
                     cols_h = st.columns(n_mes_h); p_h, n_h = [], []
                     for i in range(n_mes_h):
                         with cols_h[i]:
-                            nm = st.text_input(f"Mes {i+1}:", key=f"nm{i}").upper()
-                            ph = st.number_input(f"% {nm}", 0.0, 100.0, 100.0/n_mes_h, key=f"ph{i}")
+                            nm = st.text_input(f"Mes {i+1}:", key=f"nm_h_{i}").upper()
+                            ph = st.number_input(f"% {nm}", 0.0, 100.0, 100.0/n_mes_h, key=f"ph_h_{i}")
                             p_h.append(ph/100); n_h.append(nm)
                     
                     for i in range(n_mes_h):
@@ -316,12 +309,14 @@ def mostrar_modulo_costos():
                         for c, m in consumo_h.items():
                             mp_c = (m * p_h[i])
                             if mp_c > 0: fv_c.append([str(c).replace(".0",""), "", cv_c, 0, round(mp_c, 2), ""])
+                        
                         cp_c = f"RECONOCIMIENTO DE COSTO DE LO VENDIDO EN PROCESO CAFETERIA {n_h[i]} {a_f}"
                         fp_c = [["410104", "", cp_c, round(v_ant*p_h[i], 2), 0, ""], ["110602", "", cp_c, 0, round(v_ant*p_h[i], 2), ""]]
                         cd_c = f"DIFERIMIENTO DE COSTO EN PROCESO CAFETERIA {n_h[i]} {a_f}"
                         fd_c = [["110602", "", cd_c, round(v_dif*p_h[i], 2), 0, ""], ["410104", "", cd_c, 0, round(v_dif*p_h[i], 2), ""]]
+                        
                         h1c, h2c, h3c = st.columns(3)
-                        with h1c: st.download_button(f"P1 {n_h[i]}", generar_excel_bytes(fv_c), f"H_P1_{n_h[i]}.xlsx")
-                        with h2c: st.download_button(f"P2 {n_h[i]}", generar_excel_bytes(fp_c), f"H_P2_{n_h[i]}.xlsx")
-                        with h3c: st.download_button(f"P3 {n_h[i]}", generar_excel_bytes(fd_c), f"H_P3_{n_h[i]}.xlsx")
+                        with h1c: st.download_button(f"P1 {n_h[i]}", generar_excel_bytes(fv_c), f"H_P1_{n_h[i]}.xlsx", key=f"hp1_c_{i}")
+                        with h2c: st.download_button(f"P2 {n_h[i]}", generar_excel_bytes(fp_c), f"H_P2_{n_h[i]}.xlsx", key=f"hp2_c_{i}")
+                        with h3c: st.download_button(f"P3 {n_h[i]}", generar_excel_bytes(fd_c), f"H_P3_{n_h[i]}.xlsx", key=f"hp3_c_{i}")
                         st.divider()
