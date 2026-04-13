@@ -10,17 +10,21 @@ def mostrar_modulo_costos():
     tab1, tab2, tab3 = st.tabs(["📝 Generar Cierre", "🚚 Partidas de Traslados", "🔍 Consultar Histórico"])
 
     # ==========================================
-    # FUNCIONES DE APOYO Y MAPEO INTELIGENTE
+    # FUNCIONES DE APOYO Y MAPEO DE UNIDADES
     # ==========================================
-    
-    def es_de_unidad(bodega, unidad_param):
-        """Detecta automáticamente si una bodega pertenece a la unidad seleccionada."""
-        b = str(bodega).strip().upper()
-        if unidad_param == "CAFETERIA":
-            return ("CAFETERIA" in b) or (b in ["TERRAZA", "CENTRO SOHO"])
-        elif unidad_param == "DESPENSA":
-            return "DESPENSA" in b
-        return b == unidad_param.upper()
+    mapa_subunidades = {
+        "CAFETERIA": ["TERRAZA", "CENTRO SOHO", "CAFETERIA CENTRAL", "CAFETERIA", "CAFETERIA ABASTECIMIENTO"],
+        "DESPENSA":  ["DESPENSA"]
+    }
+
+    # LA LISTA NEGRA: Destinos que el sistema ignorará por completo
+    destinos_ignorados = [
+        "CAFETERIA EVENTOS", 
+        "CAFETERIA JARDINES", 
+        "CAFETERIA POLIDEPORTIVO", 
+        "CAFETERIA ICAS", 
+        "PRODUCCION CAFETERIA CENTRAL"
+    ]
 
     def generar_excel_bytes(filas):
         df_p = pd.DataFrame(filas)
@@ -135,6 +139,7 @@ def mostrar_modulo_costos():
             f_t_in = None; f_t_out = None
             if not df_hist_tras.empty:
                 df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0.0)
+                unidades_buscar = mapa_subunidades.get(unidad_cierre, [unidad_cierre])
                 
                 if es_consolidado:
                     meses_indices = [list(meses_texto.keys())[list(meses_texto.values()).index(m)] for m in nombres_meses]
@@ -144,12 +149,8 @@ def mostrar_modulo_costos():
                     filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
                                   (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre)
                 
-                # SÚPER FILTRO: Entradas y Salidas reales
-                mask_dest = df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
-                mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
-                
-                f_t_in = filtro_base & mask_dest & (~mask_orig)
-                f_t_out = filtro_base & mask_orig & (~mask_dest)
+                f_t_in = filtro_base & (df_hist_tras['Destino'].isin(unidades_buscar))
+                f_t_out = filtro_base & (df_hist_tras['Origen'].isin(unidades_buscar))
                 
                 monto_in = df_hist_tras[f_t_in]['Monto'].sum()
                 monto_out = df_hist_tras[f_t_out]['Monto'].sum()
@@ -486,14 +487,15 @@ def mostrar_modulo_costos():
                 df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0.0)
                 df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0.0)
                 
-                # FILTRO XOR: Si origen y destino son de la misma unidad, es un movimiento interno y se ignora.
-                condicion_destino = df_t_raw['Destino'].apply(lambda x: es_de_unidad(x, unidad_t))
-                condicion_origen = df_t_raw['Origen'].apply(lambda x: es_de_unidad(x, unidad_t))
+                subunidades_validas = mapa_subunidades.get(unidad_t, [unidad_t])
                 
-                df_validos = df_t_raw[(condicion_destino != condicion_origen) & (df_t_raw['Monto'] > 0) & (df_t_raw['Categoria'] != 'SERVICIO')]
+                condicion_relevante = df_t_raw['Origen'].isin(subunidades_validas) | df_t_raw['Destino'].isin(subunidades_validas)
+                condicion_no_ignorado = ~df_t_raw['Destino'].isin(destinos_ignorados)
+                
+                df_validos = df_t_raw[condicion_relevante & condicion_no_ignorado & (df_t_raw['Monto'] > 0) & (df_t_raw['Categoria'] != 'SERVICIO')]
                 
                 if df_validos.empty:
-                    st.warning(f"⚠️ No hay traslados válidos de entrada o salida para {unidad_t} (se ignoraron los movimientos internos).")
+                    st.warning(f"⚠️ No hay traslados válidos de entrada o salida para {unidad_t} (se ignoraron los movimientos hacia {destinos_ignorados}).")
                 else:
                     df_dic_t = obtener_dataframe("Categorias_Costos")
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
