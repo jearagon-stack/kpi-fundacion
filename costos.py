@@ -204,42 +204,52 @@ def mostrar_modulo_costos():
                             st.success("✅ Guardado exitoso.")
             except Exception as e: st.error(f"Error: {e}")
 
-    # ==========================================
-    # PESTAÑA 2: TRASLADOS
+        # ==========================================
+    # PESTAÑA 2: TRASLADOS (Gestión de Entradas/Salidas)
     # ==========================================
     with tab2:
-        st.subheader("🚚 Partidas de Traslados")
+        st.subheader("🚚 Gestión y Registro de Traslados")
         ct1, ct2 = st.columns(2)
         with ct1:
-            m_t = st.selectbox("Mes del Traslado:", range(1, 13), index=date.today().month - 1, key="mt")
+            mes_t = st.selectbox("Mes del Traslado:", range(1, 13), index=date.today().month-1, key="mt_reg")
             origen_t = st.text_input("Bodega Origen:", "ABASTECIMIENTO").upper()
         with ct2:
-            a_t = st.number_input("Año:", min_value=2024, value=date.today().year, key="at")
-            destino_t = st.text_input("Bodega Destino:", "DESPENSA").upper()
+            anio_t = st.number_input("Año:", min_value=2024, value=date.today().year, key="at_reg")
+            destino_t = st.text_input("Bodega Destino:", "CAFETERIA").upper()
 
-        arch_t = st.file_uploader("Reporte Nexus (I: Cod, N: Monto, AA: Cat)", type=["xlsx"], accept_multiple_files=True, key="atf")
+        arch_t = st.file_uploader("Subir Reporte Nexus (I, N, AA)", type=["xlsx"], accept_multiple_files=True, key="atf_reg")
+        
         if arch_t:
             try:
-                dfs_t = [pd.read_excel(a, usecols="I,N,AA", names=['Codigo', 'Monto', 'Categoria'], header=None, skiprows=1) for a in arch_t]
-                df_t_c = pd.concat(dfs_t, ignore_index=True)
-                df_t_c['Monto'] = pd.to_numeric(df_t_c['Monto'], errors='coerce').fillna(0)
-                df_t_c = df_t_c[(df_t_c['Monto'] > 0) & (df_t_c['Categoria'].astype(str).str.upper() != 'SERVICIO')]
-                df_t_c['Codigo'] = df_t_c['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
-                df_dic_t = obtener_dataframe("Categorias_Costos")
-                df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
-                df_f_t = pd.merge(df_t_c, df_dic_t, on='Codigo', how='left')
-                if df_f_t['Cuenta_Contable'].isna().any():
-                    st.error(f"Cod. no encontrados: {df_f_t[df_f_t['Cuenta_Contable'].isna()]['Codigo'].unique()}")
-                else:
-                    grp_t = df_f_t.groupby('Cuenta_Contable')['Monto'].sum()
-                    st.success(f"Total traslados: ${grp_t.sum():,.2f}")
-                    st.dataframe(grp_t.reset_index())
-                    conc_t = f"TRASLADO DE {origen_t} A {destino_t}, {meses_texto[m_t]} {a_t}"
-                    f_p_t = []
-                    for c, m in grp_t.items(): f_p_t.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0, ""])
-                    for c, m in grp_t.items(): f_p_t.append([str(c).replace(".0",""), "", conc_t, 0, round(m, 2), ""])
-                    st.download_button("⬇️ Bajar Traslado", generar_excel_bytes(f_p_t), f"Traslado_{origen_t}.xlsx")
-            except Exception as e: st.error(f"Error: {e}")
+                # Lectura de columnas específicas según Nexus
+                dfs_t = [pd.read_excel(a, usecols="I,N,AA", names=['Codigo','Monto','Categoria'], header=None, skiprows=1) for a in arch_t]
+                df_t_raw = pd.concat(dfs_t, ignore_index=True)
+                df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0)
+                
+                # Limpieza de códigos y cruce con diccionario
+                df_t_raw['Codigo'] = df_t_raw['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                df_dic = obtener_dataframe("Categorias_Costos")
+                df_dic['Codigo'] = df_dic['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                
+                df_final_t = pd.merge(df_t_raw, df_dic[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
+
+                st.dataframe(df_final_t, use_container_width=True)
+
+                if st.button("💾 Confirmar y Guardar Traslados en Historial", type="primary"):
+                    with st.spinner("Registrando traslados..."):
+                        ws_t = conectar_hoja("Historico_Traslados")
+                        fecha_hoy = date.today().strftime('%d/%m/%Y')
+                        filas_t = []
+                        for _, r in df_final_t.iterrows():
+                            filas_t.append([
+                                fecha_hoy, mes_t, anio_t, origen_t, destino_t, 
+                                str(r['Cuenta_Contable']), round(r['Monto'], 2), r['Codigo'], f"Traslado {origen_t}->{destino_t}"
+                            ])
+                        if filas_t:
+                            ws_t.append_rows(filas_t)
+                            st.success(f"✅ {len(filas_t)} traslados registrados correctamente.")
+            except Exception as e:
+                st.error(f"Error al procesar traslados: {e}")
 
     # ==========================================
     # PESTAÑA 3: CONSULTA DE HISTORIAL
