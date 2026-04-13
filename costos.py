@@ -8,7 +8,7 @@ from validacion import ejecutar_auditoria_costos
 def mostrar_modulo_costos():
     st.title("Contabilidad de Costos")
 
-    # --- PESTAÑAS ---
+    # --- PESTAÑAS ORIGINALES ---
     tab1, tab2, tab3 = st.tabs(["📝 Generar Cierre", "🚚 Partidas de Traslados", "🔍 Consultar Histórico"])
 
     # ==========================================
@@ -23,10 +23,9 @@ def mostrar_modulo_costos():
 
     def extraer_subunidad(nombre_archivo, unidad_base):
         nombre_upper = str(nombre_archivo).upper()
-        subunidades = ["POLIDEPORTIVO", "ICAS", "JARDINES", "EVENTOS", "CENTRAL", "ABASTECIMIENTO"]
-        for sub in subunidades:
-            if sub in nombre_upper:
-                return f"{unidad_base} {sub}"
+        subs = ["POLIDEPORTIVO", "ICAS", "JARDINES", "EVENTOS", "CENTRAL", "ABASTECIMIENTO"]
+        for sub in subs:
+            if sub in nombre_upper: return f"{unidad_base} {sub}"
         return unidad_base
 
     def cargar_y_marcar(archivo):
@@ -100,19 +99,21 @@ def mostrar_modulo_costos():
         ventas_mes = subsidio_mes = 0.0
         if not df_ventas.empty:
             df_ventas['Fecha_DT'] = pd.to_datetime(df_ventas['Fecha'], format='%d/%m/%Y', errors='coerce')
-            filtro = (df_ventas['Fecha_DT'].dt.year == anio_cierre) & (df_ventas['Unidad'] == unidad_cierre)
+            filtro_v = (df_ventas['Fecha_DT'].dt.year == anio_cierre) & (df_ventas['Unidad'] == unidad_cierre)
             if es_consolidado:
-                filtro &= df_ventas['Fecha_DT'].dt.month.isin(range(mes_cierre-len(pesos)+1, mes_cierre+1))
+                filtro_v &= df_ventas['Fecha_DT'].dt.month.isin(range(mes_cierre-len(pesos)+1, mes_cierre+1))
             else:
-                filtro &= (df_ventas['Fecha_DT'].dt.month == mes_cierre)
-            ventas_mes = pd.to_numeric(df_ventas[filtro]['Venta_Real'], errors='coerce').sum()
-            subsidio_mes = pd.to_numeric(df_ventas[filtro]['Subsidio_UCA'], errors='coerce').sum()
+                filtro_v &= (df_ventas['Fecha_DT'].dt.month == mes_cierre)
+            ventas_mes = pd.to_numeric(df_ventas[filtro_v]['Venta_Real'], errors='coerce').sum()
+            subsidio_mes = pd.to_numeric(df_ventas[filtro_v]['Subsidio_UCA'], errors='coerce').sum()
 
         # --- LÓGICA DE TRASLADOS (PARA EL COSTO) ---
         df_hist_tras = obtener_dataframe("Historico_Traslados")
         traslados_mes = 0.0
         if not df_hist_tras.empty:
-            f_t = (df_hist_tras['Mes'].astype(float) == mes_cierre) & (df_hist_tras['Año'].astype(float) == anio_cierre) & (df_hist_tras['Destino'] == unidad_cierre)
+            f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
+                  (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & \
+                  (df_hist_tras['Destino'] == unidad_cierre)
             traslados_mes = pd.to_numeric(df_hist_tras[f_t]['Monto'], errors='coerce').sum()
 
         porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
@@ -120,10 +121,10 @@ def mostrar_modulo_costos():
 
         costo_diferido_anterior = st.number_input("Costo Diferido de Arrastre (110602):", min_value=0.0, value=0.0)
         
-        col_u1, col_u2, col_u3 = st.columns(3)
-        with col_u1: arch_ini = st.file_uploader("1. Inv. Inicial", type=["xlsx", "xls"], accept_multiple_files=True)
-        with col_u2: arch_com = st.file_uploader("2. Compras", type=["xlsx", "xls"], accept_multiple_files=True)
-        with col_u3: arch_fin = st.file_uploader("3. Inv. Final", type=["xlsx", "xls"], accept_multiple_files=True)
+        u1, u2, u3 = st.columns(3)
+        with u1: arch_ini = st.file_uploader("1. Inv. Inicial", type=["xlsx"], accept_multiple_files=True)
+        with u2: arch_com = st.file_uploader("2. Compras", type=["xlsx"], accept_multiple_files=True)
+        with u3: arch_fin = st.file_uploader("3. Inv. Final", type=["xlsx"], accept_multiple_files=True)
 
         if arch_ini and arch_com and arch_fin:
             try:
@@ -143,8 +144,8 @@ def mostrar_modulo_costos():
                 grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum()
                 grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
                 grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum()
-
-                # Sumar traslados por cuenta
+                
+                # Traslados por cuenta
                 grp_tras = pd.Series(0.0, index=grp_ini.index)
                 if not df_hist_tras.empty:
                     grp_tras = df_hist_tras[f_t].groupby('Cuenta_Contable')['Monto'].sum()
@@ -158,11 +159,12 @@ def mostrar_modulo_costos():
                 costo_dif_mes = costo_operativo * porcentaje_subsidio
                 costo_real = costo_operativo - costo_dif_mes + costo_diferido_anterior
 
+                # MÉTRICAS
                 r1, r2, r3, r4, r5 = st.columns(5)
                 r1.metric("Inicial", f"${grp_ini.sum():,.2f}"); r2.metric("Compras", f"${grp_comp.sum():,.2f}")
                 r3.metric("Final", f"${grp_fin.sum():,.2f}"); r4.metric("Diferido", f"${costo_dif_mes:,.2f}"); r5.metric("Real", f"${costo_real:,.2f}")
 
-                # --- LLAMADA AL MÓDULO DE VALIDACIÓN (AQUÍ ES DONDE APARECE) ---
+                # --- PANEL DE VALIDACIÓN (LA ADUANA) ---
                 es_apto = ejecutar_auditoria_costos(df_ini_m, df_com_m, df_fin_m, consumo_por_cuenta, ventas_mes, costo_real, mes_cierre, anio_cierre, unidad_cierre)
 
                 if es_apto:
@@ -205,7 +207,7 @@ def mostrar_modulo_costos():
     # PESTAÑA 2: TRASLADOS (CON GUARDADO)
     # ==========================================
     with tab2:
-        st.subheader("🚚 Partidas de Traslados")
+        st.subheader("🚚 Gestión de Traslados Nexus")
         ct1, ct2 = st.columns(2)
         with ct1:
             m_t = st.selectbox("Mes del Traslado:", range(1, 13), index=date.today().month - 1, key="mt")
@@ -214,7 +216,7 @@ def mostrar_modulo_costos():
             a_t = st.number_input("Año:", min_value=2024, value=date.today().year, key="at")
             destino_t = st.text_input("Bodega Destino:", "CAFETERIA").upper()
 
-        arch_t = st.file_uploader("Reporte Nexus (I: Cod, N: Monto, AA: Cat)", type=["xlsx"], accept_multiple_files=True, key="atf")
+        arch_t = st.file_uploader("Reporte Nexus (I, N, AA)", type=["xlsx"], accept_multiple_files=True, key="atf")
         if arch_t:
             try:
                 dfs_t = [pd.read_excel(a, usecols="I,N,AA", names=['Codigo', 'Monto', 'Categoria'], header=None, skiprows=1) for a in arch_t]
