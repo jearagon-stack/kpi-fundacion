@@ -66,7 +66,7 @@ def mostrar_modulo_costos():
     lista_meses = list(meses_texto.values())
 
     # ==========================================
-    # PESTAÑA 1: GENERAR CIERRE
+    # PESTAÑA 1: GENERAR CIERRE (INCLUYE MEMORIA AISLADA)
     # ==========================================
     with tab1:
         st.subheader("1. Cierre Contable")
@@ -120,7 +120,7 @@ def mostrar_modulo_costos():
                 traslados_mes = pd.to_numeric(df_hist_tras[f_t]['Monto'], errors='coerce').sum()
 
             porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
-            st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados: ${traslados_mes:,.2f}")
+            st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados Recibidos: ${traslados_mes:,.2f}")
 
             costo_diferido_anterior = st.number_input("Costo Diferido de Arrastre (110602):", min_value=0.0, value=0.0)
             
@@ -258,54 +258,58 @@ def mostrar_modulo_costos():
                             st.rerun()
 
     # ==========================================
-    # PESTAÑA 2: TRASLADOS (NUEVA LÓGICA AUTOMÁTICA)
+    # PESTAÑA 2: TRASLADOS (AUTOMATIZADO POR BODEGA INGRESO)
     # ==========================================
     with tab2:
-        st.subheader("🚚 Registro de Traslados Nexus (Lote)")
+        st.subheader("🚚 Registro Automático de Traslados Nexus")
         ct1, ct2 = st.columns(2)
         with ct1:
             m_t = st.selectbox("Mes:", range(1, 13), index=date.today().month - 1, key="mt_reg")
-            origen_t = st.text_input("Bodega Origen:", "ABASTECIMIENTO").upper()
         with ct2:
             a_t = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
-            st.info("💡 Destino: Se lee automáticamente de la columna 'BodegaIngreso' (AC)")
             
-        arch_t = st.file_uploader("Reporte Nexus de Salidas (I:Cod, N:Monto, AA:Cat, AC:Destino)", type=["xlsx"], key="atf_reg")
+        st.info("💡 El Origen y Destino se extraen automáticamente de las columnas AB y AC del archivo. Solo se procesarán salidas hacia destinos válidos.")
         
+        arch_t = st.file_uploader("Reporte Nexus (I:Cod, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
         if arch_t:
             try:
-                # Leemos las 4 columnas clave
-                df_t_raw = pd.read_excel(arch_t, usecols="I,N,AA,AC", names=['Codigo', 'Monto', 'Categoria', 'Destino'], skiprows=1)
+                # Leemos las columnas clave, incluyendo Origen (AB) y Destino (AC)
+                df_t_raw = pd.read_excel(arch_t, usecols="I,N,AA,AB,AC", names=['Codigo', 'Monto', 'Categoria', 'Origen', 'Destino'], skiprows=1)
                 
-                # Limpieza
+                # Limpieza de textos
                 df_t_raw['Codigo'] = df_t_raw['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                df_t_raw['Origen'] = df_t_raw['Origen'].astype(str).str.strip().str.upper()
                 df_t_raw['Destino'] = df_t_raw['Destino'].astype(str).str.strip().str.upper()
                 df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0)
                 
-                # FILTRO: Solo dejamos los destinos válidos
+                # FILTRO: Dejamos solo los destinos solicitados
                 destinos_validos = ["TERRAZA", "DESPENSA", "CENTRO SOHO"]
                 df_validos = df_t_raw[df_t_raw['Destino'].isin(destinos_validos)]
                 
                 if df_validos.empty:
-                    st.warning("⚠️ No se encontraron traslados para TERRAZA, DESPENSA o CENTRO SOHO en este archivo.")
+                    st.warning("⚠️ No se encontraron traslados hacia TERRAZA, DESPENSA o CENTRO SOHO en este reporte.")
                 else:
                     df_dic_t = obtener_dataframe("Categorias_Costos")
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                     df_f_t = pd.merge(df_validos, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
                     
-                    st.success(f"✅ Se encontraron {len(df_f_t)} traslados válidos.")
+                    st.success(f"✅ Se encontraron {len(df_f_t)} movimientos válidos extraídos exitosamente.")
                     st.dataframe(df_f_t, use_container_width=True)
                     
-                    # Generación dinámica de botones de descarga por destino
+                    # Generación de botones dinámicos según lo encontrado
                     destinos_encontrados = df_f_t['Destino'].unique()
-                    st.markdown("#### 📥 Partidas Generadas:")
+                    st.markdown("#### 📥 Descargar Partidas Identificadas:")
+                    
                     cols_descarga = st.columns(len(destinos_encontrados))
                     
                     for idx, dest in enumerate(destinos_encontrados):
                         df_dest = df_f_t[df_f_t['Destino'] == dest]
                         grp_t = df_dest.groupby('Cuenta_Contable')['Monto'].sum()
                         
-                        conc_t = f"TRASLADO DE {origen_t} A {dest}, {meses_texto[m_t]} {a_t}"
+                        # Extrae el origen real que tenga ese destino en el archivo
+                        origen_str = df_dest['Origen'].iloc[0] if not df_dest.empty else "ABASTECIMIENTO"
+                        
+                        conc_t = f"TRASLADO DE {origen_str} A {dest}, {meses_texto[m_t]} {a_t}"
                         f_p_t = []
                         for c, m in grp_t.items():
                             if m > 0: f_p_t.append([str(c).replace(".0",""), "", conc_t, round(m, 2), 0, ""])
@@ -313,18 +317,19 @@ def mostrar_modulo_costos():
                             if m > 0: f_p_t.append([str(c).replace(".0",""), "", conc_t, 0, round(m, 2), ""])
                         
                         with cols_descarga[idx]:
-                            st.download_button(f"⬇️ Bajar {dest}", generar_excel_bytes(f_p_t), f"Traslado_{dest}_{meses_texto[m_t]}.xlsx", key=f"dl_t_{dest}")
+                            st.download_button(f"⬇️ Partida {dest}", generar_excel_bytes(f_p_t), f"Traslado_{dest}_{meses_texto[m_t]}.xlsx", key=f"dl_t_{dest}")
                     
                     st.divider()
                     if st.button("💾 Guardar Traslados en Historial"):
                         ws_t = conectar_hoja("Historico_Traslados")
                         fecha_h = date.today().strftime('%d/%m/%Y')
-                        filas_t = [[fecha_h, m_t, a_t, origen_t, r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus"] for _, r in df_f_t.iterrows()]
+                        # Guarda cada fila con su Origen y Destino exacto
+                        filas_t = [[fecha_h, m_t, a_t, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus"] for _, r in df_f_t.iterrows()]
                         ws_t.append_rows(filas_t)
-                        st.success("✅ Todos los traslados fueron registrados en la base de datos.")
+                        st.success("✅ Traslados guardados. Serán considerados automáticamente al costear estos destinos.")
                         
             except Exception as e:
-                st.error(f"Error procesando archivo. Asegúrese de que tenga la columna AC (BodegaIngreso). Error: {e}")
+                st.error(f"Error procesando archivo. Verifica que contenga las columnas AB (Origen) y AC (Destino). Detalle: {e}")
 
     # ==========================================
     # PESTAÑA 3: CONSULTA HISTORIAL
