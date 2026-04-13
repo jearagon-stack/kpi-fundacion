@@ -148,6 +148,7 @@ def mostrar_modulo_costos():
             f_t_in = None; f_t_out = None
             if not df_hist_tras.empty:
                 df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0.0)
+                unidades_buscar = mapa_subunidades.get(unidad_cierre, [unidad_cierre])
                 
                 if es_consolidado:
                     meses_indices = [list(meses_texto.keys())[list(meses_texto.values()).index(m)] for m in nombres_meses]
@@ -157,11 +158,8 @@ def mostrar_modulo_costos():
                     filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
                                   (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre)
                 
-                mask_dest = df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
-                mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
-                
-                f_t_in = filtro_base & mask_dest & (~mask_orig)
-                f_t_out = filtro_base & mask_orig & (~mask_dest)
+                f_t_in = filtro_base & (df_hist_tras['Destino'].isin(unidades_buscar))
+                f_t_out = filtro_base & (df_hist_tras['Origen'].isin(unidades_buscar))
                 
                 monto_in = df_hist_tras[f_t_in]['Monto'].sum()
                 monto_out = df_hist_tras[f_t_out]['Monto'].sum()
@@ -498,17 +496,13 @@ def mostrar_modulo_costos():
                 df_t_raw['Monto'] = pd.to_numeric(df_t_raw['Monto'], errors='coerce').fillna(0.0)
                 df_t_raw['Cantidad'] = pd.to_numeric(df_t_raw['Cantidad'], errors='coerce').fillna(0.0)
                 
-                # 1. Aplicar la regla de quién pertenece a la unidad
+                subunidades_validas = mapa_subunidades.get(unidad_t, [unidad_t])
+                
                 condicion_destino = df_t_raw['Destino'].apply(lambda x: es_de_unidad(x, unidad_t))
                 condicion_origen = df_t_raw['Origen'].apply(lambda x: es_de_unidad(x, unidad_t))
                 
-                # 2. Regla XOR: Si ambos son de la misma unidad, es un movimiento interno (falso)
                 filtro_externo = condicion_destino != condicion_origen
-                
-                # 3. Lista Negra: Ignorar destinos prohibidos (Eventos, Polideportivo, etc.)
                 filtro_no_ignorado = ~df_t_raw['Destino'].isin(destinos_ignorados)
-                
-                # 4. Filtro base (Montos válidos y no servicios)
                 filtro_base = (df_t_raw['Monto'] > 0) & (df_t_raw['Categoria'] != 'SERVICIO')
                 
                 df_validos = df_t_raw[filtro_externo & filtro_no_ignorado & filtro_base]
@@ -520,18 +514,56 @@ def mostrar_modulo_costos():
                     df_dic_t['Codigo'] = df_dic_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                     df_f_t = pd.merge(df_validos, df_dic_t[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
                     
-                    df_f_t['Cuenta_Contable'] = df_f_t['Cuenta_Contable'].fillna(df_f_t['Categoria'])
-                    nulos_textuales = ["", "NAN", "NAT", "NONE"]
-                    mask = df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(nulos_textuales)
-                    df_f_t.loc[mask, 'Cuenta_Contable'] = df_f_t.loc[mask, 'Categoria']
+                    # === NUEVO EDITOR INTERACTIVO EN PESTAÑA 2 ===
+                    mask_nulas = df_f_t['Cuenta_Contable'].isna() | df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
                     
-                    cuentas_invalidas = ["NO APLICA", "0", "0.0"]
+                    if mask_nulas.any():
+                        st.warning("⚠️ **ATENCIÓN:** Hay códigos sin cuenta contable asignada en la base maestra. Selecciona una acción para cada uno:")
+                        huerfanos = df_f_t[mask_nulas][['Codigo', 'Categoria', 'Origen', 'Destino']].drop_duplicates(subset=['Codigo'])
+                        huerfanos['Accion'] = "Usar Categoría Nativa"
+                        huerfanos['Cuenta_Manual'] = ""
+                        
+                        edited_huerfanos = st.data_editor(
+                            huerfanos,
+                            column_config={
+                                "Codigo": "Código",
+                                "Categoria": "Categoría",
+                                "Origen": "Origen",
+                                "Destino": "Destino",
+                                "Accion": st.column_config.SelectboxColumn(
+                                    "¿Qué hacer?",
+                                    options=["Omitir (No guardar)", "Usar Categoría Nativa", "Escribir Cuenta Manual"],
+                                    required=True
+                                ),
+                                "Cuenta_Manual": st.column_config.TextColumn("Cuenta Manual")
+                            },
+                            hide_index=True,
+                            use_container_width=True
+                        )
+                        
+                        # Aplicar los cambios en tiempo real
+                        codigos_omitir = edited_huerfanos[edited_huerfanos['Accion'] == 'Omitir (No guardar)']['Codigo'].tolist()
+                        df_asignar = edited_huerfanos[edited_huerfanos['Accion'] == 'Escribir Cuenta Manual']
+                        df_cat = edited_huerfanos[edited_huerfanos['Accion'] == 'Usar Categoría Nativa']
+                        
+                        df_f_t.loc[df_f_t['Codigo'].isin(codigos_omitir), 'Cuenta_Contable'] = 'OMITIDO_MANUAL'
+                        
+                        for _, row in df_asignar.iterrows():
+                            c_man = str(row['Cuenta_Manual']).strip()
+                            if c_man == "": c_man = "SIN CUENTA"
+                            df_f_t.loc[df_f_t['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = c_man
+                            
+                        for _, row in df_cat.iterrows():
+                            df_f_t.loc[df_f_t['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = row['Categoria']
+                    # ==============================================
+
+                    cuentas_invalidas = ["NO APLICA", "0", "0.0", "OMITIDO_MANUAL"]
                     df_f_t = df_f_t[~df_f_t['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(cuentas_invalidas)]
                     
                     if df_f_t.empty:
-                        st.warning("⚠️ Todos los movimientos detectados corresponden a cuentas 'NO APLICA'.")
+                        st.error("❌ Todos los movimientos detectados fueron omitidos o corresponden a cuentas 'NO APLICA'.")
                     else:
-                        st.success(f"✅ Se identificaron {len(df_f_t)} movimientos reales de entrada/salida para {unidad_t}.")
+                        st.success(f"✅ Se identificaron {len(df_f_t)} movimientos reales de entrada/salida listos para {unidad_t}.")
                         st.dataframe(df_f_t, use_container_width=True)
                         
                         st.markdown("#### 📥 Partidas Generadas Automáticamente:")
