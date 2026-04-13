@@ -1,44 +1,45 @@
 import streamlit as st
 import pandas as pd
 
-# Esta es la función que usa el módulo de COSTOS
 def ejecutar_auditoria_costos(df_ini, df_com, df_fin, consumo_dict, ventas_mes, costo_real, mes, anio, unidad):
     st.markdown("---")
-    st.header("🛡️ Aduana de Validación de Información")
+    st.header("🔍 Protocolo de Verificación de Integridad") # Antes: Aduana
     
     apto_para_cierre = True
     df_c = pd.DataFrame(list(consumo_dict.items()), columns=['Cuenta', 'Consumo'])
 
     col_v1, col_v2 = st.columns(2)
     with col_v1:
+        # Sección 1: Análisis de Existencias
+        st.subheader("📋 Consistencia de Inventarios")
         negativos = df_c[df_c['Consumo'] < 0]
         if not negativos.empty:
-            st.error(f"🚩 **ERROR CRÍTICO:** Se detectaron {len(negativos)} cuentas con consumo negativo.")
+            st.error(f"🚩 **DISCREPANCIA:** Se detectaron {len(negativos)} cuentas con saldos inconsistentes (negativos).")
             st.dataframe(negativos)
             apto_para_cierre = False
         else:
-            st.success("✅ Consumos consistentes (No hay negativos).")
+            st.success("✅ Validación de saldos exitosa (Sin negativos).")
 
+        # Sección 2: Margen de Contribución
         if ventas_mes > 0:
             margen_actual = (costo_real / ventas_mes)
-            st.metric("Margen Costo/Venta Operativo", f"{margen_actual:.2%}")
+            st.metric("Ratio Costo / Ventas (Real)", f"{margen_actual:.2%}")
             if 0.61 <= margen_actual <= 0.67:
-                st.success("🟢 Margen dentro del rango histórico (62-65%).")
+                st.success("🟢 Margen de operación dentro de parámetros históricos.")
             else:
-                st.warning(f"🟡 Margen fuera de rango ({margen_actual:.2%}).")
+                st.warning(f"🟡 Desviación detectada en el ratio de operación ({margen_actual:.2%}).")
 
     with col_v2:
-        st.write("**Top 5 Cuentas con Mayor Impacto:**")
+        # Sección 3: Pareto de Costos
+        st.subheader("📈 Análisis de Concentración (Top 5)")
         top_5 = df_c.nlargest(5, 'Consumo')
         st.bar_chart(top_5.set_index('Cuenta'))
         
     return apto_para_cierre
 
-# ESTA ES LA FUNCIÓN QUE LE FALTA A TU ARCHIVO Y POR ESO DA ERROR
 def mostrar_modulo_validacion():
-    st.title("🛡️ Lector Independiente de Validación")
+    st.title("📊 Sistema de Auditoría y Verificación Operativa") # Antes: Lector Independiente
     st.markdown("---")
-    st.info("Esta sección funcionará como un monitor independiente de los datos cargados en el módulo de costos.")
+    st.info("Este monitor de control centraliza la auditoría preventiva de los datos gestionados en el módulo de costos.")
     
-    # Aquí es donde pondremos el visor de auditoría que querés ver por separado
-    st.write("Cargue los archivos en 'Contabilidad de Costos' para ver el análisis aquí.")
+    st.write("Cargue los estados de inventario en 'Contabilidad de Costos' para visualizar el diagnóstico detallado.")
