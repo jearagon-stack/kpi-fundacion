@@ -12,7 +12,7 @@ def mostrar_modulo_costos():
     tab1, tab2, tab3 = st.tabs(["📝 Generar Cierre", "🚚 Partidas de Traslados", "🔍 Consultar Histórico"])
 
     # ==========================================
-    # FUNCIONES DE APOYO (INTEGRAS)
+    # FUNCIONES DE APOYO (RESTAURADAS AL 100%)
     # ==========================================
     def generar_excel_bytes(filas):
         df_p = pd.DataFrame(filas)
@@ -86,25 +86,23 @@ def mostrar_modulo_costos():
         pesos, nombres_meses = [], []
 
         if es_consolidado:
-            # CORRECCIÓN: Ahora podés elegir desde 1 hasta el número del mes seleccionado
-            num_meses = st.number_input("¿Dividir en cuántos meses?", min_value=1, max_value=mes_cierre, value=min(mes_cierre, 3))
-            
+            # Ahora el valor por defecto es el mismo número del mes seleccionado
+            num_meses = st.number_input("¿Dividir en cuántos meses?", min_value=1, max_value=12, value=mes_cierre)
             st.markdown(f"**Distribución de costos para el periodo de {num_meses} meses finalizando en {meses_texto[mes_cierre]}:**")
             
-            # Usamos columnas dinámicas. Si son muchos meses, se ajustan automáticamente.
-            cols_dist = st.columns(num_meses) if num_meses <= 6 else [st.container() for _ in range(num_meses)]
-            
-            for i in range(num_meses):
-                idx_sugerido = mes_cierre - (num_meses - 1) + i
-                if idx_sugerido < 1: idx_sugerido += 12
-                
-                # Si hay muchas columnas, las ponemos en filas para que no se vea amontonado
-                target = cols_dist[i] if num_meses <= 6 else st
-                
-                with target:
-                    n = st.selectbox(f"Mes {i+1}:", options=lista_meses, index=idx_sugerido-1, key=f"n_gen_{i}")
-                    p = st.number_input(f"% Venta {n}", min_value=0.0, max_value=100.0, value=100.0/num_meses, key=f"p_gen_{i}")
-                    pesos.append(p / 100); nombres_meses.append(n)
+            # Lógica para mostrar 3 meses por fila y evitar el error de "target"
+            for i in range(0, num_meses, 3):
+                cols = st.columns(3)
+                for j in range(3):
+                    idx_actual = i + j
+                    if idx_actual < num_meses:
+                        idx_sugerido = mes_cierre - (num_meses - 1) + idx_actual
+                        if idx_sugerido < 1: idx_sugerido += 12
+                        
+                        with cols[j]:
+                            n = st.selectbox(f"Mes {idx_actual+1}:", options=lista_meses, index=idx_sugerido-1, key=f"n_gen_{idx_actual}")
+                            p = st.number_input(f"% Venta {n}", min_value=0.0, max_value=100.0, value=100.0/num_meses, key=f"p_gen_{idx_actual}")
+                            pesos.append(p / 100); nombres_meses.append(n)
 
         st.divider()
         # --- Lógica de Ingresos ---
@@ -127,8 +125,7 @@ def mostrar_modulo_costos():
             f_t = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre) & (df_hist_tras['Destino'] == unidad_cierre)
             traslados_mes = pd.to_numeric(df_hist_tras[f_t]['Monto'], errors='coerce').sum()
 
-        porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
-        st.info(f"📊 Ingresos: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados Recibidos: ${traslados_mes:,.2f}")
+        st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados: ${traslados_mes:,.2f}")
 
         costo_diferido_anterior = st.number_input("Costo Diferido de Arrastre (110602):", min_value=0.0, value=0.0)
         
@@ -163,6 +160,7 @@ def mostrar_modulo_costos():
                     val = grp_ini.get(cta, 0) + grp_comp.get(cta, 0) + grp_tras.get(cta, 0) - grp_fin.get(cta, 0)
                     if val != 0: consumo_por_cuenta[cta] = val; costo_operativo += val
                 
+                porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
                 costo_dif_mes = costo_operativo * porcentaje_subsidio
                 costo_real = costo_operativo - costo_dif_mes + costo_diferido_anterior
 
@@ -204,7 +202,7 @@ def mostrar_modulo_costos():
                             fecha_hoy = date.today().strftime('%d/%m/%Y')
                             if ws_res and ws_det:
                                 ws_res.append_row([fecha_hoy, mes_cierre, anio_cierre, unidad_cierre, round(grp_ini.sum(),2), round(grp_comp.sum(),2), round(grp_fin.sum(),2), round(costo_diferido_anterior,2), round(costo_dif_mes,2), round(costo_real,2)])
-                                # --- Lógica de Detalle (Audit Trail) ---
+                                # --- Lógica de Detalle ---
                                 df_det_c = pd.concat([df_ini_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Inicial'}),
                                                    df_com_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Compra'}),
                                                    df_fin_m[['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Final'})]).fillna(0)
