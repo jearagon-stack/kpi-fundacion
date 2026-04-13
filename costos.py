@@ -125,7 +125,6 @@ def mostrar_modulo_costos():
                 ventas_mes = pd.to_numeric(df_ventas[filtro_v]['Venta_Real'], errors='coerce').sum()
                 subsidio_mes = pd.to_numeric(df_ventas[filtro_v]['Subsidio_UCA'], errors='coerce').sum()
 
-            # LÓGICA DE TRASLADOS NETOS (ENTRADAS MENOS SALIDAS)
             df_hist_tras = obtener_dataframe("Historico_Traslados")
             traslados_neta = 0.0
             f_t_in = None; f_t_out = None
@@ -141,9 +140,7 @@ def mostrar_modulo_costos():
                     filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
                                   (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre)
                 
-                # Entradas: Destino es la unidad seleccionada
                 f_t_in = filtro_base & (df_hist_tras['Destino'].isin(unidades_buscar))
-                # Salidas: Origen es la unidad seleccionada
                 f_t_out = filtro_base & (df_hist_tras['Origen'].isin(unidades_buscar))
                 
                 monto_in = df_hist_tras[f_t_in]['Monto'].sum()
@@ -189,7 +186,6 @@ def mostrar_modulo_costos():
 
                                 df_faltantes = pd.concat([detectar_huerfanos(df_ini_m), detectar_huerfanos(df_com_m), detectar_huerfanos(df_fin_m)]).drop_duplicates(subset=['Codigo'])
 
-                                # Agrupamos traslados Entrantes y Salientes
                                 if not df_hist_tras.empty:
                                     grp_tras_in = df_hist_tras[f_t_in].groupby('Cuenta_Contable')['Monto'].sum()
                                     grp_tras_out = df_hist_tras[f_t_out].groupby('Cuenta_Contable')['Monto'].sum()
@@ -472,10 +468,11 @@ def mostrar_modulo_costos():
             
         st.info(f"💡 El sistema extraerá solo los traslados que apliquen para el módulo **{unidad_t}** y validará que no se repitan.")
         
+        # CORRECCIÓN CLAVE AQUÍ: header=0 para que NO se salte la primera línea de datos (Ej: Los huevos de $174.99)
         arch_t = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
         if arch_t:
             try:
-                df_t_raw = pd.read_excel(arch_t, usecols="I,K,N,AA,AB,AC", names=['Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], skiprows=1, dtype=str)
+                df_t_raw = pd.read_excel(arch_t, usecols="I,K,N,AA,AB,AC", header=0, names=['Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], dtype=str)
                 df_t_raw['Codigo'] = df_t_raw['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                 df_t_raw['Origen'] = df_t_raw['Origen'].astype(str).str.strip().str.upper()
                 df_t_raw['Destino'] = df_t_raw['Destino'].astype(str).str.strip().str.upper()
