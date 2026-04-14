@@ -6,51 +6,41 @@ def mostrar_modulo_validacion():
     st.title("🛡️ Protocolo de Verificación de Integridad")
     st.markdown("---")
 
-    # Verifica si hay datos enviados desde la pestaña de Costos
     if 'datos_auditoria' not in st.session_state:
         st.info("💡 Módulo en espera. Por favor, procese los cierres en el módulo 'Contabilidad de Costos' primero.")
         return
 
-    # Extraemos los datos básicos actuales
     data = st.session_state['datos_auditoria']
     consumo_dict = data.get('consumo', {})
     ventas_mes = data.get('ventas', 0.0)
     costo_real = data.get('costo_real', 0.0)
     
-    # -------------------------------------------------------------------------
-    # 1. LECTURA DE PARÁMETROS DESDE GOOGLE SHEETS
-    # -------------------------------------------------------------------------
-    try:
+    try: 
         df_params = obtener_dataframe("Parametros_Auditoria")
-    except:
+    except: 
         df_params = pd.DataFrame()
 
-    # Valores por defecto por si la hoja está vacía o hay error de conexión
     limite_var = 0.01
     limites_cat = {
         "LIMPIEZA": 3000.0, 
         "EMPAQUE": 5000.0, 
         "MATERIA_PRIMA": 10000.0, 
-        "PRODUCTO_TERMINADO": 7000.0
+        "PRODUCTO_TERMINADO": 8000.0
     }
 
-    # Actualizamos con los valores que configuraste en la otra pantalla
     if not df_params.empty:
         try:
             val_var = df_params[df_params['Criterio'] == 'VARIACION_MAX_PERMITIDA']['Valor_Tope']
             if not val_var.empty: limite_var = float(val_var.iloc[0])
-            
             for cat in limites_cat.keys():
-                val_cat = df_params[df_params['Criterio'] == cat]['Valor_Tope']
-                if not val_cat.empty:
-                    limites_cat[cat] = float(val_cat.iloc[0])
-        except:
+                val_cat = df_params[df_params['Criterio'].isin([cat, cat.replace("_", " ")])]['Valor_Tope']
+                if not val_cat.empty: limites_cat[cat] = float(val_cat.iloc[0])
+        except: 
             pass
 
-    # -------------------------------------------------------------------------
-    # 2. PANEL DE SEMÁFOROS Y ALERTAS
-    # -------------------------------------------------------------------------
-    alertas_criticas = 0  # Contador para activar el freno de mano
+    # RECOLECTOR DE ANOMALÍAS
+    lista_errores = []
+
     df_c = pd.DataFrame(list(consumo_dict.items()), columns=['Cuenta', 'Consumo'])
 
     st.subheader("🚥 Semáforos de Auditoría")
@@ -60,9 +50,9 @@ def mostrar_modulo_validacion():
         st.markdown("**1. Anomalías por Unidad/Caja (Saldos Negativos)**")
         negativos = df_c[df_c['Consumo'] < 0]
         if not negativos.empty:
-            st.error(f"🚩 **DISCREPANCIA:** {len(negativos)} cuentas en rojo. Revisar conversiones de unidad.")
+            st.error(f"🚩 **DISCREPANCIA:** {len(negativos)} cuentas en rojo.")
             st.dataframe(negativos, use_container_width=True)
-            alertas_criticas += 1
+            lista_errores.append(f"Saldos negativos detectados en {len(negativos)} cuentas.")
         else:
             st.success("✅ Cuentas saneadas (Sin saldos negativos).")
 
@@ -72,71 +62,71 @@ def mostrar_modulo_validacion():
         if ventas_mes > 0:
             margen_actual = (costo_real / ventas_mes)
             if 0.61 <= margen_actual <= 0.67:
-                st.success(f"✅ Ratio Costo/Ventas: {margen_actual:.2%} (Dentro de lo normal).")
+                st.success(f"✅ Ratio Costo/Ventas: {margen_actual:.2%} (Normal).")
             else:
                 st.warning(f"🟡 Desviación en el ratio: {margen_actual:.2%}.")
-                alertas_criticas += 1
+                lista_errores.append(f"Ratio de Rentabilidad Atípico ({margen_actual:.2%})")
         else:
             st.info("Sin registro de ventas para calcular margen.")
 
     with col_v2:
         st.markdown(f"**3. Costo Promedio (Límite Variación: {limite_var:.2%})**")
-        # El módulo de costos debe enviar 'variaciones_costo'
         if 'variaciones_costo' in data and not data['variaciones_costo'].empty:
             df_var = data['variaciones_costo']
             try:
                 anomalias = df_var[df_var['Variacion_Porcentual'].abs() > limite_var]
                 if not anomalias.empty:
                     st.error(f"🚩 {len(anomalias)} productos superan el límite de variación.")
+                    lista_errores.append(f"Variación de costo atípica en {len(anomalias)} productos.")
                     st.dataframe(anomalias, use_container_width=True)
-                    alertas_criticas += 1
                 else:
                     st.success("✅ Variación de costos estables.")
-            except:
-                st.info("Formato de variaciones no compatible.")
+            except: 
+                st.info("Estructura de variaciones no compatible.")
         else:
-            st.info("⏳ Esperando matriz de variaciones desde el módulo de Costos...")
+            st.info("⏳ Falta enviar la matriz de variaciones desde el código de costos.")
 
         st.divider()
 
         st.markdown("**4. Topes de Inversión por Categoría**")
-        # El módulo de costos debe enviar 'inventario_final'
-        if 'inventario_final' in data and not data['inventario_final'].empty:
+        if 'inventario_final' in data:
             df_inv = data['inventario_final']
-            try:
+            # Búsqueda dinámica de las columnas de monto y categoría
+            col_monto = next((c for c in df_inv.columns if str(c).upper() in ['MONTO', 'VALOR', 'TOTAL', 'COSTO_TOTAL']), None)
+            col_cat = next((c for c in df_inv.columns if 'CATEGOR' in str(c).upper() or 'CUENTA' in str(c).upper()), None)
+            
+            if col_monto and col_cat:
                 for cat, tope in limites_cat.items():
-                    # Sumamos el monto de la categoría actual
-                    monto_cat = df_inv[df_inv['Categoria'].str.contains(cat.replace("_", " "), case=False, na=False)]['Monto'].sum()
+                    monto_cat = df_inv[df_inv[col_cat].astype(str).str.contains(cat.replace("_", " "), case=False, na=False)][col_monto].sum()
                     if monto_cat > tope:
-                        st.error(f"🚩 **{cat}:** ${monto_cat:,.2f} (Supera tope de ${tope:,.2f})")
-                        alertas_criticas += 1
+                        st.error(f"🚩 **{cat.replace('_', ' ')}:** ${monto_cat:,.2f} (Tope: ${tope:,.2f})")
+                        lista_errores.append(f"Sobreexistencia de inventario en {cat.replace('_', ' ')} (${monto_cat:,.2f})")
                     else:
-                        st.success(f"✅ **{cat}:** ${monto_cat:,.2f} (Límite: ${tope:,.2f})")
-            except:
-                st.info("Estructura de inventario no compatible.")
+                        st.success(f"✅ **{cat.replace('_', ' ')}:** ${monto_cat:,.2f} (Tope: ${tope:,.2f})")
+            else:
+                st.error(f"No se detectaron las columnas necesarias. Nombres encontrados en tu archivo: {list(df_inv.columns)}")
         else:
             st.info("⏳ Esperando desglose de inventario final desde el módulo de Costos...")
 
     st.markdown("---")
 
-    # -------------------------------------------------------------------------
-    # 3. EL FRENO DE MANO (DOBLE CHECK DE SEGURIDAD)
-    # -------------------------------------------------------------------------
-    if alertas_criticas == 0:
-        # Ruta Feliz: Todo está en verde
+    # FRENO DE MANO MODIFICADO
+    if len(lista_errores) == 0:
         if st.button("✅ DAR VISTO BUENO (APROBAR PERIODO)", type="primary", use_container_width=True):
             st.session_state['auditoria_aprobada'] = True
             st.balloons()
             st.success("¡Periodo Aprobado! Regresa al módulo de Costos para guardar en la base histórica.")
     else:
-        # Ruta de Excepción: Hay alertas activas
-        st.warning(f"⚠️ **SISTEMA BLOQUEADO:** Se detectaron {alertas_criticas} anomalías o topes excedidos en la auditoría.")
+        st.warning("⚠️ **SISTEMA BLOQUEADO: Se detectaron las siguientes anomalías que requieren autorización:**")
         
-        # El Checkbox de responsabilidad
-        check_autorizacion = st.checkbox("Declaro que he revisado las anomalías de costo/topes y autorizo este cierre bajo mi responsabilidad.")
+        # Imprime la lista exacta de errores detectados
+        for err in lista_errores:
+            st.markdown(f"- 🔸 {err}")
+        
+        st.write("")
+        check_autorizacion = st.checkbox("Declaro que he revisado las anomalías listadas y autorizo este cierre bajo mi responsabilidad.")
         
         if check_autorizacion:
-            # Solo si marca la casilla aparece el botón rojo
             if st.button("🚨 CONFIRMAR Y GUARDAR EXCEPCIONES", type="primary", use_container_width=True):
                 st.session_state['auditoria_aprobada'] = True
                 st.success("¡Excepciones Aprobadas! Regresa al módulo de Costos para guardar en la base histórica.")
