@@ -509,8 +509,8 @@ def mostrar_modulo_costos():
                 condicion_destino = df_raw_t['Destino'].apply(lambda x: es_de_unidad(x, u_responsable))
                 condicion_origen = df_raw_t['Origen'].apply(lambda x: es_de_unidad(x, u_responsable))
 
-                # --- APLICAMOS EL FILTRO (SIN BLOQUEAR MOVIMIENTOS INTERNOS) ---
-                if "Ingresos" in tipo_movimiento:
+               # LÓGICA SEGÚN EL SELECTOR (Ignorando mayúsculas/minúsculas y permitiendo internos)
+                if "ingreso" in tipo_movimiento.lower():
                     filtro_direccion = condicion_destino
                 else:
                     filtro_direccion = condicion_origen
