@@ -161,21 +161,21 @@ def mostrar_modulo_costos():
                 mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
                 
                 # --- LÓGICA DE TRASLADOS CORREGIDA (CONSOLIDADO + FIX COLUMNAS) ---
-            if es_consolidado:
-                # Creamos la lista de meses para el consolidado (Ej: [1, 2, 3])
-                # Usamos 'meses_a_dividir' que es tu variable del widget de la pantalla
-                meses_lista = list(range(max(1, mes_cierre - meses_a_dividir + 1), mes_cierre + 1))
-                filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_lista)
-            else:
-                filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre
+                if es_consolidado:
+                    # Creamos la lista de meses para el consolidado (Ej: [1, 2, 3])
+                    # Usamos 'meses_a_dividir' que es tu variable del widget de la pantalla
+                    meses_lista = list(range(max(1, mes_cierre - meses_a_dividir + 1), mes_cierre + 1))
+                    filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_lista)
+                else:
+                    filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre
 
-            # Usamos los nombres reales de tus columnas: 'Destino' y 'Origen'
-            f_t_in = filtro_mes & df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
-            f_t_out = filtro_mes & df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+                # Usamos los nombres reales de tus columnas: 'Destino' y 'Origen'
+                f_t_in = filtro_mes & df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+                f_t_out = filtro_mes & df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
 
-            monto_in = df_hist_tras[f_t_in]['Monto'].sum()
-            monto_out = df_hist_tras[f_t_out]['Monto'].sum()
-            traslados_neta = monto_in - monto_out
+                monto_in = df_hist_tras[f_t_in]['Monto'].sum()
+                monto_out = df_hist_tras[f_t_out]['Monto'].sum()
+                traslados_neta = monto_in - monto_out
 
             porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
             st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados Netos (Entran - Salen): ${traslados_neta:,.2f}")
