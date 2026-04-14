@@ -157,26 +157,31 @@ def mostrar_modulo_costos():
                     filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
                                   (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre)
                 
-                mask_dest = df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
-                mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
-                
-                # --- LÓGICA DE TRASLADOS CONSOLIDADA (FORZANDO SUMA DE MESES) ---
-            # Buscamos el número de meses de la pantalla o de la memoria
-            n_meses = st.session_state.get('meses_a_dividir', 3) 
+                    mask_dest = df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+            mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+
+            # --- LÓGICA DE TRASLADOS CONSOLIDADA ---
+            try:
+                n_meses = int(meses_a_dividir)
+            except Exception:
+                n_meses = 3
 
             if es_consolidado:
-                # Creamos la lista: si mes_cierre es 3 y n_meses es 3, genera [1, 2, 3]
-                meses_lista = list(range(max(1, mes_cierre - n_meses + 1), mes_cierre + 1))
+                meses_lista = list(range(max(1, int(mes_cierre) - n_meses + 1), int(mes_cierre) + 1))
                 filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_lista)
             else:
-                filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre
+                filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == int(mes_cierre)
 
-            # Filtramos por tus columnas reales: 'Destino' y 'Origen'
-            f_t_in = filtro_mes & df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
-            f_t_out = filtro_mes & df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+            f_t_in = filtro_mes & mask_dest
+            f_t_out = filtro_mes & mask_orig
 
             monto_in = df_hist_tras[f_t_in]['Monto'].sum()
             monto_out = df_hist_tras[f_t_out]['Monto'].sum()
+            traslados_neta = monto_in - monto_out
+            
+            grp_tras_in = df_hist_tras[f_t_in].groupby('Cuenta_Contable')['Monto'].sum()
+            grp_tras_out = df_hist_tras[f_t_out].groupby('Cuenta_Contable')['Monto'].sum()
+
             traslados_neta = monto_in - monto_out
 
             porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
