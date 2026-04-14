@@ -269,7 +269,7 @@ def mostrar_modulo_costos():
                                     'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
                                     'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
                                 }
-                                st.session_state['datos_auditoria'] = {'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real}
+                                st.session_state['datos_auditoria'] = {'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real, 'inventario_final': df_fin_m}
                                 st.rerun() 
                             except Exception as e: st.error(f"Error procesando: {e}")
 
@@ -385,7 +385,7 @@ def mostrar_modulo_costos():
                                 'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
                                 'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
                             }
-                            st.session_state['datos_auditoria'] = {'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real}
+                            st.session_state['datos_auditoria'] = {'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real, 'inventario_final': df_fin_m}
                             
                             del st.session_state['huerfanos_df']
                             del st.session_state['pre_proceso']
