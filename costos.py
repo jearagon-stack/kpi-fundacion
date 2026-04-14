@@ -269,9 +269,40 @@ def mostrar_modulo_costos():
                                     'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
                                     'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
                                 }
-                                st.session_state['datos_auditoria'] = {'consumo': consumo_por_cuenta, 'ventas': ventas_mes, 'costo_real': costo_real, 'inventario_final': df_fin_m}
+                                st.session_state['memoria_cierre'] = {
+                                    'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
+                                    'grp_ini_sum': total_ini_val, 'grp_comp_sum': total_com_val, 
+                                    'grp_tras_sum': total_tras_val, 'grp_fin_sum': total_fin_val,
+                                    'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
+                                    'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
+                                    'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
+                                    'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
+                                }
+
+                                # --- CÁLCULO DE VARIACIÓN DE COSTOS PARA AUDITORÍA ---
+                                df_var_costos = pd.DataFrame()
+                                if not df_ini_m.empty and not df_fin_m.empty:
+                                    df_var_costos = pd.merge(
+                                        df_ini_m[['Codigo', 'Cuenta_Contable', 'Valor']], 
+                                        df_fin_m[['Codigo', 'Valor']], 
+                                        on='Codigo', 
+                                        suffixes=('_Inicial', '_Final')
+                                    )
+                                    df_var_costos['Variacion_Porcentual'] = (df_var_costos['Valor_Final'] / df_var_costos['Valor_Inicial'].replace(0, 1)) - 1
+                                    df_var_costos = df_var_costos.rename(columns={'Cuenta_Contable': 'Producto', 'Valor_Final': 'Costo_Actual'})
+
+                                # Empaquetamos todo para el módulo de validación
+                                st.session_state['datos_auditoria'] = {
+                                    'consumo': consumo_por_cuenta, 
+                                    'ventas': ventas_mes, 
+                                    'costo_real': costo_real,
+                                    'inventario_final': df_fin_m,
+                                    'variaciones_costo': df_var_costos
+                                }
                                 st.rerun() 
-                            except Exception as e: st.error(f"Error procesando: {e}")
+
+                            except Exception as e: 
+                                st.error(f"Error procesando: {e}")
 
                 else:
                     st.error("🚨 ALERTA: PRODUCTOS SIN CUENTA CONTABLE DETECTADOS")
