@@ -5,8 +5,6 @@ from costos_cafeteria import mostrar_modulo_costos as modulo_cafeteria
 from costos_talleres import mostrar_modulo_costos as modulo_talleres
 
 def mostrar_modulo_costos():
-    st.title("Módulo Principal de Costos")
-    
     # 1. El Menú de Decisión
     unidad = st.radio(
         "🎯 Selecciona la Unidad de Negocio a evaluar:",
