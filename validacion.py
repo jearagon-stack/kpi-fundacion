@@ -112,6 +112,23 @@ def mostrar_modulo_validacion():
         else:
             st.info("⏳ Esperando desglose de inventario final desde el módulo de Costos...")
 
+# NUEVO: Tabla de Detalles para Auditoría
+    st.markdown("---")
+    st.subheader("📋 Detalles de Inventario Final (Materia Prima y Producto Terminado)")
+    if 'inventario_final' in data:
+        df_fin_view = data['inventario_final'].copy()
+        
+        # Omitimos productos con existencias en 0 para no hacer ruido
+        try:
+            col_cant_view = next((c for c in df_fin_view.columns if 'EXIST' in str(c).upper() or 'SALDO' in str(c).upper()), None)
+            if col_cant_view:
+                df_fin_view[col_cant_view] = pd.to_numeric(df_fin_view[col_cant_view], errors='coerce').fillna(0.0)
+                df_fin_view = df_fin_view[df_fin_view[col_cant_view] > 0]
+        except:
+            pass
+            
+        st.dataframe(df_fin_view, use_container_width=True)
+        
     st.markdown("---")
 
     # 4. Lógica del Freno de Mano
