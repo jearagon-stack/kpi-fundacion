@@ -149,6 +149,7 @@ def mostrar_modulo_costos():
             if not df_hist_tras.empty:
                 df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0.0)
                 
+                # LA SOLUCIÓN MAESTRA: Este filtro_base ya existía y es perfecto.
                 if es_consolidado:
                     meses_indices = [list(meses_texto.keys())[list(meses_texto.values()).index(m)] for m in nombres_meses]
                     filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_indices)) & \
@@ -157,32 +158,16 @@ def mostrar_modulo_costos():
                     filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre) & \
                                   (pd.to_numeric(df_hist_tras['Año'], errors='coerce') == anio_cierre)
                 
-                    mask_dest = df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
-            mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+                mask_dest = df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+                mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
+                
+                # Ahora amarramos el filtro_base exacto de meses a los orígenes y destinos
+                f_t_in = filtro_base & mask_dest
+                f_t_out = filtro_base & mask_orig
 
-            # --- LÓGICA DE TRASLADOS CONSOLIDADA ---
-            try:
-                n_meses = int(meses_a_dividir)
-            except Exception:
-                n_meses = 3
-
-            if es_consolidado:
-                meses_lista = list(range(max(1, int(mes_cierre) - n_meses + 1), int(mes_cierre) + 1))
-                filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_lista)
-            else:
-                filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == int(mes_cierre)
-
-            f_t_in = filtro_mes & mask_dest
-            f_t_out = filtro_mes & mask_orig
-
-            monto_in = df_hist_tras[f_t_in]['Monto'].sum()
-            monto_out = df_hist_tras[f_t_out]['Monto'].sum()
-            traslados_neta = monto_in - monto_out
-            
-            grp_tras_in = df_hist_tras[f_t_in].groupby('Cuenta_Contable')['Monto'].sum()
-            grp_tras_out = df_hist_tras[f_t_out].groupby('Cuenta_Contable')['Monto'].sum()
-
-            traslados_neta = monto_in - monto_out
+                monto_in = df_hist_tras[f_t_in]['Monto'].sum()
+                monto_out = df_hist_tras[f_t_out]['Monto'].sum()
+                traslados_neta = monto_in - monto_out
 
             porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
             st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f} | Traslados Netos (Entran - Salen): ${traslados_neta:,.2f}")
@@ -277,68 +262,35 @@ def mostrar_modulo_costos():
                                 costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                                 costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
-                                # --- CÁLCULO DE VARIACIÓN DE COSTOS PARA AUDITORÍA (SOLUCIÓN PROFESIONAL) ---
-                                
-                                # 1. PREPARAR BASELINE: Calcular Costo Promedio Unitario de Compras (TOTAL MES)
+                                # --- CÁLCULO DE VARIACIÓN DE COSTOS PARA AUDITORÍA ---
                                 df_comp_unitario = pd.DataFrame()
                                 if not df_com_m.empty:
                                     df_temp_com = df_com_m.copy()
                                     try:
-                                        # Usamos patrones dinámicos para detectar Unidades y Montos en Compras
                                         regexCantCompras = [['CANTIDAD'], ['UNIDADES'], ['EXISTENCIAS'], ['SALDO']]
                                         regexMontoCompras = [['TOTAL'], ['MONTO'], ['VALOR']]
-                                        
                                         df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, regexCantCompras), errors='coerce').fillna(0.0)
                                         df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, regexMontoCompras), errors='coerce').fillna(0.0)
-                                        
-                                        # Agrupamos por código para tener el total del mes
-                                        df_comp_unitario = df_temp_com.groupby('Codigo').agg({
-                                            'Monto_Mes': 'sum',
-                                            'Unidades_Mes': 'sum'
-                                        }).reset_index()
-                                        
-                                        # Costo Promedio Compras (Baseline) = Monto Total / Unidades Totales
+                                        df_comp_unitario = df_temp_com.groupby('Codigo').agg({'Monto_Mes': 'sum', 'Unidades_Mes': 'sum'}).reset_index()
                                         df_comp_unitario['Costo_Baseline'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
-                                    except:
-                                        pass # Silently fail if parsing fails
+                                    except: pass
 
-                                # 2. PREPARAR COMPARACIÓN: Obtener Costo Unitario del Inventario Actual
                                 df_inv_actual = pd.DataFrame()
                                 if not df_fin_m.empty:
                                     df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
-                                    
-                                    # Patrones dinámicos para Unidades Finales y Costo Unitario Final
                                     regexCantInv = [['EXISTENCIAS'], ['SALDO']]
                                     regexCostoUnitInv = [['COSTO', 'U'], ['PRECIO', 'U']] 
-                                    
                                     df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCantInv), errors='coerce').fillna(0.0)
                                     df_inv_actual['Costo_Unitario_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCostoUnitInv), errors='coerce').fillna(0.0)
                                     df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
 
-                                # 3. MEZCLAR Y FILTRAR (Lógica de Negocio)
                                 df_var_costos = pd.DataFrame()
                                 if not df_comp_unitario.empty and not df_inv_actual.empty:
-                                    df_var_costos = pd.merge(
-                                        df_inv_actual, 
-                                        df_comp_unitario[['Codigo', 'Costo_Baseline']], 
-                                        on='Codigo', 
-                                        how='inner' # Solo comparar productos que compramos y tenemos en stock
-                                    )
-                                    
-                                    # CORRECCIÓN 1: Omitir si no tengo existencia en inventario actual
+                                    df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Costo_Baseline']], on='Codigo', how='inner')
                                     df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0]
-                                    
-                                    # CORRECCIÓN 2: Renombrar para compatibilidad con la vista
-                                    df_var_costos = df_var_costos.rename(columns={
-                                        'Costo_Baseline': 'Valor_Inicial', # El filtro baseline
-                                        'Costo_Unitario_Actual': 'Costo_Actual' # El costo real del inventario
-                                    })
-                                    
-                                    # CORRECCIÓN 3: Calcular Variación Porcentual de Precios (Unitarios)
+                                    df_var_costos = df_var_costos.rename(columns={'Costo_Baseline': 'Valor_Inicial', 'Costo_Unitario_Actual': 'Costo_Actual'})
                                     df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Valor_Inicial'].replace(0, 1)) - 1
                                     df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
-                                    
-                                    # Cleanup final: Dejamos solo las columnas críticas
                                     df_var_costos = df_var_costos[['Codigo', 'Producto', 'Valor_Inicial', 'Costo_Actual', 'Variacion_Porcentual']]
 
                                 st.session_state['memoria_cierre'] = {
@@ -466,96 +418,63 @@ def mostrar_modulo_costos():
                                     if val != 0:
                                         consumo_por_cuenta[cta_str] = val
                                         costo_operativo += val
+                        
+                            costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
+                            costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
+
+                            # --- CÁLCULO DE VARIACIÓN DE COSTOS PARA AUDITORÍA ---
+                            df_comp_unitario = pd.DataFrame()
+                            if not df_com_m.empty:
+                                df_temp_com = df_com_m.copy()
+                                try:
+                                    regexCantCompras = [['CANTIDAD'], ['UNIDADES'], ['EXISTENCIAS'], ['SALDO']]
+                                    regexMontoCompras = [['TOTAL'], ['MONTO'], ['VALOR']]
+                                    df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, regexCantCompras), errors='coerce').fillna(0.0)
+                                    df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, regexMontoCompras), errors='coerce').fillna(0.0)
+                                    df_comp_unitario = df_temp_com.groupby('Codigo').agg({'Monto_Mes': 'sum', 'Unidades_Mes': 'sum'}).reset_index()
+                                    df_comp_unitario['Costo_Baseline'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
+                                except: pass
+
+                            df_inv_actual = pd.DataFrame()
+                            if not df_fin_m.empty:
+                                df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
+                                regexCantInv = [['EXISTENCIAS'], ['SALDO']]
+                                regexCostoUnitInv = [['COSTO', 'U'], ['PRECIO', 'U']] 
+                                df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCantInv), errors='coerce').fillna(0.0)
+                                df_inv_actual['Costo_Unitario_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCostoUnitInv), errors='coerce').fillna(0.0)
+                                df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
+
+                            df_var_costos = pd.DataFrame()
+                            if not df_comp_unitario.empty and not df_inv_actual.empty:
+                                df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Costo_Baseline']], on='Codigo', how='inner')
+                                df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0]
+                                df_var_costos = df_var_costos.rename(columns={'Costo_Baseline': 'Valor_Inicial', 'Costo_Unitario_Actual': 'Costo_Actual'})
+                                df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Valor_Inicial'].replace(0, 1)) - 1
+                                df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
+                                df_var_costos = df_var_costos[['Codigo', 'Producto', 'Valor_Inicial', 'Costo_Actual', 'Variacion_Porcentual']]
+
+                            st.session_state['memoria_cierre'] = {
+                                'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
+                                'grp_ini_sum': total_ini_val, 'grp_comp_sum': total_com_val, 
+                                'grp_tras_sum': total_tras_val, 'grp_fin_sum': total_fin_val,
+                                'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
+                                'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
+                                'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
+                                'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
+                            }
+
+                            st.session_state['datos_auditoria'] = {
+                                'consumo': consumo_por_cuenta, 
+                                'ventas': ventas_mes, 
+                                'costo_real': costo_real,
+                                'inventario_final': df_fin_m,
+                                'variaciones_costo': df_var_costos
+                            }
                             
-                                    costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
-                                    costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
-
-                                # --- CÁLCULO DE VARIACIÓN DE COSTOS PARA AUDITORÍA (SOLUCIÓN PROFESIONAL) ---
-                                
-                                # 1. PREPARAR BASELINE: Calcular Costo Promedio Unitario de Compras (TOTAL MES)
-                                df_comp_unitario = pd.DataFrame()
-                                if not df_com_m.empty:
-                                    df_temp_com = df_com_m.copy()
-                                    try:
-                                        # Usamos patrones dinámicos para detectar Unidades y Montos en Compras
-                                        regexCantCompras = [['CANTIDAD'], ['UNIDADES'], ['EXISTENCIAS'], ['SALDO']]
-                                        regexMontoCompras = [['TOTAL'], ['MONTO'], ['VALOR']]
-                                        
-                                        df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, regexCantCompras), errors='coerce').fillna(0.0)
-                                        df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, regexMontoCompras), errors='coerce').fillna(0.0)
-                                        
-                                        # Agrupamos por código para tener el total del mes
-                                        df_comp_unitario = df_temp_com.groupby('Codigo').agg({
-                                            'Monto_Mes': 'sum',
-                                            'Unidades_Mes': 'sum'
-                                        }).reset_index()
-                                        
-                                        # Costo Promedio Compras (Baseline) = Monto Total / Unidades Totales
-                                        df_comp_unitario['Costo_Baseline'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
-                                    except:
-                                        pass # Silently fail if parsing fails
-
-                                # 2. PREPARAR COMPARACIÓN: Obtener Costo Unitario del Inventario Actual
-                                df_inv_actual = pd.DataFrame()
-                                if not df_fin_m.empty:
-                                    df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
-                                    
-                                    # Patrones dinámicos para Unidades Finales y Costo Unitario Final
-                                    regexCantInv = [['EXISTENCIAS'], ['SALDO']]
-                                    regexCostoUnitInv = [['COSTO', 'U'], ['PRECIO', 'U']] 
-                                    
-                                    df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCantInv), errors='coerce').fillna(0.0)
-                                    df_inv_actual['Costo_Unitario_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCostoUnitInv), errors='coerce').fillna(0.0)
-                                    df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
-
-                                # 3. MEZCLAR Y FILTRAR (Lógica de Negocio)
-                                df_var_costos = pd.DataFrame()
-                                if not df_comp_unitario.empty and not df_inv_actual.empty:
-                                    df_var_costos = pd.merge(
-                                        df_inv_actual, 
-                                        df_comp_unitario[['Codigo', 'Costo_Baseline']], 
-                                        on='Codigo', 
-                                        how='inner' # Solo comparar productos que compramos y tenemos en stock
-                                    )
-                                    
-                                    # CORRECCIÓN 1: Omitir si no tengo existencia en inventario actual
-                                    df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0]
-                                    
-                                    # CORRECCIÓN 2: Renombrar para compatibilidad con la vista
-                                    df_var_costos = df_var_costos.rename(columns={
-                                        'Costo_Baseline': 'Valor_Inicial', # El filtro baseline
-                                        'Costo_Unitario_Actual': 'Costo_Actual' # El costo real del inventario
-                                    })
-                                    
-                                    # CORRECCIÓN 3: Calcular Variación Porcentual de Precios (Unitarios)
-                                    df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Valor_Inicial'].replace(0, 1)) - 1
-                                    df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
-                                    
-                                    # Cleanup final: Dejamos solo las columnas críticas
-                                    df_var_costos = df_var_costos[['Codigo', 'Producto', 'Valor_Inicial', 'Costo_Actual', 'Variacion_Porcentual']]
-
-                                st.session_state['memoria_cierre'] = {
-                                    'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
-                                    'grp_ini_sum': total_ini_val, 'grp_comp_sum': total_com_val, 
-                                    'grp_tras_sum': total_tras_val, 'grp_fin_sum': total_fin_val,
-                                    'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
-                                    'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
-                                    'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
-                                    'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
-                                }
-
-                                st.session_state['datos_auditoria'] = {
-                                    'consumo': consumo_por_cuenta, 
-                                    'ventas': ventas_mes, 
-                                    'costo_real': costo_real,
-                                    'inventario_final': df_fin_m,
-                                    'variaciones_costo': df_var_costos
-                                }
-                                
-                                if 'huerfanos_df' in st.session_state: del st.session_state['huerfanos_df']
-                                if 'pre_proceso' in st.session_state: del st.session_state['pre_proceso']
-                                
-                                st.rerun()
+                            if 'huerfanos_df' in st.session_state: del st.session_state['huerfanos_df']
+                            if 'pre_proceso' in st.session_state: del st.session_state['pre_proceso']
+                            
+                            st.rerun()
 
         else:
             mem = st.session_state['memoria_cierre']
