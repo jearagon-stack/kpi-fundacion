@@ -139,28 +139,28 @@ elif opcion == "CONFIGURACIÓN":
             btn_crear = st.form_submit_button("Guardar Usuario")
             
     # --- NUEVA SECCIÓN: PARÁMETROS DE AUDITORÍA ---
-    # Esta sección ahora está fuera del expander, al mismo nivel visual
     st.divider()
     st.subheader("⚙️ Configuración de Parámetros de Auditoría")
     
-    # Intentamos leer si ya hay datos guardados
     try:
         df_params = obtener_dataframe("Parametros_Auditoria")
     except:
-        df_params = pd.DataFrame() # Si no existe la hoja, no da error
+        df_params = pd.DataFrame() 
     
     # Valores por defecto
-    def_var, def_limp, def_emp, def_mat = 0.01, 3000.0, 5000.0, 10000.0
+    def_var, def_limp, def_emp, def_mat, def_prod = 0.01, 3000.0, 5000.0, 10000.0, 8000.0
     
-    # Si hay datos en la hoja, los usamos para llenar las cajitas
     if not df_params.empty:
         try:
             def_var = float(df_params[df_params['Criterio'] == 'VARIACION_MAX_PERMITIDA']['Valor_Tope'].iloc[0])
             def_limp = float(df_params[df_params['Criterio'] == 'LIMPIEZA']['Valor_Tope'].iloc[0])
             def_emp = float(df_params[df_params['Criterio'] == 'EMPAQUE']['Valor_Tope'].iloc[0])
             def_mat = float(df_params[df_params['Criterio'] == 'MATERIA_PRIMA']['Valor_Tope'].iloc[0])
+            # Soporte para el nombre con o sin guion bajo
+            val_prod = df_params[df_params['Criterio'].isin(['PRODUCTO_TERMINADO', 'PRODUCTO TERMINADO'])]['Valor_Tope']
+            if not val_prod.empty: def_prod = float(val_prod.iloc[0])
         except:
-            pass # Si hay algún error leyendo, usa los valores por defecto
+            pass 
 
     with st.form("form_parametros_auditoria"):
         c1, c2 = st.columns(2)
@@ -168,6 +168,7 @@ elif opcion == "CONFIGURACIÓN":
         new_limp = c2.number_input("Tope Inventario Limpieza ($)", value=def_limp)
         new_emp = c1.number_input("Tope Inventario Empaque ($)", value=def_emp)
         new_mat = c2.number_input("Tope Inventario Materia Prima ($)", value=def_mat)
+        new_prod = c1.number_input("Tope Inventario Producto Terminado ($)", value=def_prod)
         
         if st.form_submit_button("💾 Guardar Configuración de Auditoría"):
             ws_p = conectar_hoja("Parametros_Auditoria")
@@ -178,7 +179,8 @@ elif opcion == "CONFIGURACIÓN":
                 ["AUDIT_COSTO", "VARIACION_MAX_PERMITIDA", new_var, "Variación costo inicial vs final"],
                 ["TOPE_CATEGORIA", "LIMPIEZA", new_limp, "Límite inversión limpieza"],
                 ["TOPE_CATEGORIA", "EMPAQUE", new_emp, "Límite inversión empaque"],
-                ["TOPE_CATEGORIA", "MATERIA_PRIMA", new_mat, "Límite inversión materia prima"]
+                ["TOPE_CATEGORIA", "MATERIA_PRIMA", new_mat, "Límite inversión materia prima"],
+                ["TOPE_CATEGORIA", "PRODUCTO_TERMINADO", new_prod, "Límite inversión producto terminado"]
             ]
             ws_p.update("A1", filas)
             st.cache_data.clear()
