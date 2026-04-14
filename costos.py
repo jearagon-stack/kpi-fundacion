@@ -164,7 +164,9 @@ def mostrar_modulo_costos():
                 if es_consolidado:
                     # Creamos la lista de meses para el consolidado (Ej: [1, 2, 3])
                     # Usamos 'meses_a_dividir' que es tu variable del widget de la pantalla
-                    meses_lista = list(range(max(1, mes_cierre - meses_a_dividir + 1), mes_cierre + 1))
+                    # Usamos el valor del widget o 3 por defecto si no se encuentra
+                    meses_atras = meses_a_dividir if 'meses_a_dividir' in locals() else 3
+                    meses_lista = list(range(max(1, mes_cierre - meses_atras + 1), mes_cierre + 1))
                     filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_lista)
                 else:
                     filtro_mes = pd.to_numeric(df_hist_tras['Mes'], errors='coerce') == mes_cierre
