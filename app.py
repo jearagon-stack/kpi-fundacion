@@ -1,5 +1,6 @@
 import streamlit as st
 import urllib.parse
+import pandas as pd
 from datetime import datetime, timedelta
 import auth, gastos, ventas, costos, validacion  # <--- Importamos el nuevo módulo
 from utils import conectar_hoja, obtener_dataframe
@@ -137,47 +138,48 @@ elif opcion == "CONFIGURACIÓN":
             nueva_pass = st.text_input("Contraseña")
             btn_crear = st.form_submit_button("Guardar Usuario")
             
-            # --- NUEVA SECCIÓN: PARÁMETROS DE AUDITORÍA ---
-        st.divider()
-        st.subheader("⚙️ Configuración de Parámetros de Auditoría")
-        
-        # Intentamos leer si ya hay datos guardados
+    # --- NUEVA SECCIÓN: PARÁMETROS DE AUDITORÍA ---
+    # Esta sección ahora está fuera del expander, al mismo nivel visual
+    st.divider()
+    st.subheader("⚙️ Configuración de Parámetros de Auditoría")
+    
+    # Intentamos leer si ya hay datos guardados
+    try:
+        df_params = obtener_dataframe("Parametros_Auditoria")
+    except:
+        df_params = pd.DataFrame() # Si no existe la hoja, no da error
+    
+    # Valores por defecto
+    def_var, def_limp, def_emp, def_mat = 0.01, 3000.0, 5000.0, 10000.0
+    
+    # Si hay datos en la hoja, los usamos para llenar las cajitas
+    if not df_params.empty:
         try:
-            df_params = obtener_dataframe("Parametros_Auditoria")
+            def_var = float(df_params[df_params['Criterio'] == 'VARIACION_MAX_PERMITIDA']['Valor_Tope'].iloc[0])
+            def_limp = float(df_params[df_params['Criterio'] == 'LIMPIEZA']['Valor_Tope'].iloc[0])
+            def_emp = float(df_params[df_params['Criterio'] == 'EMPAQUE']['Valor_Tope'].iloc[0])
+            def_mat = float(df_params[df_params['Criterio'] == 'MATERIA_PRIMA']['Valor_Tope'].iloc[0])
         except:
-            df_params = pd.DataFrame() # Si no existe la hoja, no da error
-        
-        # Valores por defecto
-        def_var, def_limp, def_emp, def_mat = 0.01, 3000.0, 5000.0, 10000.0
-        
-        # Si hay datos en la hoja, los usamos para llenar las cajitas
-        if not df_params.empty:
-            try:
-                def_var = float(df_params[df_params['Criterio'] == 'VARIACION_MAX_PERMITIDA']['Valor_Tope'].iloc[0])
-                def_limp = float(df_params[df_params['Criterio'] == 'LIMPIEZA']['Valor_Tope'].iloc[0])
-                def_emp = float(df_params[df_params['Criterio'] == 'EMPAQUE']['Valor_Tope'].iloc[0])
-                def_mat = float(df_params[df_params['Criterio'] == 'MATERIA_PRIMA']['Valor_Tope'].iloc[0])
-            except:
-                pass # Si hay algún error leyendo, usa los valores por defecto
+            pass # Si hay algún error leyendo, usa los valores por defecto
 
-        with st.form("form_parametros_auditoria"):
-            c1, c2 = st.columns(2)
-            new_var = c1.number_input("Variación Máx. Costo (Ej: 0.01 para 1%)", value=def_var, format="%.4f")
-            new_limp = c2.number_input("Tope Inventario Limpieza ($)", value=def_limp)
-            new_emp = c1.number_input("Tope Inventario Empaque ($)", value=def_emp)
-            new_mat = c2.number_input("Tope Inventario Materia Prima ($)", value=def_mat)
-            
-            if st.form_submit_button("💾 Guardar Configuración de Auditoría"):
-                ws_p = conectar_hoja("Parametros_Auditoria")
-                ws_p.clear() 
-                headers = ["Variable", "Criterio", "Valor_Tope", "Descripcion"]
-                filas = [
-                    headers,
-                    ["AUDIT_COSTO", "VARIACION_MAX_PERMITIDA", new_var, "Variación costo inicial vs final"],
-                    ["TOPE_CATEGORIA", "LIMPIEZA", new_limp, "Límite inversión limpieza"],
-                    ["TOPE_CATEGORIA", "EMPAQUE", new_emp, "Límite inversión empaque"],
-                    ["TOPE_CATEGORIA", "MATERIA_PRIMA", new_mat, "Límite inversión materia prima"]
-                ]
-                ws_p.update("A1", filas)
-                st.cache_data.clear()
-                st.success("✅ Parámetros de auditoría actualizados correctamente.")
+    with st.form("form_parametros_auditoria"):
+        c1, c2 = st.columns(2)
+        new_var = c1.number_input("Variación Máx. Costo (Ej: 0.01 para 1%)", value=def_var, format="%.4f")
+        new_limp = c2.number_input("Tope Inventario Limpieza ($)", value=def_limp)
+        new_emp = c1.number_input("Tope Inventario Empaque ($)", value=def_emp)
+        new_mat = c2.number_input("Tope Inventario Materia Prima ($)", value=def_mat)
+        
+        if st.form_submit_button("💾 Guardar Configuración de Auditoría"):
+            ws_p = conectar_hoja("Parametros_Auditoria")
+            ws_p.clear() 
+            headers = ["Variable", "Criterio", "Valor_Tope", "Descripcion"]
+            filas = [
+                headers,
+                ["AUDIT_COSTO", "VARIACION_MAX_PERMITIDA", new_var, "Variación costo inicial vs final"],
+                ["TOPE_CATEGORIA", "LIMPIEZA", new_limp, "Límite inversión limpieza"],
+                ["TOPE_CATEGORIA", "EMPAQUE", new_emp, "Límite inversión empaque"],
+                ["TOPE_CATEGORIA", "MATERIA_PRIMA", new_mat, "Límite inversión materia prima"]
+            ]
+            ws_p.update("A1", filas)
+            st.cache_data.clear()
+            st.success("✅ Parámetros de auditoría actualizados correctamente.")
