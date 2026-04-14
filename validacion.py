@@ -72,20 +72,23 @@ def mostrar_modulo_validacion():
 
     with col_v2:
         st.markdown(f"**3. Costo Promedio (Límite Variación: {limite_var:.2%})**")
-        if 'variaciones_costo' in data and not data['variaciones_costo'].empty:
+        if 'variaciones_costo' in data:
             df_var = data['variaciones_costo']
-            try:
-                anomalias = df_var[df_var['Variacion_Porcentual'].abs() > limite_var]
-                if not anomalias.empty:
-                    st.error(f"🚩 {len(anomalias)} productos superan el límite de variación.")
-                    lista_errores.append(f"Variación de costo atípica en {len(anomalias)} productos.")
-                    st.dataframe(anomalias, use_container_width=True)
-                else:
-                    st.success("✅ Variación de costos estables.")
-            except: 
-                st.info("Estructura de variaciones no compatible.")
+            if not df_var.empty:
+                try:
+                    anomalias = df_var[df_var['Variacion_Porcentual'].abs() > limite_var]
+                    if not anomalias.empty:
+                        st.error(f"🚩 {len(anomalias)} productos superan el límite de variación.")
+                        lista_errores.append(f"Variación de costo atípica en {len(anomalias)} productos.")
+                        st.dataframe(anomalias, use_container_width=True)
+                    else:
+                        st.success("✅ Variación de costos estables.")
+                except: 
+                    st.info("Estructura de variaciones no compatible.")
+            else:
+                st.warning("⚠️ La matriz llegó del otro módulo, pero está VACÍA (Los códigos de producto del Inv. Inicial no coinciden con los del Final).")
         else:
-            st.info("⏳ Falta enviar la matriz de variaciones desde el código de costos.")
+            st.info("⏳ Aún no se detecta la matriz. ¿Procesaste los archivos de nuevo en el módulo de Costos?")
 
         st.divider()
 
