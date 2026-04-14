@@ -21,3 +21,4 @@ def obtener_usuarios_db():
         "ADMINISTRADOR": {"Contrasena": "199_6", "Rol": "ADMIN"},
         "JAZMIN ZEPEDA": {"Contrasena": "FUNDACION01.", "Rol": "USUARIO"}
     }
+

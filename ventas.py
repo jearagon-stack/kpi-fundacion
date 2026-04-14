@@ -256,4 +256,4 @@ def mostrar_modulo_ventas():
                     })
 
                 if resultados_desglose:
-                    st.dataframe(pd.DataFrame(resultados_desglose), hide_index=True, use_container_width=True)
+                    st.dataframe(pd.DataFrame(resultados_desglose), hide_index=True, use_container_width=True)  
