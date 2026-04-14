@@ -6,6 +6,7 @@ def mostrar_modulo_validacion():
     st.title("🛡️ Protocolo de Verificación de Integridad")
     st.markdown("---")
 
+    # 1. Verificación de datos en memoria
     if 'datos_auditoria' not in st.session_state:
         st.info("💡 Módulo en espera. Por favor, procese los cierres en el módulo 'Contabilidad de Costos' primero.")
         return
@@ -15,6 +16,7 @@ def mostrar_modulo_validacion():
     ventas_mes = data.get('ventas', 0.0)
     costo_real = data.get('costo_real', 0.0)
     
+    # 2. Carga de parámetros desde Google Sheets
     try: 
         df_params = obtener_dataframe("Parametros_Auditoria")
     except: 
@@ -38,9 +40,8 @@ def mostrar_modulo_validacion():
         except: 
             pass
 
-    # RECOLECTOR DE ANOMALÍAS
+    # 3. Recolector de anomalías para el freno de mano
     lista_errores = []
-
     df_c = pd.DataFrame(list(consumo_dict.items()), columns=['Cuenta', 'Consumo'])
 
     st.subheader("🚥 Semáforos de Auditoría")
@@ -91,7 +92,7 @@ def mostrar_modulo_validacion():
         st.markdown("**4. Topes de Inversión por Categoría**")
         if 'inventario_final' in data:
             df_inv = data['inventario_final']
-            # Búsqueda dinámica de las columnas de monto y categoría
+            # Búsqueda inteligente de columnas
             col_monto = next((c for c in df_inv.columns if str(c).upper() in ['MONTO', 'VALOR', 'TOTAL', 'COSTO_TOTAL']), None)
             col_cat = next((c for c in df_inv.columns if 'CATEGOR' in str(c).upper() or 'CUENTA' in str(c).upper()), None)
             
@@ -100,35 +101,33 @@ def mostrar_modulo_validacion():
                     monto_cat = df_inv[df_inv[col_cat].astype(str).str.contains(cat.replace("_", " "), case=False, na=False)][col_monto].sum()
                     if monto_cat > tope:
                         st.error(f"🚩 **{cat.replace('_', ' ')}:** ${monto_cat:,.2f} (Tope: ${tope:,.2f})")
-                        lista_errores.append(f"Sobreexistencia de inventario en {cat.replace('_', ' ')} (${monto_cat:,.2f})")
+                        lista_errores.append(f"Sobreexistencia en {cat.replace('_', ' ')} (${monto_cat:,.2f})")
                     else:
                         st.success(f"✅ **{cat.replace('_', ' ')}:** ${monto_cat:,.2f} (Tope: ${tope:,.2f})")
             else:
-                st.error(f"No se detectaron las columnas necesarias. Nombres encontrados en tu archivo: {list(df_inv.columns)}")
+                st.error(f"Columnas no detectadas. Nombres en tu archivo: {list(df_inv.columns)}")
         else:
             st.info("⏳ Esperando desglose de inventario final desde el módulo de Costos...")
 
     st.markdown("---")
 
-    # FRENO DE MANO MODIFICADO
+    # 4. Lógica del Freno de Mano
     if len(lista_errores) == 0:
         if st.button("✅ DAR VISTO BUENO (APROBAR PERIODO)", type="primary", use_container_width=True):
             st.session_state['auditoria_aprobada'] = True
             st.balloons()
-            st.success("¡Periodo Aprobado! Regresa al módulo de Costos para guardar en la base histórica.")
+            st.success("¡Periodo Aprobado! Regresa al módulo de Costos para guardar el cierre.")
     else:
-        st.warning("⚠️ **SISTEMA BLOQUEADO: Se detectaron las siguientes anomalías que requieren autorización:**")
-        
-        # Imprime la lista exacta de errores detectados
+        st.warning("⚠️ **SISTEMA BLOQUEADO: Se detectaron las siguientes anomalías:**")
         for err in lista_errores:
             st.markdown(f"- 🔸 {err}")
         
         st.write("")
-        check_autorizacion = st.checkbox("Declaro que he revisado las anomalías listadas y autorizo este cierre bajo mi responsabilidad.")
+        check_autorizacion = st.checkbox("Declaro que he revisado las anomalías y autorizo este cierre bajo mi responsabilidad.")
         
         if check_autorizacion:
             if st.button("🚨 CONFIRMAR Y GUARDAR EXCEPCIONES", type="primary", use_container_width=True):
                 st.session_state['auditoria_aprobada'] = True
-                st.success("¡Excepciones Aprobadas! Regresa al módulo de Costos para guardar en la base histórica.")
+                st.success("¡Excepciones Aprobadas! Regresa al módulo de Costos para finalizar.")
         else:
-            st.error("🔒 Debes marcar la casilla de autorización arriba para poder habilitar el botón de guardado.")
+            st.error("🔒 Debes marcar la casilla de autorización para habilitar el botón.")
