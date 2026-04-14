@@ -160,8 +160,8 @@ def mostrar_modulo_costos():
                 mask_dest = df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
                 mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
                 
-                f_t_in = filtro_base & mask_dest & (~mask_orig)
-                f_t_out = filtro_base & mask_orig & (~mask_dest)
+                f_t_in = (df_hist_tras['Mes'] == mes_cierre) & (df_hist_tras['Unidad_Destino'] == unidad_cierre)
+                f_t_out = (df_hist_tras['Mes'] == mes_cierre) & (df_hist_tras['Unidad_Origen'] == unidad_cierre)
                 
                 monto_in = df_hist_tras[f_t_in]['Monto'].sum()
                 monto_out = df_hist_tras[f_t_out]['Monto'].sum()
