@@ -68,7 +68,6 @@ def mostrar_modulo_costos():
 
         st.markdown("---")
         st.markdown("**Desglose de Mano de Obra (Planilla)**")
-        st.write("Agrega las filas necesarias, selecciona la cuenta en el menú desplegable y digita el monto.")
         
         if 'df_cuentas_base' not in st.session_state:
             st.session_state['df_cuentas_base'] = pd.DataFrame([
@@ -78,17 +77,10 @@ def mostrar_modulo_costos():
         df_cuentas_mo = st.data_editor(
             st.session_state['df_cuentas_base'],
             column_config={
-                "Cuenta": st.column_config.SelectboxColumn(
-                    "Cuenta Contable",
-                    help="Selecciona la cuenta de la lista",
-                    options=CUENTAS_MANO_OBRA,
-                    required=True
-                ),
+                "Cuenta": st.column_config.SelectboxColumn("Cuenta Contable", options=CUENTAS_MANO_OBRA, required=True),
                 "Monto": st.column_config.NumberColumn("Monto ($)", min_value=0.0, format="$%.2f")
             },
-            num_rows="dynamic",
-            use_container_width=True,
-            key="ed_cuentas_mo"
+            num_rows="dynamic", use_container_width=True, key="ed_cuentas_mo"
         )
         
         costo_planilla = df_cuentas_mo['Monto'].sum()
@@ -128,7 +120,7 @@ def mostrar_modulo_costos():
                                 return "Huérfana (Revisar)"
                             df_fact['Clasificacion'] = df_fact.apply(clasificar_factura, axis=1)
 
-                        # 3. TIEMPOS (MANO DE OBRA)
+                        # 3. TIEMPOS
                         df_tiempos = pd.read_excel(arch_tiempos, dtype=str)
                         if 'Observaciones' in df_tiempos.columns:
                             df_tiempos['Ordenes_Detectadas'] = df_tiempos['Observaciones'].apply(extraer_ordenes)
@@ -141,7 +133,7 @@ def mostrar_modulo_costos():
                                 return "Huérfana (Revisar)"
                             df_tiempos['Clasificacion'] = df_tiempos.apply(clasificar_tiempos, axis=1)
 
-                        # 4. TRASLADOS MATERIA PRIMA (Regla de categorías actualizada)
+                        # 4. TRASLADOS MATERIA PRIMA
                         dfs_mp = [pd.read_excel(f, dtype=str) for f in arch_tras_mp]
                         df_mp = pd.concat(dfs_mp, ignore_index=True) if dfs_mp else pd.DataFrame()
                         
@@ -151,15 +143,17 @@ def mostrar_modulo_costos():
                             df_mp['Ordenes_Detectadas'] = df_mp[col_texto_mp].apply(extraer_ordenes)
                             def clasificar_traslado(row):
                                 cat = str(row.get('Categoria', '')).upper()
-                                # Regla 1: Si tiene orden válida en SGT, es de producción.
+                                concepto = str(row.get('Concepto', '')).upper()
+                                
+                                # EXCLUSIÓN DE SOHO/LIBRERÍA
+                                if "SOHO" in concepto or "LIBRERIA" in concepto:
+                                    return "Traslado a Otras Unidades (Omitir)"
+                                    
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
-                                # Regla 2: Si no tiene orden, pero es de estas categorías, pasa automático.
                                 if any(k in cat for k in ["EMPAQUE", "LIMPIEZA", "REPUESTO", "REPUESTOS"]): return "Costo Indirecto (Automático)"
-                                # Regla 3: Si es Materia Prima sin orden o cualquier otra cosa, al purgatorio.
                                 return "Huérfana (Revisar)"
                             df_mp['Clasificacion'] = df_mp.apply(clasificar_traslado, axis=1)
 
-                        # GUARDADO EN MEMORIA
                         st.session_state['tg_fact'] = df_fact
                         st.session_state['tg_tiempos'] = df_tiempos
                         st.session_state['tg_mp'] = df_mp
@@ -192,34 +186,39 @@ def mostrar_modulo_costos():
             if total_huerfanas > 0:
                 st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
                 
-                opciones_accion = ["Pendiente", "Asignar Orden", "Costo Indirecto", "Omitir"]
+                opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden (Antigua)", "Costo Indirecto", "Omitir"]
                 config_columnas = {
                     "Accion": st.column_config.SelectboxColumn("Acción", options=opciones_accion, required=True),
-                    "Orden_SGT": st.column_config.TextColumn("Código Orden (Si aplica)")
+                    "Orden_SGT": st.column_config.TextColumn("Código Orden")
                 }
 
                 ed_fact = ed_tiempos = ed_mp = pd.DataFrame()
 
+                def prellenar_orden(df_original, df_huerfano):
+                    df_huerfano['Orden_SGT'] = df_original.loc[df_huerfano.index, 'Ordenes_Detectadas'].apply(
+                        lambda x: x[0] if isinstance(x, list) and len(x) > 0 else ""
+                    )
+                    df_huerfano['Accion'] = df_huerfano['Orden_SGT'].apply(
+                        lambda x: "Forzar Orden (Antigua)" if x != "" else "Pendiente"
+                    )
+                    return df_huerfano
+
                 if h_fact > 0:
                     with st.expander(f"🧾 Facturas Huérfanas ({h_fact})", expanded=True):
-                        df_h_f = df_fact[df_fact['Clasificacion'] == "Huérfana (Revisar)"][['Numero', 'Descripcion', 'VentaNeta']].copy()
-                        df_h_f['Accion'] = "Pendiente"
-                        df_h_f['Orden_SGT'] = ""
+                        cols_f = [c for c in ['Fecha', 'Numero', 'Descripcion', 'VentaNeta'] if c in df_fact.columns]
+                        df_h_f = prellenar_orden(df_fact, df_fact[df_fact['Clasificacion'] == "Huérfana (Revisar)"][cols_f].copy())
                         ed_fact = st.data_editor(df_h_f, column_config=config_columnas, hide_index=True, key="ed_fact")
 
                 if h_tiempos > 0:
                     with st.expander(f"⏱️ Horas Huérfanas ({h_tiempos})", expanded=True):
-                        df_h_t = df_tiempos[df_tiempos['Clasificacion'] == "Huérfana (Revisar)"][['Empleado', 'Observaciones']].copy()
-                        df_h_t['Accion'] = "Pendiente"
-                        df_h_t['Orden_SGT'] = ""
+                        cols_t = [c for c in ['Empleado', 'Observaciones'] if c in df_tiempos.columns]
+                        df_h_t = prellenar_orden(df_tiempos, df_tiempos[df_tiempos['Clasificacion'] == "Huérfana (Revisar)"][cols_t].copy())
                         ed_tiempos = st.data_editor(df_h_t, column_config=config_columnas, hide_index=True, key="ed_tiempos")
 
                 if h_mp > 0:
                     with st.expander(f"📦 Traslados MP Huérfanos ({h_mp})", expanded=True):
-                        col_mostrar_mp = 'Concepto' if 'Concepto' in df_mp.columns else 'Descripcion'
-                        df_h_m = df_mp[df_mp['Clasificacion'] == "Huérfana (Revisar)"][['Numero', col_mostrar_mp, 'Categoria']].copy()
-                        df_h_m['Accion'] = "Pendiente"
-                        df_h_m['Orden_SGT'] = ""
+                        cols_m = [c for c in ['Numero', 'Concepto', 'Descripcion', 'Categoria'] if c in df_mp.columns]
+                        df_h_m = prellenar_orden(df_mp, df_mp[df_mp['Clasificacion'] == "Huérfana (Revisar)"][cols_m].copy())
                         ed_mp = st.data_editor(df_h_m, column_config=config_columnas, hide_index=True, key="ed_mp")
 
                 if st.button("💾 Guardar Decisiones y Validar", type="primary"):
@@ -227,12 +226,16 @@ def mostrar_modulo_costos():
                     
                     def revisar_tabla(df_editado, nombre_tabla):
                         for i, row in df_editado.iterrows():
-                            if row['Accion'] == "Pendiente":
+                            accion = row['Accion']
+                            if accion == "Pendiente":
                                 errores.append(f"Queda un registro pendiente en {nombre_tabla}.")
-                            elif row['Accion'] == "Asignar Orden":
+                            elif accion == "Asignar Orden":
                                 orden = str(row['Orden_SGT']).strip()
                                 if orden not in ordenes_validas:
-                                    errores.append(f"La orden '{orden}' asignada en {nombre_tabla} NO existe en SGT.")
+                                    errores.append(f"En {nombre_tabla}, la orden '{orden}' NO existe en SGT. Si es una reimpresión vieja, usa 'Forzar Orden (Antigua)'.")
+                            elif accion == "Forzar Orden (Antigua)":
+                                if str(row['Orden_SGT']).strip() == "":
+                                    errores.append(f"En {nombre_tabla}, seleccionaste forzar orden pero dejaste el código en blanco.")
 
                     if not ed_fact.empty: revisar_tabla(ed_fact, "Facturas")
                     if not ed_tiempos.empty: revisar_tabla(ed_tiempos, "Tiempos")
