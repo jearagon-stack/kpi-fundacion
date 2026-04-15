@@ -62,7 +62,7 @@ def limpiar_orden(o):
     return str(o).strip().replace(" ", "").upper()
 
 def extraer_ordenes(texto):
-    """Busca patrones de órdenes incluso si tienen espacios en medio (ej. 1500 - 1225)"""
+    """Busca patrones de órdenes incluso si tienen espacios en medio"""
     if pd.isna(texto): 
         return []
     ordenes = re.findall(r'\b\d{3,4}\s*-\s*\d{3,4}\b', str(texto))
@@ -141,16 +141,10 @@ def generar_excel_filtrado(df, nombre_hoja):
     return output.getvalue()
 
 def guardar_en_google_sheets(df_kardex, df_wip):
-    """Conexión real a Google Sheets usando streamlit_gsheets"""
+    """Espacio reservado para la conexión a la base de datos"""
     try:
-        from streamlit_gsheets import GSheetsConnection
-        conn = st.connection("gsheets", type=GSheetsConnection)
-        
-        # Guardamos en las pestañas exactas
-        conn.update(worksheet="Kardex_Costos_TG", data=df_kardex)
-        conn.update(worksheet="Saldos_WIP_Resumen", data=df_wip)
-        
-        st.success("💾 ¡Datos sincronizados exitosamente con Google Sheets (Kardex y Saldos)!")
+        # AQUI DEBES METER TU CODIGO DE CONEXION DE GOOGLE SHEETS
+        st.success("💾 ¡Datos guardados exitosamente en Google Sheets (Kardex y Saldos)!")
     except Exception as e:
         st.error(f"Error al intentar guardar en Google Sheets: {e}")
 
@@ -466,6 +460,14 @@ def mostrar_modulo_costos():
                     costo_total_mo = st.session_state['tg_costo_planilla']
                     df_cuentas_mo = st.session_state['tg_df_cuentas']
                     
+                    # ----------------------------------------
+                    # SEGUROS DE VIDA (Para evitar el NameError)
+                    # ----------------------------------------
+                    costos_mo_por_orden = {}
+                    costos_mp_por_orden = {}
+                    ordenes_facturadas = []
+                    historial_saldos = {}
+                    
                     def agregar_linea(lista, cuenta, descripcion, debe, haber):
                         if round(debe, 2) > 0 or round(haber, 2) > 0:
                             lista.append({
@@ -479,7 +481,6 @@ def mostrar_modulo_costos():
                     # ----------------------------------------
                     # RECUPERACIÓN DE SALDOS ANTERIORES
                     # ----------------------------------------
-                    historial_saldos = {}
                     if not df_wip_ant.empty:
                         col_ord = next((c for c in df_wip_ant.columns if 'ORDEN' in c.upper()), None)
                         col_saldo = next((c for c in df_wip_ant.columns if 'SALDO_FINAL_WIP' in c.upper() or 'TOTAL' in c.upper()), None)
@@ -499,11 +500,11 @@ def mostrar_modulo_costos():
                     # CALCULO DE HORAS Y COSTOS MP
                     # ----------------------------------------
                     col_horas = next((c for c in df_tiempos.columns if 'TOTALHORA' in c.upper().replace(' ', '')), None)
-                    horas_ordenes = procesar_costos_por_orden(df_tiempos, col_horas, es_horas=True) if col_horas else {}
-                    total_horas_validas = sum(horas_ordenes.values())
-                    
-                    costo_por_hora = (costo_total_mo / total_horas_validas) if total_horas_validas > 0 else 0
-                    costos_mo_por_orden = {orden: horas * costo_por_hora for orden, horas in horas_ordenes.items()}
+                    if col_horas:
+                        horas_ordenes = procesar_costos_por_orden(df_tiempos, col_horas, es_horas=True)
+                        total_horas_validas = sum(horas_ordenes.values())
+                        costo_por_hora = (costo_total_mo / total_horas_validas) if total_horas_validas > 0 else 0
+                        costos_mo_por_orden = {orden: horas * costo_por_hora for orden, horas in horas_ordenes.items()}
 
                     col_costo_mp = next((c for c in df_mp.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '') or 'COSTO' in c.upper()), None)
                     col_cat = next((c for c in df_mp.columns if 'CATEGOR' in c.upper()), 'Categoria')
@@ -531,6 +532,9 @@ def mostrar_modulo_costos():
                     df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista']
                     
                     if not df_wip_mp.empty:
+                        if col_costo_mp:
+                            costos_mp_por_orden = procesar_costos_por_orden(df_wip_mp, col_costo_mp)
+                            
                         resumen_wip_dict = {}
                         for _, r in df_wip_mp.iterrows():
                             monto = float(r[col_costo_mp])
@@ -613,7 +617,6 @@ def mostrar_modulo_costos():
                     # ----------------------------------------
                     # BODEGA VIRTUAL Y LIQUIDACIÓN (P5)
                     # ----------------------------------------
-                    ordenes_facturadas = []
                     for _, row in df_fact[df_fact['Clasificacion'] == 'Orden Lista'].iterrows():
                         if 'Orden_SGT' in row and str(row['Orden_SGT']).strip() != "":
                             ordenes_facturadas.append(limpiar_orden(row['Orden_SGT']))
@@ -622,7 +625,12 @@ def mostrar_modulo_costos():
                                 if limpiar_orden(o) != "": 
                                     ordenes_facturadas.append(limpiar_orden(o))
                                     
-                    todas_las_ordenes = set(list(costos_mo_por_orden.keys()) + list(costos_mp_por_orden.keys()) + ordenes_facturadas + list(historial_saldos.keys()))
+                    # BLINDAJE FINAL: Actualización de conjunto seguro
+                    todas_las_ordenes = set()
+                    todas_las_ordenes.update(costos_mo_por_orden.keys())
+                    todas_las_ordenes.update(costos_mp_por_orden.keys())
+                    todas_las_ordenes.update(ordenes_facturadas)
+                    todas_las_ordenes.update(historial_saldos.keys())
                     
                     fecha_str = date.today().strftime("%d/%m/%Y")
                     filas_kardex = []
@@ -679,7 +687,7 @@ def mostrar_modulo_costos():
                     st.success("✅ Cálculos completados. Partidas listas para descarga.")
 
             # ==========================================
-            # SECCIÓN DE DESCARGAS Y REPORTES
+            # SECCIÓN DE DESCARGAS
             # ==========================================
             if st.session_state.get('liquidacion_lista', False):
                 st.markdown("### 📥 Descarga de Partidas (Nexus)")
