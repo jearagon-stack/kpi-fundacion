@@ -39,10 +39,31 @@ def mostrar_modulo_costos():
         with col_m1: mes_proceso = st.selectbox("Mes:", range(1, 13), index=date.today().month - 1)
         with col_m2: anio_proceso = st.number_input("Año:", min_value=2024, max_value=2030, value=date.today().year)
 
-        costo_planilla = st.number_input(
-            "💵 Ingresa el Costo Total de Planilla + Horas Extras del Mes ($):", 
-            min_value=0.0, value=0.0, step=100.0
+        st.markdown("---")
+        st.markdown("**Desglose de Mano de Obra (Planilla)**")
+        st.write("Ingresa las cuentas y montos correspondientes. El sistema sumará el total automáticamente.")
+        
+        # Tabla dinámica para las cuentas de mano de obra
+        if 'df_cuentas_base' not in st.session_state:
+            st.session_state['df_cuentas_base'] = pd.DataFrame([
+                {"Cuenta": "41010201 Sueldo de personal de produccion", "Monto": 0.0},
+                {"Cuenta": "41010205 ISSS Salud", "Monto": 0.0},
+                {"Cuenta": "41010207 AFP patronal", "Monto": 0.0}
+            ])
+
+        df_cuentas_mo = st.data_editor(
+            st.session_state['df_cuentas_base'],
+            column_config={
+                "Cuenta": st.column_config.TextColumn("Cuenta / Descripción", required=True),
+                "Monto": st.column_config.NumberColumn("Monto ($)", min_value=0.0, format="$%.2f")
+            },
+            num_rows="dynamic",
+            use_container_width=True,
+            key="ed_cuentas_mo"
         )
+        
+        costo_planilla = df_cuentas_mo['Monto'].sum()
+        st.info(f"**Costo Total de Mano de Obra a Prorratear:** ${costo_planilla:,.2f}")
         
         st.markdown("---")
         
@@ -78,7 +99,7 @@ def mostrar_modulo_costos():
                                 return "Huérfana (Revisar)"
                             df_fact['Clasificacion'] = df_fact.apply(clasificar_factura, axis=1)
 
-                        # 3. TIEMPOS (MANO DE OBRA) - IGNORANDO VACÍOS
+                        # 3. TIEMPOS (MANO DE OBRA)
                         df_tiempos = pd.read_excel(arch_tiempos, dtype=str)
                         if 'Observaciones' in df_tiempos.columns:
                             df_tiempos['Ordenes_Detectadas'] = df_tiempos['Observaciones'].apply(extraer_ordenes)
@@ -91,7 +112,7 @@ def mostrar_modulo_costos():
                                 return "Huérfana (Revisar)"
                             df_tiempos['Clasificacion'] = df_tiempos.apply(clasificar_tiempos, axis=1)
 
-                        # 4. TRASLADOS MATERIA PRIMA (Sin filtro automático de indirectos)
+                        # 4. TRASLADOS MATERIA PRIMA
                         dfs_mp = [pd.read_excel(f, dtype=str) for f in arch_tras_mp]
                         df_mp = pd.concat(dfs_mp, ignore_index=True) if dfs_mp else pd.DataFrame()
                         
@@ -104,11 +125,13 @@ def mostrar_modulo_costos():
                                 return "Huérfana (Revisar)"
                             df_mp['Clasificacion'] = df_mp.apply(clasificar_traslado, axis=1)
 
+                        # GUARDADO EN MEMORIA
                         st.session_state['tg_fact'] = df_fact
                         st.session_state['tg_tiempos'] = df_tiempos
                         st.session_state['tg_mp'] = df_mp
                         st.session_state['tg_ordenes_validas'] = ordenes_validas
                         st.session_state['tg_costo_planilla'] = costo_planilla
+                        st.session_state['tg_df_cuentas'] = df_cuentas_mo # Guardamos el desglose
                         st.session_state['tg_datos_cargados'] = True
                         st.session_state['fase2_aprobada'] = False
                         
@@ -204,6 +227,7 @@ def mostrar_modulo_costos():
             if st.button("🚀 Ejecutar Prorrateo y Generar Partidas", type="primary"):
                 df_tiempos = st.session_state['tg_tiempos']
                 costo_total = st.session_state['tg_costo_planilla']
+                df_cuentas = st.session_state['tg_df_cuentas']
                 
                 col_horas = next((c for c in df_tiempos.columns if 'TOTALHORA' in c.upper().replace(' ', '')), None)
                 
@@ -218,11 +242,28 @@ def mostrar_modulo_costos():
                         col2.metric("Horas Válidas", f"{horas_totales_validas:,.2f} hrs")
                         col3.metric("Costo por Hora", f"${costo_por_hora:,.2f}/hr")
                         
-                        df_partidas = pd.DataFrame({
-                            "Cuenta": ["PRODUCTO EN PROCESO - MANO DE OBRA"],
-                            "Debe": [costo_total], "Haber": [0.0],
-                            "Concepto": ["Traslado de costo de nómina"]
+                        # Construcción de la partida contable
+                        filas_partida = []
+                        
+                        # 1. Cargo a Inventario en Proceso
+                        filas_partida.append({
+                            "Cuenta": "110602 - Inventario de Producto en Proceso",
+                            "Debe": costo_total,
+                            "Haber": 0.0,
+                            "Concepto": "Traslado de costo de nómina a proceso"
                         })
+                        
+                        # 2. Abonos a las cuentas ingresadas en la tabla
+                        for idx, row in df_cuentas.iterrows():
+                            if row['Monto'] > 0:
+                                filas_partida.append({
+                                    "Cuenta": row['Cuenta'],
+                                    "Debe": 0.0,
+                                    "Haber": row['Monto'],
+                                    "Concepto": "Traslado de costo de nómina a proceso"
+                                })
+                        
+                        df_partidas = pd.DataFrame(filas_partida)
                         
                         st.download_button("⬇️ Descargar Partidas", data=generar_excel_bytes(df_partidas), file_name="Partidas_TG.xlsx")
                     else:
