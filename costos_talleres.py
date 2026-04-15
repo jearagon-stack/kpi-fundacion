@@ -58,9 +58,8 @@ def buscar_valor_columna(row, df_cols, palabra_clave):
     return " ".join(valores).upper()
 
 def procesar_costos_por_orden(df, col_valor, es_horas=False):
-    """Divide el costo o las horas entre múltiples órdenes en una misma celda"""
+    """Divide el costo o las horas entre múltiples órdenes en una misma celda para el Kardex"""
     distribucion = {}
-    total_cif = 0.0
     
     for _, row in df.iterrows():
         try:
@@ -70,10 +69,6 @@ def procesar_costos_por_orden(df, col_valor, es_horas=False):
             valor = 0.0
             
         clasif = row.get('Clasificacion', '')
-        
-        if clasif == "Costo Indirecto (Automático)":
-            total_cif += valor
-            continue
             
         if clasif != "Orden Lista":
             continue
@@ -86,11 +81,10 @@ def procesar_costos_por_orden(df, col_valor, es_horas=False):
             valor_dividido = valor / len(ordenes)
             for o in ordenes:
                 o_str = str(o).strip()
-                # BUGFIX: Ignoramos celdas basura que se lean como "nan" o vacías
                 if o_str.lower() == 'nan' or o_str == '': continue
                 distribucion[o_str] = distribucion.get(o_str, 0.0) + valor_dividido
 
-    return distribucion, total_cif
+    return distribucion
 
 def generar_nexus_bytes(df):
     output = io.BytesIO()
@@ -111,8 +105,7 @@ def generar_excel_filtrado(df, nombre_hoja):
 # ==========================================
 def guardar_en_google_sheets(df_kardex, df_wip):
     try:
-        # AQUI DEBES METER TU CODIGO DE CONEXION (El mismo que usas en cafetería)
-        # Ejemplo:
+        # AQUI DEBES METER TU CODIGO DE CONEXION
         # conn = st.connection("gsheets", type=GSheetsConnection)
         # conn.update(worksheet="Kardex_Costos_TG", data=df_kardex)
         # conn.update(worksheet="Saldos_WIP_Resumen", data=df_wip)
@@ -254,7 +247,7 @@ def mostrar_modulo_costos():
                         st.session_state['tg_df_cuentas'] = df_cuentas_mo 
                         st.session_state['tg_datos_cargados'] = True
                         st.session_state['fase2_aprobada'] = False
-                        st.session_state['liquidacion_lista'] = False # Reiniciamos el pase a Fase 3
+                        st.session_state['liquidacion_lista'] = False
                         
                         st.success("✅ Datos cruzados correctamente. Avanza a Auditoría.")
                     except Exception as e:
@@ -371,34 +364,96 @@ def mostrar_modulo_costos():
         st.subheader("💰 Generación de Costos y Partidas (Formato Nexus)")
         if st.session_state.get('fase2_aprobada', False):
             if st.button("🚀 Ejecutar Liquidación y Generar Partidas", type="primary"):
-                with st.spinner("Procesando datos y estructurando formato Nexus..."):
+                with st.spinner("Procesando datos y estructurando partidas individuales..."):
                     df_fact = st.session_state['tg_fact']
                     df_tiempos = st.session_state['tg_tiempos']
                     df_mp = st.session_state['tg_mp']
                     costo_total_mo = st.session_state['tg_costo_planilla']
                     df_cuentas_mo = st.session_state['tg_df_cuentas']
                     
-                    # 1. PRORRATEO MANO DE OBRA
+                    # ----------------------------------------
+                    # 1. KARDEX MATEMÁTICO (Reparto por Orden)
+                    # ----------------------------------------
                     col_horas = next((c for c in df_tiempos.columns if 'TOTALHORA' in c.upper().replace(' ', '')), None)
-                    horas_ordenes, _ = procesar_costos_por_orden(df_tiempos, col_horas, es_horas=True) if col_horas else ({}, 0)
+                    horas_ordenes = procesar_costos_por_orden(df_tiempos, col_horas, es_horas=True) if col_horas else {}
                     total_horas_validas = sum(horas_ordenes.values())
                     
                     costo_por_hora = (costo_total_mo / total_horas_validas) if total_horas_validas > 0 else 0
                     costos_mo_por_orden = {orden: horas * costo_por_hora for orden, horas in horas_ordenes.items()}
 
-                    # 2. COSTOS MATERIA PRIMA Y CIF
                     col_costo_mp = next((c for c in df_mp.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '') or 'COSTO' in c.upper()), None)
-                    costos_mp_por_orden, total_cif = procesar_costos_por_orden(df_mp, col_costo_mp) if col_costo_mp else ({}, 0)
+                    costos_mp_por_orden = procesar_costos_por_orden(df_mp, col_costo_mp) if col_costo_mp else {}
 
-                    # Procesamiento de Traslados a Otras Unidades
-                    df_traslados_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
-                    col_cat = next((c for c in df_mp.columns if 'CATEGOR' in c.upper()), 'Categoria')
-                    resumen_traslados = []
-                    if not df_traslados_esp.empty and col_costo_mp:
-                        df_traslados_esp[col_costo_mp] = pd.to_numeric(df_traslados_esp[col_costo_mp], errors='coerce').fillna(0)
-                        resumen_traslados = df_traslados_esp.groupby(col_cat)[col_costo_mp].sum().reset_index().to_dict('records')
+                    # ----------------------------------------
+                    # 2. CONSTRUCCIÓN DE PARTIDAS (Formato Nexus)
+                    # ----------------------------------------
+                    def agregar_linea(lista, cuenta, descripcion, debe, haber):
+                        if debe > 0 or haber > 0:
+                            lista.append({"CUENTA": cuenta, "VACIO": "", "CONCEPTO": str(descripcion).upper(), "DEBE": round(debe, 2), "HABER": round(haber, 2)})
 
-                    # 3. CONTROL DE ÓRDENES EN PROCESO (KARDEX Y RESUMEN)
+                    # PARTIDA 1: NÓMINA
+                    p1 = []
+                    agregar_linea(p1, CUENTA_WIP, "INYECCION MANO DE OBRA A PRODUCCION", costo_total_mo, 0)
+                    for _, r in df_cuentas_mo.iterrows():
+                        cuenta_codigo = r['Cuenta'].split(" ")[0]
+                        cuenta_desc = r['Cuenta'].replace(cuenta_codigo, "").strip()
+                        agregar_linea(p1, cuenta_codigo, cuenta_desc, 0, r['Monto'])
+                    st.session_state['tg_p1'] = pd.DataFrame(p1)
+
+                    # PARTIDAS DE INVENTARIO (Analizadas por Categoría)
+                    p2_wip = []
+                    p3_cif = []
+                    p4_traslados = []
+                    
+                    if col_costo_mp:
+                        df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
+                        col_cat = next((c for c in df_mp.columns if 'CATEGOR' in c.upper()), 'Categoria')
+
+                        # P2: Materia Prima a Proceso (WIP)
+                        df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista']
+                        if not df_wip_mp.empty:
+                            resumen_wip = df_wip_mp.groupby(col_cat)[col_costo_mp].sum()
+                            total_wip_mp = 0
+                            for cat, monto in resumen_wip.items():
+                                if monto > 0:
+                                    agregar_linea(p2_wip, CUENTA_WIP, cat, monto, 0) # Concepto = Categoría (Ej. "MATERIA PRIMA")
+                                    total_wip_mp += monto
+                            if total_wip_mp > 0:
+                                agregar_linea(p2_wip, CUENTA_MP, "SALIDA DE INVENTARIO A PROCESO", 0, total_wip_mp)
+
+                        # P3: Costos Indirectos (CIF)
+                        df_cif_mp = df_mp[df_mp['Clasificacion'] == 'Costo Indirecto (Automático)']
+                        if not df_cif_mp.empty:
+                            resumen_cif = df_cif_mp.groupby(col_cat)[col_costo_mp].sum()
+                            total_cif_mp = 0
+                            for cat, monto in resumen_cif.items():
+                                if monto > 0:
+                                    agregar_linea(p3_cif, CUENTA_CIF, cat, monto, 0) # Concepto = "EMPAQUE", "LIMPIEZA", etc.
+                                    total_cif_mp += monto
+                            if total_cif_mp > 0:
+                                agregar_linea(p3_cif, CUENTA_MP, "SALIDA DE INVENTARIO A COSTOS INDIRECTOS", 0, total_cif_mp)
+
+                        # P4: Traslados Especiales
+                        df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
+                        if not df_tras_esp.empty:
+                            resumen_traslados = df_tras_esp.groupby(col_cat)[col_costo_mp].sum()
+                            total_traslados = 0
+                            for cat, monto in resumen_traslados.items():
+                                if monto > 0:
+                                    cat_upper = str(cat).upper()
+                                    cuenta_destino = "110603" if "PRODUCTO TERMINADO" in cat_upper else "110601"
+                                    agregar_linea(p4_traslados, cuenta_destino, f"TRASLADO - {cat_upper}", monto, 0)
+                                    total_traslados += monto
+                            if total_traslados > 0:
+                                agregar_linea(p4_traslados, CUENTA_MP, "SALIDA DE INVENTARIO POR TRASLADO", 0, total_traslados)
+
+                    st.session_state['tg_p2'] = pd.DataFrame(p2_wip)
+                    st.session_state['tg_p3'] = pd.DataFrame(p3_cif)
+                    st.session_state['tg_p4'] = pd.DataFrame(p4_traslados)
+
+                    # ----------------------------------------
+                    # 3. BODEGA VIRTUAL Y LIQUIDACIÓN (P5)
+                    # ----------------------------------------
                     todas_las_ordenes = set(list(costos_mo_por_orden.keys()) + list(costos_mp_por_orden.keys()))
                     ordenes_facturadas_mes = []
                     for _, row in df_fact[df_fact['Clasificacion'] == 'Orden Lista'].iterrows():
@@ -410,14 +465,13 @@ def mostrar_modulo_costos():
                     filas_kardex = []
                     filas_wip = []
                     total_liquidado_cv = 0.0
-                    total_mp_a_wip = sum(costos_mp_por_orden.values())
 
                     for orden in todas_las_ordenes:
                         if pd.isna(orden) or str(orden).lower() == 'nan' or str(orden).strip() == '': continue
                         
                         nuevo_mo = costos_mo_por_orden.get(orden, 0.0)
                         nuevo_mp = costos_mp_por_orden.get(orden, 0.0)
-                        saldo_anterior = 0.0 # Esto se conectará a Google Sheets después
+                        saldo_anterior = 0.0 
                         saldo_acumulado = saldo_anterior + nuevo_mo + nuevo_mp
                         
                         estado = "Liquidado a Costo de Ventas" if orden in ordenes_facturadas_mes else "Pendiente"
@@ -440,67 +494,57 @@ def mostrar_modulo_costos():
                     st.session_state['tg_df_kardex'] = pd.DataFrame(filas_kardex)
                     st.session_state['tg_df_wip'] = pd.DataFrame(filas_wip)
 
-                    # 4. GENERACIÓN DE PARTIDAS INDIVIDUALES NEXUS
-                    def agregar_linea(lista, cuenta, descripcion, debe, haber):
-                        if debe > 0 or haber > 0:
-                            lista.append({"CUENTA": cuenta, "VACIO": "", "CONCEPTO": descripcion.upper(), "DEBE": round(debe, 2), "HABER": round(haber, 2)})
-
-                    # Partida 1: Planilla
-                    p1 = []
-                    agregar_linea(p1, CUENTA_WIP, "Inyeccion Mano de Obra a Produccion", costo_total_mo, 0)
-                    for _, r in df_cuentas_mo.iterrows():
-                        cuenta_codigo = r['Cuenta'].split(" ")[0]
-                        cuenta_desc = r['Cuenta'].replace(cuenta_codigo, "").strip()
-                        agregar_linea(p1, cuenta_codigo, cuenta_desc, 0, r['Monto'])
-                    st.session_state['tg_p1'] = pd.DataFrame(p1)
-
-                    # Partida 2: Materia Prima
-                    p2 = []
-                    agregar_linea(p2, CUENTA_WIP, "Traslado de MP a Ordenes de Produccion", total_mp_a_wip, 0)
-                    agregar_linea(p2, CUENTA_CIF, "Traslado de MP a Costos Indirectos (CIF)", total_cif, 0)
-                    
-                    total_otras_unidades = 0.0
-                    for traslado in resumen_traslados:
-                        cat_nombre = str(traslado[col_cat]).upper()
-                        monto_traslado = traslado[col_costo_mp]
-                        total_otras_unidades += monto_traslado
-                        cuenta_destino = "110603" if "PRODUCTO TERMINADO" in cat_nombre else "110601"
-                        agregar_linea(p2, cuenta_destino, f"TRASLADO DE INVENTARIO - {cat_nombre}", monto_traslado, 0)
-
-                    agregar_linea(p2, CUENTA_MP, "Salida de Inventario de Materia Prima", 0, total_mp_a_wip + total_cif + total_otras_unidades)
-                    st.session_state['tg_p2'] = pd.DataFrame(p2)
-
-                    # Partida 3: Liquidación WIP
-                    p3 = []
+                    # PARTIDA 5: Liquidación a Ventas
+                    p5 = []
                     if total_liquidado_cv > 0:
-                        agregar_linea(p3, CUENTA_COSTO_VENTAS, "Liquidacion de OP Facturadas a Costo de Ventas", total_liquidado_cv, 0)
-                        agregar_linea(p3, CUENTA_WIP, "Descarga de OP Facturadas de Proceso", 0, total_liquidado_cv)
-                    st.session_state['tg_p3'] = pd.DataFrame(p3)
+                        agregar_linea(p5, CUENTA_COSTO_VENTAS, "LIQUIDACION DE OP FACTURADAS", total_liquidado_cv, 0)
+                        agregar_linea(p5, CUENTA_WIP, "DESCARGA DE OP EN PROCESO", 0, total_liquidado_cv)
+                    st.session_state['tg_p5'] = pd.DataFrame(p5)
 
                     st.session_state['liquidacion_lista'] = True
-                    st.success("✅ Cálculos completados.")
+                    st.success("✅ Cálculos completados. Partidas listas para descarga.")
 
-            # SECCIÓN DE BOTONES DE DESCARGA
+            # ==========================================
+            # SECCIÓN DE BOTONES DE DESCARGA (5 PARTIDAS)
+            # ==========================================
             if st.session_state.get('liquidacion_lista', False):
-                st.markdown("### 📥 Descarga de Partidas Individuales (Nexus)")
-                col_d1, col_d2, col_d3 = st.columns(3)
+                st.markdown("### 📥 Descarga de Partidas Individuales (Formato Nexus)")
                 
-                with col_d1:
+                c1, c2, c3 = st.columns(3)
+                with c1:
                     st.write("**1. Partida Nómina**")
-                    st.download_button("⬇️ Descargar", data=generar_nexus_bytes(st.session_state['tg_p1']), file_name=f"Nexus_Nomina_{mes_proceso}_{anio_proceso}.xlsx")
-
-                with col_d2:
-                    st.write("**2. Partida Materiales**")
-                    st.download_button("⬇️ Descargar", data=generar_nexus_bytes(st.session_state['tg_p2']), file_name=f"Nexus_Materiales_{mes_proceso}_{anio_proceso}.xlsx")
-
-                with col_d3:
-                    st.write("**3. Liquidación**")
+                    st.download_button("⬇️ Descargar Nómina", data=generar_nexus_bytes(st.session_state['tg_p1']), file_name=f"1_Nexus_Nomina_{mes_proceso}_{anio_proceso}.xlsx")
+                with c2:
+                    st.write("**2. Materia Prima (a Proceso)**")
+                    if not st.session_state['tg_p2'].empty:
+                        st.download_button("⬇️ Descargar MP a Proceso", data=generar_nexus_bytes(st.session_state['tg_p2']), file_name=f"2_Nexus_MP_WIP_{mes_proceso}_{anio_proceso}.xlsx")
+                    else: st.info("No hubo movimientos.")
+                with c3:
+                    st.write("**3. Costos Indirectos (CIF)**")
                     if not st.session_state['tg_p3'].empty:
-                        st.download_button("⬇️ Descargar", data=generar_nexus_bytes(st.session_state['tg_p3']), file_name=f"Nexus_Liquidacion_{mes_proceso}_{anio_proceso}.xlsx")
-                    else:
-                        st.info("Sin OP facturadas.")
+                        st.download_button("⬇️ Descargar CIF", data=generar_nexus_bytes(st.session_state['tg_p3']), file_name=f"3_Nexus_CIF_{mes_proceso}_{anio_proceso}.xlsx")
+                    else: st.info("No hubo CIF.")
+
+                st.write("") # Espaciador
+                c4, c5, c6 = st.columns(3)
+                with c4:
+                    st.write("**4. Traslados / PT**")
+                    if not st.session_state['tg_p4'].empty:
+                        st.download_button("⬇️ Descargar Traslados", data=generar_nexus_bytes(st.session_state['tg_p4']), file_name=f"4_Nexus_Traslados_{mes_proceso}_{anio_proceso}.xlsx")
+                    else: st.info("No hubo traslados.")
+                with c5:
+                    st.write("**5. Liquidación a Ventas**")
+                    if not st.session_state['tg_p5'].empty:
+                        st.download_button("⬇️ Descargar Liquidación", data=generar_nexus_bytes(st.session_state['tg_p5']), file_name=f"5_Nexus_Liquidacion_{mes_proceso}_{anio_proceso}.xlsx")
+                    else: st.info("Sin OP facturadas.")
+                with c6:
+                    st.empty() # Relleno
 
                 st.divider()
+                
+                # ==========================================
+                # REPORTES Y KARDEX
+                # ==========================================
                 st.markdown("### 📊 Reportes de Control de Bodega")
                 
                 col_f1, col_f2 = st.columns(2)
