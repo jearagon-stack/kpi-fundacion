@@ -70,7 +70,6 @@ def mostrar_modulo_costos():
         st.markdown("**Desglose de Mano de Obra (Planilla)**")
         st.write("Agrega las filas necesarias, selecciona la cuenta en el menú desplegable y digita el monto.")
         
-        # Tabla dinámica con menú desplegable para las cuentas
         if 'df_cuentas_base' not in st.session_state:
             st.session_state['df_cuentas_base'] = pd.DataFrame([
                 {"Cuenta": "41010201 Sueldo de personal de produccion", "Monto": 0.0}
@@ -142,7 +141,7 @@ def mostrar_modulo_costos():
                                 return "Huérfana (Revisar)"
                             df_tiempos['Clasificacion'] = df_tiempos.apply(clasificar_tiempos, axis=1)
 
-                        # 4. TRASLADOS MATERIA PRIMA
+                        # 4. TRASLADOS MATERIA PRIMA (Regla de categorías actualizada)
                         dfs_mp = [pd.read_excel(f, dtype=str) for f in arch_tras_mp]
                         df_mp = pd.concat(dfs_mp, ignore_index=True) if dfs_mp else pd.DataFrame()
                         
@@ -151,7 +150,12 @@ def mostrar_modulo_costos():
                         if not df_mp.empty and col_texto_mp in df_mp.columns:
                             df_mp['Ordenes_Detectadas'] = df_mp[col_texto_mp].apply(extraer_ordenes)
                             def clasificar_traslado(row):
+                                cat = str(row.get('Categoria', '')).upper()
+                                # Regla 1: Si tiene orden válida en SGT, es de producción.
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
+                                # Regla 2: Si no tiene orden, pero es de estas categorías, pasa automático.
+                                if any(k in cat for k in ["EMPAQUE", "LIMPIEZA", "REPUESTO", "REPUESTOS"]): return "Costo Indirecto (Automático)"
+                                # Regla 3: Si es Materia Prima sin orden o cualquier otra cosa, al purgatorio.
                                 return "Huérfana (Revisar)"
                             df_mp['Clasificacion'] = df_mp.apply(clasificar_traslado, axis=1)
 
