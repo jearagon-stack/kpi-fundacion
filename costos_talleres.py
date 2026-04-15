@@ -290,18 +290,23 @@ def mostrar_modulo_costos():
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]) or "PRODUCTO TERMINADO" in cat:
-                                    return "Traslado Especial"
-                                    
+                                # 1. PRIORIDAD ABSOLUTA: Si tiene orden de trabajo válida (No importa si es Empaque o Producto Terminado)
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): 
                                     return "Orden Lista"
                                     
+                                # 2. Si tiene una orden escrita, pero no está en SGT (Para forzarla en Auditoría)
                                 if len(row['Ordenes_Detectadas']) > 0: 
                                     return "Huérfana (Revisar)"
                                     
+                                # 3. Si no tiene orden, revisamos si es un traslado a otra unidad
+                                if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]) or "PRODUCTO TERMINADO" in cat:
+                                    return "Traslado Especial"
+                                    
+                                # 4. Si no tiene orden, revisamos si es costo indirecto automático
                                 if any(k in cat for k in ["EMPAQUE", "LIMPIEZA", "REPUESTO", "REPUESTOS"]): 
                                     return "Costo Indirecto (Automático)"
                                     
+                                # 5. Todo lo demás (Ej. Materia prima sin orden) cae en Auditoría
                                 return "Huérfana (Revisar)"
                                 
                             df_mp['Clasificacion'] = df_mp.apply(clasificar_traslado, axis=1)
@@ -467,7 +472,7 @@ def mostrar_modulo_costos():
                             })
 
                     # ----------------------------------------
-                    # CALCULO DE HORAS
+                    # IDENTIFICACIÓN DE COLUMNAS DE COSTO
                     # ----------------------------------------
                     col_horas = next((c for c in df_tiempos.columns if 'TOTALHORA' in c.upper().replace(' ', '')), None)
                     horas_ordenes = procesar_costos_por_orden(df_tiempos, col_horas, es_horas=True) if col_horas else {}
@@ -484,7 +489,7 @@ def mostrar_modulo_costos():
                         df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
 
                     # ----------------------------------------
-                    # PARTIDA 1: NÓMINA (Intacta)
+                    # PARTIDA 1: NÓMINA 
                     # ----------------------------------------
                     p1 = []
                     agregar_linea(p1, CUENTA_WIP_MO, "INYECCION MANO DE OBRA A PRODUCCION", costo_total_mo, 0)
@@ -496,43 +501,59 @@ def mostrar_modulo_costos():
                     st.session_state['tg_p1'] = pd.DataFrame(p1)
 
                     # ----------------------------------------
-                    # PARTIDA 2: MP A PROCESO (Machote Exacto)
+                    # PARTIDA 2: MP A PROCESO (Cargos a 110402, Abonos agrupados por categoría)
                     # ----------------------------------------
                     p2 = []
                     df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista']
+                    
                     if not df_wip_mp.empty:
-                        resumen_wip = df_wip_mp.groupby(col_cat)[col_costo_mp].sum()
-                        total_wip_mp = resumen_wip.sum()
-                        
-                        agregar_linea(p2, CUENTA_WIP_MP, "Inventario de Producto en Proceso", total_wip_mp, 0)
-                        
-                        for cat, monto in resumen_wip.items():
+                        # Agrupamos a la fuerza usando el diccionario del inventario para evitar errores de espacios
+                        resumen_wip_dict = {}
+                        for _, r in df_wip_mp.iterrows():
+                            monto = float(r[col_costo_mp])
                             if monto > 0:
-                                cta_inv, nom_inv = obtener_datos_inventario(cat)
-                                agregar_linea(p2, cta_inv, nom_inv, 0, monto)
+                                cta_inv, nom_inv = obtener_datos_inventario(r[col_cat])
+                                # Guardamos la cuenta y el nombre como llave para sumar los montos
+                                llave = (cta_inv, nom_inv)
+                                resumen_wip_dict[llave] = resumen_wip_dict.get(llave, 0.0) + monto
+                                
+                        total_wip_mp = sum(resumen_wip_dict.values())
+                        
+                        if total_wip_mp > 0:
+                            agregar_linea(p2, CUENTA_WIP_MP, "Inventario de Producto en Proceso", total_wip_mp, 0)
+                            
+                            for (cta, nom), monto in resumen_wip_dict.items():
+                                agregar_linea(p2, cta, nom, 0, monto)
                                 
                     st.session_state['tg_p2'] = pd.DataFrame(p2)
 
                     # ----------------------------------------
-                    # PARTIDA 3: CIF (Machote Exacto)
+                    # PARTIDA 3: COSTOS INDIRECTOS (CIF) 
                     # ----------------------------------------
                     p3 = []
                     df_cif_mp = df_mp[df_mp['Clasificacion'] == 'Costo Indirecto (Automático)']
+                    
                     if not df_cif_mp.empty:
-                        resumen_cif = df_cif_mp.groupby(col_cat)[col_costo_mp].sum()
-                        total_cif = resumen_cif.sum()
-                        
-                        agregar_linea(p3, CUENTA_CIF, "Costo de lo Vendido Indirectos TG", total_cif, 0)
-                        
-                        for cat, monto in resumen_cif.items():
+                        resumen_cif_dict = {}
+                        for _, r in df_cif_mp.iterrows():
+                            monto = float(r[col_costo_mp])
                             if monto > 0:
-                                cta_inv, nom_inv = obtener_datos_inventario(cat)
-                                agregar_linea(p3, cta_inv, nom_inv, 0, monto)
+                                cta_inv, nom_inv = obtener_datos_inventario(r[col_cat])
+                                llave = (cta_inv, nom_inv)
+                                resumen_cif_dict[llave] = resumen_cif_dict.get(llave, 0.0) + monto
+                                
+                        total_cif = sum(resumen_cif_dict.values())
+                        
+                        if total_cif > 0:
+                            agregar_linea(p3, CUENTA_CIF, "Costo de lo Vendido Indirectos TG", total_cif, 0)
+                            
+                            for (cta, nom), monto in resumen_cif_dict.items():
+                                agregar_linea(p3, cta, nom, 0, monto)
                                 
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
                     # ----------------------------------------
-                    # PARTIDA 4: TRASLADOS (Separado por Unidad)
+                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES
                     # ----------------------------------------
                     p4_dict = {}
                     df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
@@ -547,23 +568,28 @@ def mostrar_modulo_costos():
                             return "OTRAS UNIDADES"
 
                         df_tras_esp['Unidad_Destino'] = df_tras_esp.apply(asignar_unidad, axis=1)
-                        resumen_tras = df_tras_esp.groupby(['Unidad_Destino', col_cat])[col_costo_mp].sum().reset_index()
                         
-                        for unidad in resumen_tras['Unidad_Destino'].unique():
-                            df_u = resumen_tras[resumen_tras['Unidad_Destino'] == unidad]
-                            p4_unidad = []
+                        for unidad in df_tras_esp['Unidad_Destino'].unique():
+                            df_u = df_tras_esp[df_tras_esp['Unidad_Destino'] == unidad]
                             
-                            # Carga el total a la cuenta de la unidad
-                            cuenta_destino = "110603" if unidad == "PRODUCTO TERMINADO" else "110601"
-                            total_unidad = df_u[col_costo_mp].sum()
-                            agregar_linea(p4_unidad, cuenta_destino, f"TRASLADO A {unidad}", total_unidad, 0)
-                            
-                            # Abona y da salida a las cuentas de inventario
+                            resumen_u_dict = {}
                             for _, r in df_u.iterrows():
-                                cta_inv, nom_inv = obtener_datos_inventario(r[col_cat])
-                                agregar_linea(p4_unidad, cta_inv, nom_inv, 0, r[col_costo_mp])
+                                monto = float(r[col_costo_mp])
+                                if monto > 0:
+                                    cta_inv, nom_inv = obtener_datos_inventario(r[col_cat])
+                                    resumen_u_dict[(cta_inv, nom_inv)] = resumen_u_dict.get((cta_inv, nom_inv), 0.0) + monto
                             
-                            p4_dict[unidad] = pd.DataFrame(p4_unidad)
+                            total_unidad = sum(resumen_u_dict.values())
+                            
+                            if total_unidad > 0:
+                                p4_unidad = []
+                                cuenta_destino = "110603" if unidad == "PRODUCTO TERMINADO" else "110601"
+                                agregar_linea(p4_unidad, cuenta_destino, f"TRASLADO A {unidad}", total_unidad, 0)
+                                
+                                for (cta, nom), monto in resumen_u_dict.items():
+                                    agregar_linea(p4_unidad, cta, nom, 0, monto)
+                                
+                                p4_dict[unidad] = pd.DataFrame(p4_unidad)
                             
                     st.session_state['tg_p4_dict'] = p4_dict
 
