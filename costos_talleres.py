@@ -582,7 +582,7 @@ def mostrar_modulo_costos():
                             for o in row.get('Ordenes_Detectadas', []):
                                 if limpiar_orden(o) != "": ordenes_facturadas.append(limpiar_orden(o))
                                     
-                    # BLINDAJE FINAL: Previene el NameError
+                    # BLINDAJE FINAL
                     todas_las_ordenes = set()
                     todas_las_ordenes.update(costos_mo_por_orden.keys())
                     todas_las_ordenes.update(costos_mp_por_orden.keys())
@@ -617,16 +617,16 @@ def mostrar_modulo_costos():
                     st.session_state['tg_df_kardex'] = pd.DataFrame(filas_kardex)
                     st.session_state['tg_df_wip'] = pd.DataFrame(filas_wip)
 
-                    # PARTIDA 5: FORZAR GENERACIÓN
+                    # ==================================================
+                    # PARTIDA 5: FORZAR GENERACIÓN (Aún si es $0.00)
+                    # ==================================================
                     p5 = []
-                    # Aunque sea 0, si hay facturadas se genera la partida
                     if len(ordenes_facturadas) > 0 or total_liq_cv > 0:
-                        agregar_linea(p5, CUENTA_COSTO_VENTAS, "Inventario de Producto en Proceso", total_liq_cv, 0)
-                        agregar_linea(p5, CUENTA_WIP_MP, "Liquidacion de OP Facturadas de Proceso", 0, total_liq_cv)
+                        # Lo agregamos "a la fuerza" saltando la función agregar_linea que bloquea los ceros
+                        p5.append({"CUENTA": CUENTA_COSTO_VENTAS, "VACIO": "", "CONCEPTO": "Inventario de Producto en Proceso", "DEBE": round(total_liq_cv, 2), "HABER": 0.0})
+                        p5.append({"CUENTA": CUENTA_WIP_MP, "VACIO": "", "CONCEPTO": "Liquidacion de OP Facturadas de Proceso", "DEBE": 0.0, "HABER": round(total_liq_cv, 2)})
                         
                     st.session_state['tg_p5'] = pd.DataFrame(p5)
-                    st.session_state['hay_ordenes_facturadas'] = len(ordenes_facturadas) > 0
-
                     st.session_state['liquidacion_lista'] = True
                     st.success("✅ Cálculos completados. Partidas listas para descarga.")
 
@@ -647,6 +647,7 @@ def mostrar_modulo_costos():
                     if st.session_state['tg_p4_dict']: st.download_button("⬇️ 4. P. Traslados (Múltiples Hojas)", data=generar_nexus_bytes(st.session_state['tg_p4_dict']), file_name=f"4_Nex_Traslados_{mes_proceso}.xlsx")
                     else: st.info("Sin movimientos")
                 with c5:
+                    # AQUI YA NO HAY CONDICIONES QUE TE ESCONDAN EL BOTON
                     if not st.session_state['tg_p5'].empty:
                         st.download_button("⬇️ 5. P. Liquidación a Ventas", data=generar_nexus_bytes(st.session_state['tg_p5']), file_name=f"5_Nex_Liq_{mes_proceso}.xlsx")
                     else: st.info("Sin OP facturadas.")
@@ -655,13 +656,13 @@ def mostrar_modulo_costos():
                 st.divider()
                 st.markdown("### 📊 Reportes de Control de Bodega")
                 col_f1, _ = st.columns(2)
-                with col_f1: filtro_orden = st.text_input("🔍 Filtrar por Orden:")
+                f_ord = col_f1.text_input("🔍 Filtrar por Orden:")
 
                 df_k_ex = st.session_state['tg_df_kardex']
                 df_w_ex = st.session_state['tg_df_wip']
-                if filtro_orden.strip() != "":
-                    df_k_ex = df_k_ex[df_k_ex['Orden'].str.contains(filtro_orden, case=False, na=False)]
-                    df_w_ex = df_w_ex[df_w_ex['Orden'].str.contains(filtro_orden, case=False, na=False)]
+                if f_ord.strip() != "":
+                    df_k_ex = df_k_ex[df_k_ex['Orden'].str.contains(f_ord, case=False, na=False)]
+                    df_w_ex = df_w_ex[df_w_ex['Orden'].str.contains(f_ord, case=False, na=False)]
 
                 st.dataframe(df_w_ex, use_container_width=True)
 
@@ -670,5 +671,3 @@ def mostrar_modulo_costos():
                     if st.button("💾 Guardar en Sheets", type="secondary"): guardar_en_google_sheets(df_k_ex, df_w_ex)
                 with b2: st.download_button("📋 Bajar Kardex", data=generar_excel_filtrado(df_k_ex, "Kardex"), file_name=f"Kardex_{mes_proceso}.xlsx")
                 with b3: st.download_button("📉 Bajar Saldos WIP", data=generar_excel_filtrado(df_w_ex, "Saldos_WIP"), file_name=f"Saldos_WIP_{mes_proceso}.xlsx")
-        else:
-            st.warning("🛑 Completa la Auditoría para habilitar la Liquidación.")
