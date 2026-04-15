@@ -145,12 +145,12 @@ def mostrar_modulo_costos():
                                 cat = str(row.get('Categoria', '')).upper()
                                 concepto = str(row.get('Concepto', '')).upper()
                                 
-                                # EXCLUSIÓN DE SOHO/LIBRERÍA
-                                if "SOHO" in concepto or "LIBRERIA" in concepto:
-                                    return "Traslado a Otras Unidades (Omitir)"
+                                # EXCLUSIÓN DE SOHO/LIBRERÍA/UCA Y PRODUCTO TERMINADO
+                                # Incluimos "LBRERI" para atrapar el error ortográfico
+                                if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]) or "PRODUCTO TERMINADO" in cat:
+                                    return "Omitido Automático"
                                     
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
-                                if any(k in cat for k in ["EMPAQUE", "LIMPIEZA", "REPUESTO", "REPUESTOS"]): return "Costo Indirecto (Automático)"
                                 return "Huérfana (Revisar)"
                             df_mp['Clasificacion'] = df_mp.apply(clasificar_traslado, axis=1)
 
