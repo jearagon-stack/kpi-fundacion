@@ -498,7 +498,7 @@ def mostrar_modulo_costos():
 
                     # PARTIDA 1: NÓMINA
                     p1 = []
-                    agregar_linea(p1, CUENTA_WIP_MO, "INYECCION MANO DE OBRA A PRODUCCION", costo_total_mo, 0)
+                    agregar_linea(p1, "110602", "INYECCION MANO DE OBRA A PRODUCCION", costo_total_mo, 0)
                     for _, r in df_cuentas_mo.iterrows():
                         cuenta_cod = r['Cuenta'].split(" ")[0]
                         desc_cuenta = r['Cuenta'].replace(cuenta_cod, "").strip()
@@ -516,9 +516,10 @@ def mostrar_modulo_costos():
                                 cta_inv, nom_inv = obtener_datos_inventario(r[col_cat])
                                 llave = (cta_inv, nom_inv)
                                 resumen_wip_dict[llave] = resumen_wip_dict.get(llave, 0.0) + monto
+                                
                         total_wip_mp = sum(resumen_wip_dict.values())
                         if total_wip_mp > 0:
-                            agregar_linea(p2, CUENTA_WIP_MP, "Inventario de Producto en Proceso", total_wip_mp, 0)
+                            agregar_linea(p2, "110602", "INVENTARIO DE PRODUCTO EN PROCESO", total_wip_mp, 0)
                             for (cta, nom), monto in resumen_wip_dict.items():
                                 agregar_linea(p2, cta, nom, 0, monto)
                     st.session_state['tg_p2'] = pd.DataFrame(p2)
@@ -618,15 +619,17 @@ def mostrar_modulo_costos():
                     st.session_state['tg_df_wip'] = pd.DataFrame(filas_wip)
 
                     # ==================================================
-                    # PARTIDA 5: FORZAR GENERACIÓN (Aún si es $0.00)
-                    # ==================================================
+                    # PARTIDA 5: Liquidación Final
                     p5 = []
                     if len(ordenes_facturadas) > 0 or total_liq_cv > 0:
-                        # Lo agregamos "a la fuerza" saltando la función agregar_linea que bloquea los ceros
-                        p5.append({"CUENTA": CUENTA_COSTO_VENTAS, "VACIO": "", "CONCEPTO": "Inventario de Producto en Proceso", "DEBE": round(total_liq_cv, 2), "HABER": 0.0})
-                        p5.append({"CUENTA": CUENTA_WIP_MP, "VACIO": "", "CONCEPTO": "Liquidacion de OP Facturadas de Proceso", "DEBE": 0.0, "HABER": round(total_liq_cv, 2)})
+                        # CARGO (DEBE)
+                        agregar_linea(p5, "410104", "COSTO DE LO VENDIDO", total_liq_cv, 0)
+                        # ABONO (HABER)
+                        agregar_linea(p5, "110602", "INVENTARIO DE PRODUCTO EN PROCESO", 0, total_liq_cv)
                         
                     st.session_state['tg_p5'] = pd.DataFrame(p5)
+                    st.session_state['hay_ordenes_facturadas'] = len(ordenes_facturadas) > 0
+
                     st.session_state['liquidacion_lista'] = True
                     st.success("✅ Cálculos completados. Partidas listas para descarga.")
 
