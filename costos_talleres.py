@@ -1,11 +1,17 @@
 import streamlit as st
 import pandas as pd
+import re # El motor de búsqueda inteligente
+
+def extraer_ordenes(texto):
+    """Busca patrones de órdenes tipo 1234-1234 o 123-1234 en cualquier texto"""
+    if pd.isna(texto): return []
+    # Busca 3 o 4 dígitos, un guion, y 3 o 4 dígitos
+    return re.findall(r'\b\d{3,4}-\d{3,4}\b', str(texto))
 
 def mostrar_modulo_costos():
     st.title("🖨️ Contabilidad de Costos - Talleres Gráficos")
     st.info("Sistema Automático de Costeo por Órdenes de Producción")
 
-    # Dividimos el proceso en 3 pasos lógicos
     tab_carga, tab_auditoria, tab_liquidacion = st.tabs([
         "📥 1. Carga de Datos", 
         "🕵️ 2. Auditoría (El Purgatorio)", 
@@ -18,8 +24,6 @@ def mostrar_modulo_costos():
     with tab_carga:
         st.subheader("Paso 1: Inyección de Costos y Datos del Mes")
         
-        # El Input Manual de Planilla
-        st.markdown("**Costo de Mano de Obra**")
         costo_planilla = st.number_input(
             "💵 Ingresa el Costo Total de Planilla + Horas Extras del Mes ($):", 
             min_value=0.0, value=0.0, step=100.0,
@@ -30,7 +34,6 @@ def mostrar_modulo_costos():
         st.markdown("**Archivos Base**")
         
         col1, col2 = st.columns(2)
-        
         with col1:
             arch_sgt = st.file_uploader("1. Maestro de Órdenes (SGT_TG)", type=["xlsx"])
             arch_tras_mp = st.file_uploader("2. Traslados Materia Prima (Consumos)", type=["xlsx"], accept_multiple_files=True)
@@ -41,19 +44,95 @@ def mostrar_modulo_costos():
             arch_tras_pt = st.file_uploader("5. Traslados Internos PT (A Librería/Soho)", type=["xlsx"], accept_multiple_files=True)
 
         if arch_sgt and arch_fact and arch_tras_mp and arch_tiempos:
-            st.warning("🚧 El motor de cruce de datos y detección de órdenes se está construyendo...")
             if st.button("🔍 Escanear Archivos y Construir Bodega Virtual", type="primary", use_container_width=True):
-                # Aquí irá la lógica de lectura y el "Cazador de Órdenes"
-                st.session_state['tg_datos_cargados'] = True
-                st.success("Archivos leídos correctamente. Pasa a la pestaña de Auditoría.")
+                with st.spinner("🧠 El Cazador de Órdenes está escaneando los documentos..."):
+                    try:
+                        # 1. Leer Maestro SGT
+                        df_sgt = pd.read_excel(arch_sgt, dtype=str)
+                        lista_ordenes_validas = df_sgt['Orden'].dropna().str.strip().tolist() if 'Orden' in df_sgt.columns else []
+
+                        # 2. Leer Facturación y Clasificar
+                        df_fact = pd.read_excel(arch_fact, dtype=str)
+                        if 'Descripcion' in df_fact.columns:
+                            df_fact['Ordenes_Detectadas'] = df_fact['Descripcion'].apply(extraer_ordenes)
+                            
+                            def clasificar_factura(row):
+                                desc = str(row.get('Descripcion', '')).upper()
+                                cat = str(row.get('Categoria', '')).upper()
+                                ordenes = row['Ordenes_Detectadas']
+                                
+                                if len(ordenes) > 0: return "Orden Lista"
+                                if "SERVICIO" in cat or "SERVICIO" in desc: return "Servicios"
+                                if any(k in desc for k in ["BANNER", "AFICHE", "CALENDARIO", "ROTULO", "IMPRESION"]): return "Venta Directa"
+                                if any(k in desc for k in ["RECICLAJE", "DESPERDICIO"]): return "Reciclaje"
+                                return "Huérfana (Revisar)"
+                                
+                            df_fact['Clasificacion'] = df_fact.apply(clasificar_factura, axis=1)
+
+                        # 3. Leer Tiempos (Mano de Obra)
+                        df_tiempos = pd.read_excel(arch_tiempos, dtype=str)
+                        if 'Observaciones' in df_tiempos.columns:
+                            df_tiempos['Ordenes_Detectadas'] = df_tiempos['Observaciones'].apply(extraer_ordenes)
+                            df_tiempos['Clasificacion'] = df_tiempos['Ordenes_Detectadas'].apply(lambda x: "Orden Lista" if len(x) > 0 else "Huérfana (Revisar)")
+
+                        # Guardar en memoria
+                        st.session_state['tg_fact'] = df_fact
+                        st.session_state['tg_tiempos'] = df_tiempos
+                        st.session_state['tg_sgt'] = df_sgt
+                        st.session_state['tg_datos_cargados'] = True
+                        
+                        st.success("¡Escaneo completo! Pasa a la pestaña '2. Auditoría (El Purgatorio)'.")
+                    except Exception as e:
+                        st.error(f"Error al leer archivos: Verifica que las columnas existan. Detalle: {e}")
 
     # ==========================================
     # PESTAÑA 2: EL PURGATORIO (AUDITORÍA)
     # ==========================================
     with tab_auditoria:
-        st.subheader("Sala de Espera: Revisión de Anomalías")
+        st.subheader("🕵️ Sala de Espera: Revisión de Anomalías")
         if st.session_state.get('tg_datos_cargados', False):
-            st.info("Aquí aparecerá el 'Resumen Preliminar' (Órdenes limpias, Ventas Directas, Servicios) y la tabla para asignar manualmente las facturas u horas huérfanas antes de liquidar.")
+            df_fact = st.session_state['tg_fact']
+            
+            # DASHBOARD PRELIMINAR
+            st.markdown("### 📊 Resumen Preliminar de Facturación")
+            col_a, col_b, col_c, col_d, col_e = st.columns(5)
+            
+            conteos = df_fact['Clasificacion'].value_counts()
+            
+            col_a.metric("✅ Órdenes Listas", conteos.get("Orden Lista", 0))
+            col_b.metric("🛍️ Venta Directa", conteos.get("Venta Directa", 0))
+            col_c.metric("🛠️ Servicios", conteos.get("Servicios", 0))
+            col_d.metric("♻️ Reciclaje", conteos.get("Reciclaje", 0))
+            col_e.metric("⚠️ Huérfanas", conteos.get("Huérfana (Revisar)", 0))
+            
+            st.divider()
+
+            # SECCIÓN DE CORRECCIÓN (EL PURGATORIO)
+            df_huerfanas_fact = df_fact[df_fact['Clasificacion'] == "Huérfana (Revisar)"].copy()
+            
+            if not df_huerfanas_fact.empty:
+                st.error(f"🚨 Tienes {len(df_huerfanas_fact)} facturas sin orden asignada. Revísalas aquí:")
+                
+                # Preparamos la tabla para edición
+                df_mostrar = df_huerfanas_fact[['Fecha', 'Numero', 'Descripcion', 'VentaNeta']].copy()
+                df_mostrar['Asignar_Orden_Manual'] = ""
+                
+                editado = st.data_editor(
+                    df_mostrar,
+                    column_config={
+                        "Asignar_Orden_Manual": st.column_config.TextColumn(
+                            "Escribe la Orden (Ej: 1234-1234)", required=False
+                        )
+                    },
+                    use_container_width=True,
+                    hide_index=True
+                )
+                
+                if st.button("💾 Guardar Correcciones y Enviar a Liquidación", type="primary"):
+                    st.success("Lógica de guardado en construcción para Fase 3...")
+            else:
+                st.success("✨ ¡Todo limpio! No hay facturas huérfanas este mes.")
+
         else:
             st.write("Por favor, carga los archivos y escanea en la pestaña 1.")
 
@@ -61,8 +140,8 @@ def mostrar_modulo_costos():
     # PESTAÑA 3: LIQUIDACIÓN
     # ==========================================
     with tab_liquidacion:
-        st.subheader("Liquidación y Partidas Contables")
+        st.subheader("💰 Liquidación y Partidas Contables")
         if st.session_state.get('tg_datos_cargados', False):
-            st.info("Aquí elegiremos qué liquidar al 100% o parcial, y descargaremos el Excel con las partidas.")
+            st.info("Aquí elegiremos qué liquidar al 100% o parcial, calcularemos el costo por hora de la planilla, y descargaremos el Excel con las partidas.")
         else:
             st.write("Completa los pasos anteriores.")
