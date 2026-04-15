@@ -1,11 +1,9 @@
 import streamlit as st
 import pandas as pd
-import re # El motor de búsqueda inteligente
+import re
 
 def extraer_ordenes(texto):
-    """Busca patrones de órdenes tipo 1234-1234 o 123-1234 en cualquier texto"""
     if pd.isna(texto): return []
-    # Busca 3 o 4 dígitos, un guion, y 3 o 4 dígitos
     return re.findall(r'\b\d{3,4}-\d{3,4}\b', str(texto))
 
 def mostrar_modulo_costos():
@@ -45,11 +43,14 @@ def mostrar_modulo_costos():
 
         if arch_sgt and arch_fact and arch_tras_mp and arch_tiempos:
             if st.button("🔍 Escanear Archivos y Construir Bodega Virtual", type="primary", use_container_width=True):
-                with st.spinner("🧠 El Cazador de Órdenes está escaneando los documentos..."):
+                with st.spinner("Escaneando documentos..."):
                     try:
                         # 1. Leer Maestro SGT
                         df_sgt = pd.read_excel(arch_sgt, dtype=str)
-                        lista_ordenes_validas = df_sgt['Orden'].dropna().str.strip().tolist() if 'Orden' in df_sgt.columns else []
+                        if 'Orden' in df_sgt.columns:
+                            lista_ordenes_validas = df_sgt['Orden'].dropna().astype(str).str.strip().tolist()
+                        else:
+                            lista_ordenes_validas = []
 
                         # 2. Leer Facturación y Clasificar
                         df_fact = pd.read_excel(arch_fact, dtype=str)
@@ -79,69 +80,95 @@ def mostrar_modulo_costos():
                         st.session_state['tg_fact'] = df_fact
                         st.session_state['tg_tiempos'] = df_tiempos
                         st.session_state['tg_sgt'] = df_sgt
+                        st.session_state['tg_ordenes_validas'] = lista_ordenes_validas
                         st.session_state['tg_datos_cargados'] = True
+                        st.session_state['fase2_aprobada'] = False
                         
-                        st.success("¡Escaneo completo! Pasa a la pestaña '2. Auditoría (El Purgatorio)'.")
+                        st.success("Escaneo completo. Pasa a la pestaña '2. Auditoría'.")
                     except Exception as e:
-                        st.error(f"Error al leer archivos: Verifica que las columnas existan. Detalle: {e}")
+                        st.error(f"Error al leer archivos: {e}")
 
     # ==========================================
     # PESTAÑA 2: EL PURGATORIO (AUDITORÍA)
     # ==========================================
     with tab_auditoria:
-        st.subheader("🕵️ Sala de Espera: Revisión de Anomalías")
+        st.subheader("Sala de Espera: Revisión de Anomalías")
         if st.session_state.get('tg_datos_cargados', False):
             df_fact = st.session_state['tg_fact']
+            ordenes_validas = st.session_state.get('tg_ordenes_validas', [])
             
-            # DASHBOARD PRELIMINAR
-            st.markdown("### 📊 Resumen Preliminar de Facturación")
+            st.markdown("### Resumen Preliminar de Facturación")
             col_a, col_b, col_c, col_d, col_e = st.columns(5)
             
             conteos = df_fact['Clasificacion'].value_counts()
             
-            col_a.metric("✅ Órdenes Listas", conteos.get("Orden Lista", 0))
-            col_b.metric("🛍️ Venta Directa", conteos.get("Venta Directa", 0))
-            col_c.metric("🛠️ Servicios", conteos.get("Servicios", 0))
-            col_d.metric("♻️ Reciclaje", conteos.get("Reciclaje", 0))
-            col_e.metric("⚠️ Huérfanas", conteos.get("Huérfana (Revisar)", 0))
+            col_a.metric("Órdenes Listas", conteos.get("Orden Lista", 0))
+            col_b.metric("Venta Directa", conteos.get("Venta Directa", 0))
+            col_c.metric("Servicios", conteos.get("Servicios", 0))
+            col_d.metric("Reciclaje", conteos.get("Reciclaje", 0))
+            col_e.metric("Huérfanas", conteos.get("Huérfana (Revisar)", 0))
             
             st.divider()
 
-            # SECCIÓN DE CORRECCIÓN (EL PURGATORIO)
             df_huerfanas_fact = df_fact[df_fact['Clasificacion'] == "Huérfana (Revisar)"].copy()
             
             if not df_huerfanas_fact.empty:
-                st.error(f"🚨 Tienes {len(df_huerfanas_fact)} facturas sin orden asignada. Revísalas aquí:")
+                st.error(f"Se requieren correcciones: {len(df_huerfanas_fact)} facturas sin orden asignada.")
                 
-                # Preparamos la tabla para edición
                 df_mostrar = df_huerfanas_fact[['Fecha', 'Numero', 'Descripcion', 'VentaNeta']].copy()
-                df_mostrar['Asignar_Orden_Manual'] = ""
+                df_mostrar['Accion'] = "Pendiente"
+                df_mostrar['Orden_SGT'] = ""
                 
                 editado = st.data_editor(
                     df_mostrar,
                     column_config={
-                        "Asignar_Orden_Manual": st.column_config.TextColumn(
-                            "Escribe la Orden (Ej: 1234-1234)", required=False
+                        "Accion": st.column_config.SelectboxColumn(
+                            "Acción a tomar",
+                            options=["Pendiente", "Asignar Orden", "Omitir / Eliminar"],
+                            required=True
+                        ),
+                        "Orden_SGT": st.column_config.TextColumn(
+                            "Orden SGT (Si aplica)", required=False
                         )
                     },
                     use_container_width=True,
                     hide_index=True
                 )
                 
-                if st.button("💾 Guardar Correcciones y Enviar a Liquidación", type="primary"):
-                    st.success("Lógica de guardado en construcción para Fase 3...")
+                if st.button("Guardar Correcciones y Validar", type="primary"):
+                    errores = []
+                    for index, row in editado.iterrows():
+                        if row['Accion'] == "Pendiente":
+                            errores.append(f"La factura {row['Numero']} sigue con estado 'Pendiente'.")
+                        elif row['Accion'] == "Asignar Orden":
+                            orden_input = str(row['Orden_SGT']).strip()
+                            if orden_input not in ordenes_validas:
+                                errores.append(f"Factura {row['Numero']}: La orden '{orden_input}' no existe en el archivo SGT.")
+                    
+                    if errores:
+                        st.error("Corrija los siguientes errores para poder avanzar:")
+                        for error in errores:
+                            st.write(f"- {error}")
+                        st.session_state['fase2_aprobada'] = False
+                    else:
+                        st.success("Validación exitosa. Todas las reglas se cumplen. Puede proceder a Liquidación.")
+                        st.session_state['fase2_aprobada'] = True
+                        # Aquí se actualizaría el dataframe original con las correcciones en una versión final.
             else:
-                st.success("✨ ¡Todo limpio! No hay facturas huérfanas este mes.")
+                st.success("Validación completada. No hay facturas huérfanas.")
+                st.session_state['fase2_aprobada'] = True
 
         else:
-            st.write("Por favor, carga los archivos y escanea en la pestaña 1.")
+            st.write("Carga los archivos en la pestaña 1 para iniciar.")
 
     # ==========================================
     # PESTAÑA 3: LIQUIDACIÓN
     # ==========================================
     with tab_liquidacion:
-        st.subheader("💰 Liquidación y Partidas Contables")
-        if st.session_state.get('tg_datos_cargados', False):
-            st.info("Aquí elegiremos qué liquidar al 100% o parcial, calcularemos el costo por hora de la planilla, y descargaremos el Excel con las partidas.")
+        st.subheader("Liquidación y Partidas Contables")
+        if st.session_state.get('fase2_aprobada', False):
+            st.info("El sistema está listo para calcular el prorrateo de mano de obra y generar las partidas.")
+            if st.button("Ejecutar Liquidación"):
+                st.write("Lógica de cálculo matemático en construcción.")
         else:
-            st.write("Completa los pasos anteriores.")
+            st.warning("Debe completar y validar la pestaña '2. Auditoría' antes de ejecutar la liquidación.")
