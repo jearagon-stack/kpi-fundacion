@@ -19,3 +19,4 @@ def mostrar_modulo_costos():
         modulo_cafeteria()
     elif unidad == "🖨️ Talleres Gráficos":
         modulo_talleres()
+        # Truco para forzar actualizacion de cache
