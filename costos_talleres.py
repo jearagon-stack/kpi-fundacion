@@ -460,14 +460,6 @@ def mostrar_modulo_costos():
                     costo_total_mo = st.session_state['tg_costo_planilla']
                     df_cuentas_mo = st.session_state['tg_df_cuentas']
                     
-                    # ----------------------------------------
-                    # SEGUROS DE VIDA (Para evitar el NameError)
-                    # ----------------------------------------
-                    costos_mo_por_orden = {}
-                    costos_mp_por_orden = {}
-                    ordenes_facturadas = []
-                    historial_saldos = {}
-                    
                     def agregar_linea(lista, cuenta, descripcion, debe, haber):
                         if round(debe, 2) > 0 or round(haber, 2) > 0:
                             lista.append({
@@ -481,6 +473,7 @@ def mostrar_modulo_costos():
                     # ----------------------------------------
                     # RECUPERACIÓN DE SALDOS ANTERIORES
                     # ----------------------------------------
+                    historial_saldos = {}
                     if not df_wip_ant.empty:
                         col_ord = next((c for c in df_wip_ant.columns if 'ORDEN' in c.upper()), None)
                         col_saldo = next((c for c in df_wip_ant.columns if 'SALDO_FINAL_WIP' in c.upper() or 'TOTAL' in c.upper()), None)
@@ -500,11 +493,11 @@ def mostrar_modulo_costos():
                     # CALCULO DE HORAS Y COSTOS MP
                     # ----------------------------------------
                     col_horas = next((c for c in df_tiempos.columns if 'TOTALHORA' in c.upper().replace(' ', '')), None)
-                    if col_horas:
-                        horas_ordenes = procesar_costos_por_orden(df_tiempos, col_horas, es_horas=True)
-                        total_horas_validas = sum(horas_ordenes.values())
-                        costo_por_hora = (costo_total_mo / total_horas_validas) if total_horas_validas > 0 else 0
-                        costos_mo_por_orden = {orden: horas * costo_por_hora for orden, horas in horas_ordenes.items()}
+                    horas_ordenes = procesar_costos_por_orden(df_tiempos, col_horas, es_horas=True) if col_horas else {}
+                    total_horas_validas = sum(horas_ordenes.values())
+                    
+                    costo_por_hora = (costo_total_mo / total_horas_validas) if total_horas_validas > 0 else 0
+                    costos_mo_por_orden = {orden: horas * costo_por_hora for orden, horas in horas_ordenes.items()}
 
                     col_costo_mp = next((c for c in df_mp.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '') or 'COSTO' in c.upper()), None)
                     col_cat = next((c for c in df_mp.columns if 'CATEGOR' in c.upper()), 'Categoria')
@@ -532,9 +525,6 @@ def mostrar_modulo_costos():
                     df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista']
                     
                     if not df_wip_mp.empty:
-                        if col_costo_mp:
-                            costos_mp_por_orden = procesar_costos_por_orden(df_wip_mp, col_costo_mp)
-                            
                         resumen_wip_dict = {}
                         for _, r in df_wip_mp.iterrows():
                             monto = float(r[col_costo_mp])
@@ -617,6 +607,9 @@ def mostrar_modulo_costos():
                     # ----------------------------------------
                     # BODEGA VIRTUAL Y LIQUIDACIÓN (P5)
                     # ----------------------------------------
+                    costos_mp_por_orden = procesar_costos_por_orden(df_wip_mp, col_costo_mp) if col_costo_mp else {}
+                    
+                    ordenes_facturadas = []
                     for _, row in df_fact[df_fact['Clasificacion'] == 'Orden Lista'].iterrows():
                         if 'Orden_SGT' in row and str(row['Orden_SGT']).strip() != "":
                             ordenes_facturadas.append(limpiar_orden(row['Orden_SGT']))
@@ -625,7 +618,6 @@ def mostrar_modulo_costos():
                                 if limpiar_orden(o) != "": 
                                     ordenes_facturadas.append(limpiar_orden(o))
                                     
-                    # BLINDAJE FINAL: Actualización de conjunto seguro
                     todas_las_ordenes = set()
                     todas_las_ordenes.update(costos_mo_por_orden.keys())
                     todas_las_ordenes.update(costos_mp_por_orden.keys())
@@ -687,7 +679,7 @@ def mostrar_modulo_costos():
                     st.success("✅ Cálculos completados. Partidas listas para descarga.")
 
             # ==========================================
-            # SECCIÓN DE DESCARGAS
+            # SECCIÓN DE DESCARGAS Y REPORTES
             # ==========================================
             if st.session_state.get('liquidacion_lista', False):
                 st.markdown("### 📥 Descarga de Partidas (Nexus)")
