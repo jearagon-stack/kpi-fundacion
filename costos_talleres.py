@@ -91,7 +91,7 @@ def mostrar_modulo_costos():
                                 return "Huérfana (Revisar)"
                             df_tiempos['Clasificacion'] = df_tiempos.apply(clasificar_tiempos, axis=1)
 
-                        # 4. TRASLADOS MATERIA PRIMA (Leyendo la columna "Concepto")
+                        # 4. TRASLADOS MATERIA PRIMA (Sin filtro automático de indirectos)
                         dfs_mp = [pd.read_excel(f, dtype=str) for f in arch_tras_mp]
                         df_mp = pd.concat(dfs_mp, ignore_index=True) if dfs_mp else pd.DataFrame()
                         
@@ -100,9 +100,7 @@ def mostrar_modulo_costos():
                         if not df_mp.empty and col_texto_mp in df_mp.columns:
                             df_mp['Ordenes_Detectadas'] = df_mp[col_texto_mp].apply(extraer_ordenes)
                             def clasificar_traslado(row):
-                                cat = str(row.get('Categoria', '')).upper()
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
-                                if any(k in cat for k in ["EMPAQUE", "LIMPIEZA", "REPUESTO", "REPUESTOS"]): return "Costo Indirecto (Válido)"
                                 return "Huérfana (Revisar)"
                             df_mp['Clasificacion'] = df_mp.apply(clasificar_traslado, axis=1)
 
@@ -161,7 +159,8 @@ def mostrar_modulo_costos():
 
                 if h_mp > 0:
                     with st.expander(f"📦 Traslados MP Huérfanos ({h_mp})", expanded=True):
-                        df_h_m = df_mp[df_mp['Clasificacion'] == "Huérfana (Revisar)"][['Numero', 'Concepto', 'Categoria']].copy()
+                        col_mostrar_mp = 'Concepto' if 'Concepto' in df_mp.columns else 'Descripcion'
+                        df_h_m = df_mp[df_mp['Clasificacion'] == "Huérfana (Revisar)"][['Numero', col_mostrar_mp, 'Categoria']].copy()
                         df_h_m['Accion'] = "Pendiente"
                         df_h_m['Orden_SGT'] = ""
                         ed_mp = st.data_editor(df_h_m, column_config=config_columnas, hide_index=True, key="ed_mp")
@@ -169,7 +168,6 @@ def mostrar_modulo_costos():
                 if st.button("💾 Guardar Decisiones y Validar", type="primary"):
                     errores = []
                     
-                    # Función para revisar cada tabla editada
                     def revisar_tabla(df_editado, nombre_tabla):
                         for i, row in df_editado.iterrows():
                             if row['Accion'] == "Pendiente":
@@ -227,7 +225,6 @@ def mostrar_modulo_costos():
                         })
                         
                         st.download_button("⬇️ Descargar Partidas", data=generar_excel_bytes(df_partidas), file_name="Partidas_TG.xlsx")
-                        st.balloons()
                     else:
                         st.warning("No hay horas válidas. Verifica el reporte.")
                 else:
