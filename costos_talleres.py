@@ -40,6 +40,14 @@ def tiene_orden_valida(ordenes_extraidas, ordenes_sgt):
         if o in ordenes_sgt: return True
     return False
 
+def buscar_valor_columna(row, df_cols, palabra_clave):
+    """Busca a la fuerza el valor en cualquier columna que contenga la palabra clave"""
+    valores = []
+    for col in df_cols:
+        if palabra_clave.upper() in str(col).upper():
+            valores.append(str(row[col]))
+    return " ".join(valores).upper()
+
 def generar_excel_bytes(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
@@ -100,11 +108,11 @@ def mostrar_modulo_costos():
 
         if arch_sgt and arch_fact and arch_tras_mp and arch_tiempos:
             if st.button("🔍 Escanear Archivos y Aplicar Filtros", type="primary", use_container_width=True):
-                with st.spinner("Limpiando y cruzando datos..."):
+                with st.spinner("Leyendo y cruzando datos con Escáner Indestructible..."):
                     try:
                         # 1. MAESTRO SGT
                         df_sgt = pd.read_excel(arch_sgt, dtype=str)
-                        df_sgt.columns = df_sgt.columns.str.strip() # Limpia espacios fantasma en las columnas
+                        df_sgt.columns = df_sgt.columns.str.strip()
                         ordenes_validas = df_sgt['Orden'].dropna().astype(str).str.strip().tolist() if 'Orden' in df_sgt.columns else []
 
                         # 2. FACTURACIÓN
@@ -136,39 +144,40 @@ def mostrar_modulo_costos():
                                 return "Huérfana (Revisar)"
                             df_tiempos['Clasificacion'] = df_tiempos.apply(clasificar_tiempos, axis=1)
 
-                        # 4. TRASLADOS MATERIA PRIMA
-                        dfs_mp = [pd.read_excel(f, dtype=str) for f in arch_tras_mp]
+                        # 4. TRASLADOS MATERIA PRIMA (Escáner Indestructible)
+                        dfs_mp = []
+                        for f in arch_tras_mp:
+                            d = pd.read_excel(f, dtype=str)
+                            d.columns = d.columns.str.strip()
+                            dfs_mp.append(d)
                         df_mp = pd.concat(dfs_mp, ignore_index=True) if dfs_mp else pd.DataFrame()
                         
                         if not df_mp.empty:
-                            df_mp.columns = df_mp.columns.str.strip() # Limpiamos espacios
-                            col_texto_mp = 'Concepto' if 'Concepto' in df_mp.columns else 'Descripcion'
+                            df_mp = df_mp.loc[:, ~df_mp.columns.duplicated()] # Borra columnas duplicadas de Excel
                             
-                            if col_texto_mp in df_mp.columns:
-                                df_mp['Ordenes_Detectadas'] = df_mp[col_texto_mp].apply(extraer_ordenes)
-                                def clasificar_traslado(row):
-                                    cat = str(row.get('Categoria', '')).upper().strip()
-                                    concepto = str(row.get(col_texto_mp, '')).upper()
+                            # Combina los textos de Concepto y Descripcion por si la orden está en cualquier lado
+                            df_mp['Texto_Para_Orden'] = df_mp.apply(lambda r: buscar_valor_columna(r, df_mp.columns, "CONCEPT") + " " + buscar_valor_columna(r, df_mp.columns, "DESCRIP"), axis=1)
+                            df_mp['Ordenes_Detectadas'] = df_mp['Texto_Para_Orden'].apply(extraer_ordenes)
+                            
+                            def clasificar_traslado(row):
+                                cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
+                                concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
+                                
+                                # EXCLUSIÓN SOHO/LIBRERÍA/UCA Y PRODUCTO TERMINADO
+                                if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]) or "PRODUCTO TERMINADO" in cat:
+                                    return "Omitido Automático"
                                     
-                                    # EXCLUSIÓN SOHO/LIBRERÍA/UCA Y PRODUCTO TERMINADO
-                                    if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]) or "PRODUCTO TERMINADO" in cat:
-                                        return "Omitido Automático"
-                                        
-                                    # Si tiene orden válida
-                                    if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): 
-                                        return "Orden Lista"
-                                    
-                                    # Si no está en SGT pero sí tiene una orden escrita -> Purgatorio (Para forzar orden antigua)
-                                    if len(row['Ordenes_Detectadas']) > 0:
-                                        return "Huérfana (Revisar)"
+                                if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
+                                
+                                if len(row['Ordenes_Detectadas']) > 0: return "Huérfana (Revisar)"
 
-                                    # Si NO tiene orden y es de estas categorías -> Costo Indirecto Automático
-                                    if any(k in cat for k in ["EMPAQUE", "LIMPIEZA", "REPUESTO", "REPUESTOS"]): 
-                                        return "Costo Indirecto (Automático)"
-                                        
-                                    # Cualquier otra cosa (Ej. Materia Prima sin orden)
-                                    return "Huérfana (Revisar)"
-                                df_mp['Clasificacion'] = df_mp.apply(clasificar_traslado, axis=1)
+                                # FILTRO INDESTRUCTIBLE
+                                if any(k in cat for k in ["EMPAQUE", "LIMPIEZA", "REPUESTO", "REPUESTOS"]): 
+                                    return "Costo Indirecto (Automático)"
+                                    
+                                return "Huérfana (Revisar)"
+                            
+                            df_mp['Clasificacion'] = df_mp.apply(clasificar_traslado, axis=1)
 
                         st.session_state['tg_fact'] = df_fact
                         st.session_state['tg_tiempos'] = df_tiempos
@@ -233,8 +242,12 @@ def mostrar_modulo_costos():
 
                 if h_mp > 0:
                     with st.expander(f"📦 Traslados MP Huérfanos ({h_mp})", expanded=True):
-                        col_mostrar_mp = 'Concepto' if 'Concepto' in df_mp.columns else 'Descripcion'
-                        cols_m = [c for c in ['Numero', col_mostrar_mp, 'Descripcion', 'Categoria'] if c in df_mp.columns]
+                        # Detectar columnas reales
+                        col_mostrar_mp = next((c for c in df_mp.columns if 'CONCEPT' in c.upper()), 'Numero')
+                        col_desc_mp = next((c for c in df_mp.columns if 'DESCRIP' in c.upper()), 'Numero')
+                        col_cat_mp = next((c for c in df_mp.columns if 'CATEGOR' in c.upper()), 'Categoria')
+                        
+                        cols_m = [c for c in ['Numero', col_mostrar_mp, col_desc_mp, col_cat_mp] if c in df_mp.columns]
                         df_h_m = prellenar_orden(df_mp, df_mp[df_mp['Clasificacion'] == "Huérfana (Revisar)"][cols_m].copy())
                         ed_mp = st.data_editor(df_h_m, column_config=config_columnas, hide_index=True, key="ed_mp")
 
