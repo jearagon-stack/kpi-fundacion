@@ -496,7 +496,7 @@ def mostrar_modulo_costos():
 
                     if col_costo_mp: df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
 
-                    # PARTIDA 1: NÓMINA (Ajustado a 110602)
+                    # PARTIDA 1: NÓMINA
                     p1 = []
                     agregar_linea(p1, "110602", "INYECCION MANO DE OBRA A PRODUCCION", costo_total_mo, 0)
                     for _, r in df_cuentas_mo.iterrows():
@@ -505,7 +505,7 @@ def mostrar_modulo_costos():
                         agregar_linea(p1, cuenta_cod, desc_cuenta, 0, r['Monto'])
                     st.session_state['tg_p1'] = pd.DataFrame(p1)
 
-                    # PARTIDA 2: MP A PROCESO (Ajustado a 110602)
+                    # PARTIDA 2: MP A PROCESO
                     p2 = []
                     df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista']
                     if not df_wip_mp.empty:
@@ -619,14 +619,25 @@ def mostrar_modulo_costos():
                     st.session_state['tg_df_wip'] = pd.DataFrame(filas_wip)
 
                     # ==================================================
-                    # PARTIDA 5: Liquidación Final (Ajustado)
+                    # PARTIDA 5: Liquidación Final 
+                    # Hack: Agregamos el diccionario directamente saltando el filtro de 0 de la funcion
                     # ==================================================
                     p5 = []
-                    if len(ordenes_facturadas) > 0 or total_liq_cv > 0:
-                        # CARGO (DEBE)
-                        agregar_linea(p5, "410104", "COSTO DE LO VENDIDO", total_liq_cv, 0)
-                        # ABONO (HABER)
-                        agregar_linea(p5, "110602", "INVENTARIO DE PRODUCTO EN PROCESO", 0, total_liq_cv)
+                    if len(ordenes_facturadas) > 0 or total_liq_cv >= 0:
+                        p5.append({
+                            "CUENTA": "410104", 
+                            "VACIO": "", 
+                            "CONCEPTO": "COSTO DE LO VENDIDO", 
+                            "DEBE": round(total_liq_cv, 2), 
+                            "HABER": 0.0
+                        })
+                        p5.append({
+                            "CUENTA": "110602", 
+                            "VACIO": "", 
+                            "CONCEPTO": "INVENTARIO DE PRODUCTO EN PROCESO", 
+                            "DEBE": 0.0, 
+                            "HABER": round(total_liq_cv, 2)
+                        })
                         
                     st.session_state['tg_p5'] = pd.DataFrame(p5)
                     st.session_state['hay_ordenes_facturadas'] = len(ordenes_facturadas) > 0
