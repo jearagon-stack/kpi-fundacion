@@ -141,10 +141,16 @@ def generar_excel_filtrado(df, nombre_hoja):
     return output.getvalue()
 
 def guardar_en_google_sheets(df_kardex, df_wip):
-    """Espacio reservado para la conexión a la base de datos"""
+    """Conexión real a Google Sheets usando streamlit_gsheets"""
     try:
-        # AQUI DEBES METER TU CODIGO DE CONEXION DE GOOGLE SHEETS
-        st.success("💾 ¡Datos guardados exitosamente en Google Sheets (Kardex y Saldos)!")
+        from streamlit_gsheets import GSheetsConnection
+        conn = st.connection("gsheets", type=GSheetsConnection)
+        
+        # Guardamos en las pestañas exactas
+        conn.update(worksheet="Kardex_Costos_TG", data=df_kardex)
+        conn.update(worksheet="Saldos_WIP_Resumen", data=df_wip)
+        
+        st.success("💾 ¡Datos sincronizados exitosamente con Google Sheets (Kardex y Saldos)!")
     except Exception as e:
         st.error(f"Error al intentar guardar en Google Sheets: {e}")
 
@@ -204,7 +210,6 @@ def mostrar_modulo_costos():
         with col2:
             arch_fact = st.file_uploader("4. Facturación del Mes", type=["xlsx"])
             arch_tras_pt = st.file_uploader("5. Traslados Internos PT", type=["xlsx"], accept_multiple_files=True)
-            # NUEVO: Input para leer el histórico
             arch_wip_ant = st.file_uploader("6. Saldos WIP Mes Anterior (Opcional)", type=["xlsx"])
 
         if arch_sgt and arch_fact and arch_tras_mp and arch_tiempos:
@@ -219,7 +224,8 @@ def mostrar_modulo_costos():
                             try:
                                 df_wip_ant = pd.read_excel(arch_wip_ant, dtype=str)
                                 df_wip_ant.columns = df_wip_ant.columns.str.strip()
-                            except: pass
+                            except: 
+                                pass
 
                         # -----------------------------
                         # 1. LECTURA MAESTRO SGT
@@ -241,12 +247,17 @@ def mostrar_modulo_costos():
                             desc = str(row.get('Descripcion', '')).upper()
                             cat = str(row.get('Categoria', '')).upper()
                             
-                            if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
-                            if "SERVICIO" in cat or "SERVICIO" in desc: return "Servicios"
-                            if any(k in desc for k in ["BANNER", "AFICHE", "CALENDARIO", "ROTULO"]): return "Venta Directa"
-                            if any(k in desc for k in ["RECICLAJE", "DESPERDICIO"]): return "Reciclaje"
+                            if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): 
+                                return "Orden Lista"
+                            if "SERVICIO" in cat or "SERVICIO" in desc: 
+                                return "Servicios"
+                            if any(k in desc for k in ["BANNER", "AFICHE", "CALENDARIO", "ROTULO"]): 
+                                return "Venta Directa"
+                            if any(k in desc for k in ["RECICLAJE", "DESPERDICIO"]): 
+                                return "Reciclaje"
                             
-                            if len(row['Ordenes_Detectadas']) > 0: return "Huérfana (Revisar)"
+                            if len(row['Ordenes_Detectadas']) > 0: 
+                                return "Huérfana (Revisar)"
                             return "Huérfana (Revisar)"
                             
                         df_fact['Clasificacion'] = df_fact.apply(clasificar_factura, axis=1)
@@ -475,9 +486,12 @@ def mostrar_modulo_costos():
                         if col_ord and col_saldo:
                             for _, r in df_wip_ant.iterrows():
                                 o = limpiar_orden(r[col_ord])
-                                if o == 'NAN' or o == '': continue
-                                try: val = float(r[col_saldo])
-                                except: val = 0.0
+                                if o == 'NAN' or o == '': 
+                                    continue
+                                try: 
+                                    val = float(r[col_saldo])
+                                except: 
+                                    val = 0.0
                                 if val > 0:
                                     historial_saldos[o] = val
 
@@ -599,8 +613,6 @@ def mostrar_modulo_costos():
                     # ----------------------------------------
                     # BODEGA VIRTUAL Y LIQUIDACIÓN (P5)
                     # ----------------------------------------
-                    costos_mp_por_orden = procesar_costos_por_orden(df_wip_mp, col_costo_mp) if col_costo_mp else {}
-                    
                     ordenes_facturadas = []
                     for _, row in df_fact[df_fact['Clasificacion'] == 'Orden Lista'].iterrows():
                         if 'Orden_SGT' in row and str(row['Orden_SGT']).strip() != "":
@@ -610,7 +622,6 @@ def mostrar_modulo_costos():
                                 if limpiar_orden(o) != "": 
                                     ordenes_facturadas.append(limpiar_orden(o))
                                     
-                    # Unimos: Ordenes con movimiento MO + Ordenes con mov MP + Ordenes facturadas + Ordenes del historico
                     todas_las_ordenes = set(list(costos_mo_por_orden.keys()) + list(costos_mp_por_orden.keys()) + ordenes_facturadas + list(historial_saldos.keys()))
                     
                     fecha_str = date.today().strftime("%d/%m/%Y")
@@ -659,7 +670,6 @@ def mostrar_modulo_costos():
                     p5 = []
                     if total_liq_cv > 0:
                         agregar_linea(p5, CUENTA_COSTO_VENTAS, "Inventario de Producto en Proceso", total_liq_cv, 0)
-                        # En base a tu contabilidad, la cuenta madre de WIP asume el abono
                         agregar_linea(p5, CUENTA_WIP_MP, "Liquidacion de OP Facturadas de Proceso", 0, total_liq_cv)
                         
                     st.session_state['tg_p5'] = pd.DataFrame(p5)
@@ -669,7 +679,7 @@ def mostrar_modulo_costos():
                     st.success("✅ Cálculos completados. Partidas listas para descarga.")
 
             # ==========================================
-            # SECCIÓN DE DESCARGAS
+            # SECCIÓN DE DESCARGAS Y REPORTES
             # ==========================================
             if st.session_state.get('liquidacion_lista', False):
                 st.markdown("### 📥 Descarga de Partidas (Nexus)")
