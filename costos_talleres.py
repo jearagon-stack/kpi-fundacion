@@ -4,6 +4,33 @@ import re
 import io
 from datetime import date
 
+# Lista maestra de cuentas extraída de tu Excel
+CUENTAS_MANO_OBRA = [
+    "41010201 Sueldo de personal de produccion",
+    "41010202001 Aguinaldo personal de produccion",
+    "41010202002 Vacaciones personal de produccion",
+    "41010202003 Complem. por incapacidad de produccion",
+    "41010202004 Indemnización personal de produccion",
+    "41010202005 ISSS Salud personal de produccion",
+    "41010202006 ISSS IVM personal de produccion",
+    "41010202007 AFP patronal personal de produccion",
+    "41010202008 INSAFORP personal de produccion",
+    "41010202009 ISSS UPIS patronal personal de produccion",
+    "41010202010 IPSFA patronal personal de produccion",
+    "41010202011 Horas Extras personal de produccion",
+    "41010202012 Horas Extras Nocturnas Personal de Produ",
+    "41010202013 Nocturnidad Personal de Produccion",
+    "41010203001 Aguinaldo complementario personal de produc",
+    "41010203002 Seguro de vida Empresas personal de produccio",
+    "41010203003 Seguro plan de salud privado personal de produ",
+    "41010203004 Bono de productividad",
+    "41010203005 Reconocimiento por antigüedad",
+    "41010203006 Subsidio",
+    "41010203007 Subsidio despensa",
+    "41010302005 Ayuda compra de uniformes personal de producc",
+    "41010203010 Subsidio Talleres Gráficos"
+]
+
 def extraer_ordenes(texto):
     if pd.isna(texto): return []
     return re.findall(r'\b\d{3,4}-\d{3,4}\b', str(texto))
@@ -41,20 +68,23 @@ def mostrar_modulo_costos():
 
         st.markdown("---")
         st.markdown("**Desglose de Mano de Obra (Planilla)**")
-        st.write("Ingresa las cuentas y montos correspondientes. El sistema sumará el total automáticamente.")
+        st.write("Agrega las filas necesarias, selecciona la cuenta en el menú desplegable y digita el monto.")
         
-        # Tabla dinámica para las cuentas de mano de obra
+        # Tabla dinámica con menú desplegable para las cuentas
         if 'df_cuentas_base' not in st.session_state:
             st.session_state['df_cuentas_base'] = pd.DataFrame([
-                {"Cuenta": "41010201 Sueldo de personal de produccion", "Monto": 0.0},
-                {"Cuenta": "41010205 ISSS Salud", "Monto": 0.0},
-                {"Cuenta": "41010207 AFP patronal", "Monto": 0.0}
+                {"Cuenta": "41010201 Sueldo de personal de produccion", "Monto": 0.0}
             ])
 
         df_cuentas_mo = st.data_editor(
             st.session_state['df_cuentas_base'],
             column_config={
-                "Cuenta": st.column_config.TextColumn("Cuenta / Descripción", required=True),
+                "Cuenta": st.column_config.SelectboxColumn(
+                    "Cuenta Contable",
+                    help="Selecciona la cuenta de la lista",
+                    options=CUENTAS_MANO_OBRA,
+                    required=True
+                ),
                 "Monto": st.column_config.NumberColumn("Monto ($)", min_value=0.0, format="$%.2f")
             },
             num_rows="dynamic",
@@ -131,7 +161,7 @@ def mostrar_modulo_costos():
                         st.session_state['tg_mp'] = df_mp
                         st.session_state['tg_ordenes_validas'] = ordenes_validas
                         st.session_state['tg_costo_planilla'] = costo_planilla
-                        st.session_state['tg_df_cuentas'] = df_cuentas_mo # Guardamos el desglose
+                        st.session_state['tg_df_cuentas'] = df_cuentas_mo 
                         st.session_state['tg_datos_cargados'] = True
                         st.session_state['fase2_aprobada'] = False
                         
@@ -242,10 +272,8 @@ def mostrar_modulo_costos():
                         col2.metric("Horas Válidas", f"{horas_totales_validas:,.2f} hrs")
                         col3.metric("Costo por Hora", f"${costo_por_hora:,.2f}/hr")
                         
-                        # Construcción de la partida contable
                         filas_partida = []
                         
-                        # 1. Cargo a Inventario en Proceso
                         filas_partida.append({
                             "Cuenta": "110602 - Inventario de Producto en Proceso",
                             "Debe": costo_total,
@@ -253,7 +281,6 @@ def mostrar_modulo_costos():
                             "Concepto": "Traslado de costo de nómina a proceso"
                         })
                         
-                        # 2. Abonos a las cuentas ingresadas en la tabla
                         for idx, row in df_cuentas.iterrows():
                             if row['Monto'] > 0:
                                 filas_partida.append({
