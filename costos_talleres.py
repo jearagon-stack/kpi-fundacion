@@ -496,7 +496,7 @@ def mostrar_modulo_costos():
 
                     if col_costo_mp: df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
 
-                    # PARTIDA 1: NÓMINA
+                    # PARTIDA 1: NÓMINA (Ajustado a 110602)
                     p1 = []
                     agregar_linea(p1, "110602", "INYECCION MANO DE OBRA A PRODUCCION", costo_total_mo, 0)
                     for _, r in df_cuentas_mo.iterrows():
@@ -505,7 +505,7 @@ def mostrar_modulo_costos():
                         agregar_linea(p1, cuenta_cod, desc_cuenta, 0, r['Monto'])
                     st.session_state['tg_p1'] = pd.DataFrame(p1)
 
-                    # PARTIDA 2: MP A PROCESO
+                    # PARTIDA 2: MP A PROCESO (Ajustado a 110602)
                     p2 = []
                     df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista']
                     if not df_wip_mp.empty:
@@ -619,7 +619,8 @@ def mostrar_modulo_costos():
                     st.session_state['tg_df_wip'] = pd.DataFrame(filas_wip)
 
                     # ==================================================
-                    # PARTIDA 5: Liquidación Final
+                    # PARTIDA 5: Liquidación Final (Ajustado)
+                    # ==================================================
                     p5 = []
                     if len(ordenes_facturadas) > 0 or total_liq_cv > 0:
                         # CARGO (DEBE)
@@ -650,7 +651,6 @@ def mostrar_modulo_costos():
                     if st.session_state['tg_p4_dict']: st.download_button("⬇️ 4. P. Traslados (Múltiples Hojas)", data=generar_nexus_bytes(st.session_state['tg_p4_dict']), file_name=f"4_Nex_Traslados_{mes_proceso}.xlsx")
                     else: st.info("Sin movimientos")
                 with c5:
-                    # AQUI YA NO HAY CONDICIONES QUE TE ESCONDAN EL BOTON
                     if not st.session_state['tg_p5'].empty:
                         st.download_button("⬇️ 5. P. Liquidación a Ventas", data=generar_nexus_bytes(st.session_state['tg_p5']), file_name=f"5_Nex_Liq_{mes_proceso}.xlsx")
                     else: st.info("Sin OP facturadas.")
