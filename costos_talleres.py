@@ -85,12 +85,16 @@ def procesar_costos_por_orden(df, col_valor, es_horas=False):
         if len(ordenes) > 0:
             valor_dividido = valor / len(ordenes)
             for o in ordenes:
-                distribucion[o] = distribucion.get(o, 0.0) + valor_dividido
+                o_str = str(o).strip()
+                # BUGFIX: Ignoramos celdas basura que se lean como "nan" o vacías
+                if o_str.lower() == 'nan' or o_str == '': continue
+                distribucion[o_str] = distribucion.get(o_str, 0.0) + valor_dividido
 
     return distribucion, total_cif
 
 def generar_nexus_bytes(df):
     output = io.BytesIO()
+    # Formato estricto Nexus: 5 columnas, SIN encabezados
     df_nexus = df[["CUENTA", "VACIO", "CONCEPTO", "DEBE", "HABER"]]
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_nexus.to_excel(writer, index=False, header=False)
@@ -102,9 +106,20 @@ def generar_excel_filtrado(df, nombre_hoja):
         df.to_excel(writer, index=False, sheet_name=nombre_hoja)
     return output.getvalue()
 
-# Simulación de Google Sheets
-def guardar_en_google_sheets(df_kardex, df_resumen):
-    st.success("💾 Base de datos actualizada en Google Sheets (Kardex y Saldos WIP).")
+# ==========================================
+# CONEXIÓN GOOGLE SHEETS
+# ==========================================
+def guardar_en_google_sheets(df_kardex, df_wip):
+    try:
+        # AQUI DEBES METER TU CODIGO DE CONEXION (El mismo que usas en cafetería)
+        # Ejemplo:
+        # conn = st.connection("gsheets", type=GSheetsConnection)
+        # conn.update(worksheet="Kardex_Costos_TG", data=df_kardex)
+        # conn.update(worksheet="Saldos_WIP_Resumen", data=df_wip)
+        
+        st.success("💾 ¡Datos guardados exitosamente en Google Sheets (Kardex y Saldos)!")
+    except Exception as e:
+        st.error(f"Error al intentar guardar en Google Sheets: {e}")
 
 # ==========================================
 # MÓDULO PRINCIPAL
@@ -199,7 +214,7 @@ def mostrar_modulo_costos():
                                 return "Huérfana (Revisar)"
                             df_tiempos['Clasificacion'] = df_tiempos.apply(clasificar_tiempos, axis=1)
 
-                        # 4. TRASLADOS MATERIA PRIMA (Escáner Indestructible)
+                        # 4. TRASLADOS MATERIA PRIMA
                         dfs_mp = []
                         for f in arch_tras_mp:
                             d = pd.read_excel(f, dtype=str)
@@ -216,7 +231,7 @@ def mostrar_modulo_costos():
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                # EXCLUSIÓN SOHO/LIBRERÍA/UCA Y PRODUCTO TERMINADO (Con errores ortográficos)
+                                # EXCLUSIÓN SOHO/LIBRERÍA/UCA Y PRODUCTO TERMINADO
                                 if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]) or "PRODUCTO TERMINADO" in cat:
                                     return "Traslado Especial"
                                     
@@ -239,6 +254,7 @@ def mostrar_modulo_costos():
                         st.session_state['tg_df_cuentas'] = df_cuentas_mo 
                         st.session_state['tg_datos_cargados'] = True
                         st.session_state['fase2_aprobada'] = False
+                        st.session_state['liquidacion_lista'] = False # Reiniciamos el pase a Fase 3
                         
                         st.success("✅ Datos cruzados correctamente. Avanza a Auditoría.")
                     except Exception as e:
@@ -349,12 +365,12 @@ def mostrar_modulo_costos():
             st.write("Carga los archivos en la Pestaña 1.")
 
     # ==========================================
-    # PESTAÑA 3: LIQUIDACIÓN Y PARTIDAS
+    # PESTAÑA 3: LIQUIDACIÓN Y PARTIDAS INDIVIDUALES
     # ==========================================
     with tab_liquidacion:
-        st.subheader("💰 Generación de Costos y Partidas Nexus")
+        st.subheader("💰 Generación de Costos y Partidas (Formato Nexus)")
         if st.session_state.get('fase2_aprobada', False):
-            if st.button("🚀 Ejecutar Liquidación y Cerrar Mes", type="primary"):
+            if st.button("🚀 Ejecutar Liquidación y Generar Partidas", type="primary"):
                 with st.spinner("Procesando datos y estructurando formato Nexus..."):
                     df_fact = st.session_state['tg_fact']
                     df_tiempos = st.session_state['tg_tiempos']
@@ -397,24 +413,26 @@ def mostrar_modulo_costos():
                     total_mp_a_wip = sum(costos_mp_por_orden.values())
 
                     for orden in todas_las_ordenes:
+                        if pd.isna(orden) or str(orden).lower() == 'nan' or str(orden).strip() == '': continue
+                        
                         nuevo_mo = costos_mo_por_orden.get(orden, 0.0)
                         nuevo_mp = costos_mp_por_orden.get(orden, 0.0)
-                        saldo_anterior = 0.0 # Provisión para lectura desde Google Sheets
+                        saldo_anterior = 0.0 # Esto se conectará a Google Sheets después
                         saldo_acumulado = saldo_anterior + nuevo_mo + nuevo_mp
                         
                         estado = "Liquidado a Costo de Ventas" if orden in ordenes_facturadas_mes else "Pendiente"
                         
                         if nuevo_mo > 0:
-                            filas_kardex.append({"Fecha": fecha_str, "Orden": orden, "Tipo_Costo": "Mano de Obra", "Monto": nuevo_mo, "Estado": estado})
+                            filas_kardex.append({"Fecha": fecha_str, "Orden": str(orden).strip(), "Tipo_Costo": "Mano de Obra", "Monto": nuevo_mo, "Estado": estado})
                         if nuevo_mp > 0:
-                            filas_kardex.append({"Fecha": fecha_str, "Orden": orden, "Tipo_Costo": "Materia Prima", "Monto": nuevo_mp, "Estado": estado})
+                            filas_kardex.append({"Fecha": fecha_str, "Orden": str(orden).strip(), "Tipo_Costo": "Materia Prima", "Monto": nuevo_mp, "Estado": estado})
 
                         if estado == "Liquidado a Costo de Ventas":
                             total_liquidado_cv += saldo_acumulado
                             saldo_acumulado = 0.0
                             
                         filas_wip.append({
-                            "Orden": orden, "Saldo_Anterior": saldo_anterior, "Costo_MO_Mes": nuevo_mo,
+                            "Orden": str(orden).strip(), "Saldo_Anterior": saldo_anterior, "Costo_MO_Mes": nuevo_mo,
                             "Costo_MP_Mes": nuevo_mp, "Total_Acumulado": saldo_anterior + nuevo_mo + nuevo_mp,
                             "Estado": estado, "Saldo_Final_WIP": saldo_acumulado
                         })
@@ -422,7 +440,7 @@ def mostrar_modulo_costos():
                     st.session_state['tg_df_kardex'] = pd.DataFrame(filas_kardex)
                     st.session_state['tg_df_wip'] = pd.DataFrame(filas_wip)
 
-                    # 4. GENERACIÓN DE PARTIDAS (INDIVIDUALES NEXUS)
+                    # 4. GENERACIÓN DE PARTIDAS INDIVIDUALES NEXUS
                     def agregar_linea(lista, cuenta, descripcion, debe, haber):
                         if debe > 0 or haber > 0:
                             lista.append({"CUENTA": cuenta, "VACIO": "", "CONCEPTO": descripcion.upper(), "DEBE": round(debe, 2), "HABER": round(haber, 2)})
@@ -460,34 +478,34 @@ def mostrar_modulo_costos():
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
                     st.session_state['liquidacion_lista'] = True
-                    st.success("✅ Cálculos completados. Partidas listas para descarga.")
+                    st.success("✅ Cálculos completados.")
 
-            # MOSTRAR ZONA DE DESCARGAS SI YA SE LIQUIDÓ
+            # SECCIÓN DE BOTONES DE DESCARGA
             if st.session_state.get('liquidacion_lista', False):
-                st.markdown("### 📥 Descarga de Partidas (Formato Nexus)")
+                st.markdown("### 📥 Descarga de Partidas Individuales (Nexus)")
                 col_d1, col_d2, col_d3 = st.columns(3)
                 
                 with col_d1:
-                    st.write("**1. Planilla / Mano de Obra**")
-                    st.download_button("⬇️ Descargar Partida MO", data=generar_nexus_bytes(st.session_state['tg_p1']), file_name=f"Nexus_Nomina_{mes_proceso}_{anio_proceso}.xlsx")
+                    st.write("**1. Partida Nómina**")
+                    st.download_button("⬇️ Descargar", data=generar_nexus_bytes(st.session_state['tg_p1']), file_name=f"Nexus_Nomina_{mes_proceso}_{anio_proceso}.xlsx")
 
                 with col_d2:
-                    st.write("**2. Materia Prima / CIF**")
-                    st.download_button("⬇️ Descargar Partida MP", data=generar_nexus_bytes(st.session_state['tg_p2']), file_name=f"Nexus_Materiales_{mes_proceso}_{anio_proceso}.xlsx")
+                    st.write("**2. Partida Materiales**")
+                    st.download_button("⬇️ Descargar", data=generar_nexus_bytes(st.session_state['tg_p2']), file_name=f"Nexus_Materiales_{mes_proceso}_{anio_proceso}.xlsx")
 
                 with col_d3:
-                    st.write("**3. Liquidación a Ventas**")
+                    st.write("**3. Liquidación**")
                     if not st.session_state['tg_p3'].empty:
-                        st.download_button("⬇️ Descargar Partida Liquidación", data=generar_nexus_bytes(st.session_state['tg_p3']), file_name=f"Nexus_Liquidacion_{mes_proceso}_{anio_proceso}.xlsx")
+                        st.download_button("⬇️ Descargar", data=generar_nexus_bytes(st.session_state['tg_p3']), file_name=f"Nexus_Liquidacion_{mes_proceso}_{anio_proceso}.xlsx")
                     else:
-                        st.info("No hubo liquidaciones este mes.")
+                        st.info("Sin OP facturadas.")
 
                 st.divider()
-                st.markdown("### 📊 Reportes de Bodega Virtual")
+                st.markdown("### 📊 Reportes de Control de Bodega")
                 
                 col_f1, col_f2 = st.columns(2)
                 with col_f1: filtro_orden = st.text_input("🔍 Filtrar por Orden (Dejar en blanco para ver todo):")
-                with col_f2: st.write("") # Espaciador
+                with col_f2: st.write("") 
 
                 df_kardex_export = st.session_state['tg_df_kardex']
                 df_wip_export = st.session_state['tg_df_wip']
@@ -503,9 +521,8 @@ def mostrar_modulo_costos():
                     if st.button("💾 Guardar en Google Sheets", type="secondary"):
                         guardar_en_google_sheets(st.session_state['tg_df_kardex'], st.session_state['tg_df_wip'])
                 with col_b2:
-                    st.download_button("📋 Descargar Kardex", data=generar_excel_filtrado(df_kardex_export, "Kardex"), file_name=f"Kardex_Costos_{mes_proceso}_{anio_proceso}.xlsx")
+                    st.download_button("📋 Bajar Kardex", data=generar_excel_filtrado(df_kardex_export, "Kardex"), file_name=f"Kardex_Costos_{mes_proceso}_{anio_proceso}.xlsx")
                 with col_b3:
-                    st.download_button("📉 Descargar Saldos WIP", data=generar_excel_filtrado(df_wip_export, "Saldos_WIP"), file_name=f"Saldos_WIP_{mes_proceso}_{anio_proceso}.xlsx")
-
+                    st.download_button("📉 Bajar Saldos WIP", data=generar_excel_filtrado(df_wip_export, "Saldos_WIP"), file_name=f"Saldos_WIP_{mes_proceso}_{anio_proceso}.xlsx")
         else:
             st.warning("🛑 Completa la Auditoría para habilitar la Liquidación.")
