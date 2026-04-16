@@ -128,6 +128,7 @@ def generar_nexus_bytes(df_or_dict):
             for sheet_name, df in df_or_dict.items():
                 if not df.empty:
                     df_nexus = df[["CUENTA", "VACIO", "CONCEPTO", "DEBE", "HABER"]]
+                    # Recortamos el nombre de la hoja a 30 caracteres máximo (límite de Excel)
                     df_nexus.to_excel(writer, index=False, header=False, sheet_name=str(sheet_name)[:30])
         else:
             df_nexus = df_or_dict[["CUENTA", "VACIO", "CONCEPTO", "DEBE", "HABER"]]
@@ -145,6 +146,7 @@ def generar_excel_filtrado(df, nombre_hoja):
 def guardar_en_google_sheets(df_kardex, df_wip):
     """Espacio reservado para la conexión a la base de datos"""
     try:
+        # AQUI DEBES METER TU CODIGO DE CONEXION DE GOOGLE SHEETS
         st.success("💾 ¡Datos guardados exitosamente en Google Sheets (Kardex y Saldos)!")
     except Exception as e:
         st.error(f"Error al intentar guardar en Google Sheets: {e}")
@@ -598,16 +600,25 @@ def mostrar_modulo_costos():
                     # BODEGA VIRTUAL Y LIQUIDACIÓN (P5)
                     costos_mp_por_orden = procesar_costos_por_orden(df_wip_mp, col_costo_mp) if col_costo_mp else {}
                     ordenes_facturadas = []
+                    mapa_facturas = {} # DICCIONARIO PARA GUARDAR EL NUMERO DE FACTURA
+                    
+                    # BUSCAR COLUMNA DE NUMERO DE FACTURA
+                    col_num_fact = next((c for c in df_fact.columns if 'NUME' in c.upper() or 'FACT' in c.upper()), 'Numero')
                     
                     for _, row in df_fact[df_fact['Clasificacion'] == 'Orden Lista'].iterrows():
-                        # LA VACUNA FANTASMA APLICADA A VENTAS
+                        num_factura = str(row.get(col_num_fact, ''))
+                        
                         orden_sgt_val = str(row.get('Orden_SGT', '')).strip().upper()
                         if orden_sgt_val not in ["", "NAN", "NONE", "NAT"]:
-                            ordenes_facturadas.append(limpiar_orden(row['Orden_SGT']))
+                            ord_limpia = limpiar_orden(row['Orden_SGT'])
+                            ordenes_facturadas.append(ord_limpia)
+                            mapa_facturas[ord_limpia] = num_factura
                         else:
                             for o in row.get('Ordenes_Detectadas', []):
                                 if limpiar_orden(o) != "": 
-                                    ordenes_facturadas.append(limpiar_orden(o))
+                                    ord_limpia = limpiar_orden(o)
+                                    ordenes_facturadas.append(ord_limpia)
+                                    mapa_facturas[ord_limpia] = num_factura
                                     
                     # BLINDAJE FINAL
                     todas_las_ordenes = set()
@@ -629,16 +640,17 @@ def mostrar_modulo_costos():
                         saldo_acumulado = saldo_anterior + nuevo_mo + nuevo_mp
                         
                         estado = "Liquidado a Costo de Ventas" if ord_cln in ordenes_facturadas else "Pendiente"
+                        factura_asignada = mapa_facturas.get(ord_cln, "") # RESCATAMOS LA FACTURA
                         
-                        if nuevo_mo > 0: filas_kardex.append({"Fecha": fecha_str, "Orden": ord_cln, "Tipo_Costo": "Mano de Obra", "Monto": nuevo_mo, "Estado": estado})
-                        if nuevo_mp > 0: filas_kardex.append({"Fecha": fecha_str, "Orden": ord_cln, "Tipo_Costo": "Materia Prima", "Monto": nuevo_mp, "Estado": estado})
+                        if nuevo_mo > 0: filas_kardex.append({"Fecha": fecha_str, "Orden": ord_cln, "Factura": factura_asignada, "Tipo_Costo": "Mano de Obra", "Monto": nuevo_mo, "Estado": estado})
+                        if nuevo_mp > 0: filas_kardex.append({"Fecha": fecha_str, "Orden": ord_cln, "Factura": factura_asignada, "Tipo_Costo": "Materia Prima", "Monto": nuevo_mp, "Estado": estado})
 
                         if estado == "Liquidado a Costo de Ventas":
                             total_liq_cv += saldo_acumulado
                             saldo_acumulado = 0.0
                             
                         filas_wip.append({
-                            "Orden": ord_cln, "Saldo_Anterior": saldo_anterior, "Costo_MO_Mes": nuevo_mo, "Costo_MP_Mes": nuevo_mp, "Total_Acumulado": saldo_anterior + nuevo_mo + nuevo_mp, "Estado": estado, "Saldo_Final_WIP": saldo_acumulado
+                            "Orden": ord_cln, "Factura": factura_asignada, "Saldo_Anterior": saldo_anterior, "Costo_MO_Mes": nuevo_mo, "Costo_MP_Mes": nuevo_mp, "Total_Acumulado": saldo_anterior + nuevo_mo + nuevo_mp, "Estado": estado, "Saldo_Final_WIP": saldo_acumulado
                         })
                     
                     st.session_state['tg_df_kardex'] = pd.DataFrame(filas_kardex)
