@@ -62,14 +62,14 @@ def limpiar_orden(o):
     return str(o).strip().replace(" ", "").upper()
 
 def extraer_ordenes(texto):
-    """Busca patrones de órdenes incluso si tienen espacios en medio"""
+    """Busca patrones de órdenes (Ej. 1234-5678) incluso si tienen espacios en medio"""
     if pd.isna(texto): 
         return []
     ordenes = re.findall(r'\b\d{3,4}\s*-\s*\d{3,4}\b', str(texto))
     return [limpiar_orden(o) for o in ordenes]
 
 def tiene_orden_valida(ordenes_extraidas, ordenes_sgt):
-    """Verifica si alguna de las órdenes extraídas existe en el maestro de válidas"""
+    """Verifica si alguna de las órdenes extraídas existe en el maestro SGT"""
     for o in ordenes_extraidas:
         if o in ordenes_sgt: 
             return True
@@ -125,7 +125,6 @@ def generar_nexus_bytes(df_or_dict):
             for sheet_name, df in df_or_dict.items():
                 if not df.empty:
                     df_nexus = df[["CUENTA", "VACIO", "CONCEPTO", "DEBE", "HABER"]]
-                    # Recortamos el nombre de la hoja a 30 caracteres máximo (límite de Excel)
                     df_nexus.to_excel(writer, index=False, header=False, sheet_name=str(sheet_name)[:30])
         else:
             df_nexus = df_or_dict[["CUENTA", "VACIO", "CONCEPTO", "DEBE", "HABER"]]
@@ -143,7 +142,6 @@ def generar_excel_filtrado(df, nombre_hoja):
 def guardar_en_google_sheets(df_kardex, df_wip):
     """Espacio reservado para la conexión a la base de datos"""
     try:
-        # AQUI DEBES METER TU CODIGO DE CONEXION DE GOOGLE SHEETS
         st.success("💾 ¡Datos guardados exitosamente en Google Sheets (Kardex y Saldos)!")
     except Exception as e:
         st.error(f"Error al intentar guardar en Google Sheets: {e}")
@@ -208,7 +206,7 @@ def mostrar_modulo_costos():
 
         if arch_sgt and arch_fact and arch_tras_mp and arch_tiempos:
             if st.button("🔍 Escanear Archivos y Aplicar Filtros", type="primary", use_container_width=True):
-                with st.spinner("Leyendo y cruzando datos..."):
+                with st.spinner("Leyendo y cruzando datos (Regla de Oro SGT)..."):
                     try:
                         ordenes_validas_set = set()
 
@@ -229,7 +227,7 @@ def mostrar_modulo_costos():
                                 pass
 
                         # -----------------------------
-                        # 1. LECTURA MAESTRO SGT
+                        # 1. LECTURA MAESTRO SGT (EL PASE VIP)
                         # -----------------------------
                         df_sgt = pd.read_excel(arch_sgt, dtype=str)
                         df_sgt.columns = df_sgt.columns.str.strip()
@@ -237,6 +235,8 @@ def mostrar_modulo_costos():
                             for o in df_sgt['Orden'].dropna():
                                 oc = limpiar_orden(o)
                                 if oc != "" and oc != "NAN": ordenes_validas_set.add(oc)
+
+                        ordenes_validas = list(ordenes_validas_set)
 
                         # -----------------------------
                         # 2. LECTURA FACTURACIÓN
@@ -247,18 +247,14 @@ def mostrar_modulo_costos():
                         df_fact['Texto_Completo_Factura'] = df_fact.apply(lambda r: " ".join(r.dropna().astype(str)), axis=1)
                         df_fact['Ordenes_Detectadas'] = df_fact['Texto_Completo_Factura'].apply(extraer_ordenes)
                         
-                        # ¡AQUÍ ESTÁ LA MAGIA! Agregamos las órdenes facturadas al registro de válidas
-                        for ords in df_fact['Ordenes_Detectadas']:
-                            ordenes_validas_set.update(ords)
-
-                        ordenes_validas = list(ordenes_validas_set)
-                        
                         def clasificar_factura(row):
                             desc = str(row.get('Descripcion', '')).upper()
                             cat = str(row.get('Categoria', '')).upper()
                             
+                            # REGLA DE ORO: Si tiene el formato exacto Y está en SGT -> Pasa
                             if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): 
                                 return "Orden Lista"
+                            
                             if "SERVICIO" in cat or "SERVICIO" in desc: 
                                 return "Servicios"
                             if any(k in desc for k in ["BANNER", "AFICHE", "CALENDARIO", "ROTULO"]): 
@@ -266,8 +262,7 @@ def mostrar_modulo_costos():
                             if any(k in desc for k in ["RECICLAJE", "DESPERDICIO"]): 
                                 return "Reciclaje"
                             
-                            if len(row['Ordenes_Detectadas']) > 0: 
-                                return "Huérfana (Revisar)"
+                            # Si no está en SGT o el texto es dudoso -> A la Aduana (Auditoría)
                             return "Huérfana (Revisar)"
                             
                         df_fact['Clasificacion'] = df_fact.apply(clasificar_factura, axis=1)
@@ -321,9 +316,6 @@ def mostrar_modulo_costos():
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): 
                                     return "Orden Lista"
                                     
-                                if len(row['Ordenes_Detectadas']) > 0: 
-                                    return "Huérfana (Revisar)"
-                                    
                                 if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]) or "PRODUCTO TERMINADO" in cat:
                                     return "Traslado Especial"
                                     
@@ -349,13 +341,13 @@ def mostrar_modulo_costos():
                         st.session_state['fase2_aprobada'] = False
                         st.session_state['liquidacion_lista'] = False
                         
-                        st.success("✅ Datos cruzados correctamente. Avanza a Auditoría.")
+                        st.success("✅ Datos cruzados bajo Regla de SGT. Avanza a Auditoría.")
                         
                     except Exception as e:
                         st.error(f"Error al leer archivos: {e}")
 
     # ==========================================
-    # PESTAÑA 2: AUDITORÍA (CONTROL MANUAL)
+    # PESTAÑA 2: AUDITORÍA (LA ADUANA MANUAL)
     # ==========================================
     with tab_auditoria:
         st.subheader("🕵️ Panel de Revisión Manual")
@@ -373,7 +365,7 @@ def mostrar_modulo_costos():
             total_huerfanas = h_fact + h_tiempos + h_mp
 
             if total_huerfanas > 0:
-                st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
+                st.error(f"🚨 Tienes {total_huerfanas} registros que no coinciden con SGT y necesitan tu decisión.")
                 
                 opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Omitir"]
                 config_col = {
@@ -395,7 +387,7 @@ def mostrar_modulo_costos():
                     return df_huerf
 
                 if h_fact > 0:
-                    with st.expander(f"🧾 Facturas Pendientes ({h_fact})", expanded=True):
+                    with st.expander(f"🧾 Facturas Pendientes o Dudosas ({h_fact})", expanded=True):
                         cols_f = [c for c in ['Fecha', 'Numero', 'Descripcion', 'VentaNeta'] if c in df_fact.columns]
                         df_h_f = df_fact[df_fact['Clasificacion'] == "Huérfana (Revisar)"][cols_f].copy()
                         ed_fact = st.data_editor(prellenar_orden(df_fact, df_h_f), column_config=config_col, hide_index=True, key="ed_f", use_container_width=True)
@@ -430,8 +422,9 @@ def mostrar_modulo_costos():
                                 if orden == "": 
                                     errores.append(f"En {nom}, dejaste el código en blanco.")
                                 elif acc == "Asignar Orden" and orden not in ordenes_validas: 
-                                    errores.append(f"En {nom}, '{orden}' NO existe en los archivos válidos.")
+                                    errores.append(f"En {nom}, '{orden}' NO existe en SGT. Usa 'Forzar Orden' si estás seguro.")
                                 else: 
+                                    # Si el analista usa "Forzar Orden", el sistema confía y la pasa como válida
                                     df_orig.at[i, 'Clasificacion'] = "Orden Lista"
                                     df_orig.at[i, 'Orden_SGT'] = orden
                             elif acc == "Costo Indirecto": 
@@ -592,6 +585,9 @@ def mostrar_modulo_costos():
                     # BODEGA VIRTUAL Y LIQUIDACIÓN (P5)
                     costos_mp_por_orden = procesar_costos_por_orden(df_wip_mp, col_costo_mp) if col_costo_mp else {}
                     ordenes_facturadas = []
+                    
+                    # Recolectamos TODAS las órdenes que pasaron como "Orden Lista" en Facturación
+                    # Ya sea porque el sistema las cruzó con SGT, o porque tú usaste "Forzar Orden" en la Auditoría
                     for _, row in df_fact[df_fact['Clasificacion'] == 'Orden Lista'].iterrows():
                         if 'Orden_SGT' in row and str(row['Orden_SGT']).strip() != "":
                             ordenes_facturadas.append(limpiar_orden(row['Orden_SGT']))
