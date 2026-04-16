@@ -128,7 +128,6 @@ def generar_nexus_bytes(df_or_dict):
             for sheet_name, df in df_or_dict.items():
                 if not df.empty:
                     df_nexus = df[["CUENTA", "VACIO", "CONCEPTO", "DEBE", "HABER"]]
-                    # Recortamos el nombre de la hoja a 30 caracteres máximo (límite de Excel)
                     df_nexus.to_excel(writer, index=False, header=False, sheet_name=str(sheet_name)[:30])
         else:
             df_nexus = df_or_dict[["CUENTA", "VACIO", "CONCEPTO", "DEBE", "HABER"]]
@@ -146,7 +145,6 @@ def generar_excel_filtrado(df, nombre_hoja):
 def guardar_en_google_sheets(df_kardex, df_wip):
     """Espacio reservado para la conexión a la base de datos"""
     try:
-        # AQUI DEBES METER TU CODIGO DE CONEXION DE GOOGLE SHEETS
         st.success("💾 ¡Datos guardados exitosamente en Google Sheets (Kardex y Saldos)!")
     except Exception as e:
         st.error(f"Error al intentar guardar en Google Sheets: {e}")
@@ -237,7 +235,6 @@ def mostrar_modulo_costos():
                         # -----------------------------
                         df_sgt = pd.read_excel(arch_sgt, dtype=str)
                         df_sgt.columns = df_sgt.columns.str.strip()
-                        # Buscar columna que contenga la palabra ORDEN
                         col_ord_sgt = next((c for c in df_sgt.columns if 'ORDEN' in c.upper()), None)
                         if col_ord_sgt:
                             for o in df_sgt[col_ord_sgt].dropna():
@@ -260,7 +257,7 @@ def mostrar_modulo_costos():
                             desc = str(row.get('Descripcion', '')).upper()
                             cat = str(row.get('Categoria', '')).upper()
                             
-                            # REGLA: Si trae formato de orden, pasa directo (no depende de SGT)
+                            # REGLA DE ORO DE VENTAS: Pasa directo, no depende de SGT (órdenes cerradas)
                             if len(row['Ordenes_Detectadas']) > 0: 
                                 return "Orden Lista"
                                 
@@ -289,9 +286,12 @@ def mostrar_modulo_costos():
                                 if obs in ['', 'nan', 'None', '--', '-'] or pd.isna(row.get('Observaciones')): 
                                     return "Omitido Automático"
                                     
-                                # REGLA: Si trae formato de orden, pasa directo.
-                                if len(row['Ordenes_Detectadas']) > 0: 
-                                    return "Orden Lista"
+                                # REGLA DE ORO DE COSTOS: Depende de SGT
+                                if len(row['Ordenes_Detectadas']) > 0:
+                                    if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): 
+                                        return "Orden Lista"
+                                    else:
+                                        return "Huérfana (Revisar)" # ¡Va a la Auditoría!
                                         
                                 return "Huérfana (Revisar)"
                                 
@@ -323,10 +323,13 @@ def mostrar_modulo_costos():
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                # REGLA: Si trae formato de orden, pasa directo.
-                                if len(row['Ordenes_Detectadas']) > 0: 
-                                    return "Orden Lista"
-                                    
+                                # REGLA DE ORO DE COSTOS: Depende de SGT
+                                if len(row['Ordenes_Detectadas']) > 0:
+                                    if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): 
+                                        return "Orden Lista"
+                                    else:
+                                        return "Huérfana (Revisar)" # ¡Va a la Auditoría!
+                                        
                                 if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]) or "PRODUCTO TERMINADO" in cat:
                                     return "Traslado Especial"
                                     
@@ -376,7 +379,7 @@ def mostrar_modulo_costos():
             total_huerfanas = h_fact + h_tiempos + h_mp
 
             if total_huerfanas > 0:
-                st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
+                st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión (Ej. Costos sin SGT).")
                 
                 opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Omitir"]
                 config_col = {
@@ -398,7 +401,7 @@ def mostrar_modulo_costos():
                     return df_huerf
 
                 if h_fact > 0:
-                    with st.expander(f"🧾 Facturas Pendientes ({h_fact})", expanded=True):
+                    with st.expander(f"🧾 Facturas Pendientes o Dudosas ({h_fact})", expanded=True):
                         cols_f = [c for c in ['Fecha', 'Numero', 'Descripcion', 'VentaNeta'] if c in df_fact.columns]
                         df_h_f = df_fact[df_fact['Clasificacion'] == "Huérfana (Revisar)"][cols_f].copy()
                         ed_fact = st.data_editor(prellenar_orden(df_fact, df_h_f), column_config=config_col, hide_index=True, key="ed_f", use_container_width=True)
@@ -432,6 +435,8 @@ def mostrar_modulo_costos():
                                 orden = limpiar_orden(row['Orden_SGT'])
                                 if orden == "": 
                                     errores.append(f"En {nom}, dejaste el código en blanco.")
+                                elif acc == "Asignar Orden" and orden not in ordenes_validas:
+                                    errores.append(f"En {nom}, la orden '{orden}' NO existe en SGT. Usa 'Forzar Orden' si estás seguro.")
                                 else: 
                                     df_orig.at[i, 'Clasificacion'] = "Orden Lista"
                                     df_orig.at[i, 'Orden_SGT'] = orden
@@ -593,8 +598,9 @@ def mostrar_modulo_costos():
                     # BODEGA VIRTUAL Y LIQUIDACIÓN (P5)
                     costos_mp_por_orden = procesar_costos_por_orden(df_wip_mp, col_costo_mp) if col_costo_mp else {}
                     ordenes_facturadas = []
+                    
                     for _, row in df_fact[df_fact['Clasificacion'] == 'Orden Lista'].iterrows():
-                        # LA MISMA VACUNA PARA VENTAS
+                        # LA VACUNA FANTASMA APLICADA A VENTAS
                         orden_sgt_val = str(row.get('Orden_SGT', '')).strip().upper()
                         if orden_sgt_val not in ["", "NAN", "NONE", "NAT"]:
                             ordenes_facturadas.append(limpiar_orden(row['Orden_SGT']))
