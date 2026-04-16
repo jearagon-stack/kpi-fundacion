@@ -143,7 +143,6 @@ def generar_excel_filtrado(df, nombre_hoja):
 def guardar_en_google_sheets(df_kardex, df_wip):
     """Espacio reservado para la conexión a la base de datos"""
     try:
-        # AQUI DEBES METER TU CODIGO DE CONEXION DE GOOGLE SHEETS
         st.success("💾 ¡Datos guardados exitosamente en Google Sheets (Kardex y Saldos)!")
     except Exception as e:
         st.error(f"Error al intentar guardar en Google Sheets: {e}")
@@ -597,8 +596,8 @@ def mostrar_modulo_costos():
                         ord_cln = limpiar_orden(orden)
                         if ord_cln == 'NAN' or ord_cln == '': continue
                         
-                        nuevo_mo = costos_mo_por_orden.get(orden, 0.0)
-                        nuevo_mp = costos_mp_por_orden.get(orden, 0.0)
+                        nuevo_mo = costos_mo_por_orden.get(ord_cln, 0.0)
+                        nuevo_mp = costos_mp_por_orden.get(ord_cln, 0.0)
                         saldo_anterior = historial_saldos.get(ord_cln, 0.0)
                         saldo_acumulado = saldo_anterior + nuevo_mo + nuevo_mp
                         
@@ -619,11 +618,10 @@ def mostrar_modulo_costos():
                     st.session_state['tg_df_wip'] = pd.DataFrame(filas_wip)
 
                     # ==================================================
-                    # PARTIDA 5: Liquidación Final 
-                    # Hack: Agregamos el diccionario directamente saltando el filtro de 0 de la funcion
+                    # PARTIDA 5: Liquidación Final
                     # ==================================================
                     p5 = []
-                    if len(ordenes_facturadas) > 0 or total_liq_cv >= 0:
+                    if len(ordenes_facturadas) > 0 or total_liq_cv > 0:
                         p5.append({
                             "CUENTA": "410104", 
                             "VACIO": "", 
@@ -641,9 +639,10 @@ def mostrar_modulo_costos():
                         
                     st.session_state['tg_p5'] = pd.DataFrame(p5)
                     st.session_state['hay_ordenes_facturadas'] = len(ordenes_facturadas) > 0
+                    st.session_state['total_liquidad_display'] = total_liq_cv
 
                     st.session_state['liquidacion_lista'] = True
-                    st.success("✅ Cálculos completados. Partidas listas para descarga.")
+                    st.success(f"✅ Cálculos completados. Total a liquidar en Partida 5: ${total_liq_cv:,.2f}")
 
             # DESCARGAS
             if st.session_state.get('liquidacion_lista', False):
@@ -659,11 +658,16 @@ def mostrar_modulo_costos():
 
                 c4, c5, c6 = st.columns(3)
                 with c4:
-                    if st.session_state['tg_p4_dict']: st.download_button("⬇️ 4. P. Traslados (Múltiples Hojas)", data=generar_nexus_bytes(st.session_state['tg_p4_dict']), file_name=f"4_Nex_Traslados_{mes_proceso}.xlsx")
+                    if st.session_state['tg_p4_dict']: st.download_button("⬇️ 4. P. Traslados", data=generar_nexus_bytes(st.session_state['tg_p4_dict']), file_name=f"4_Nex_Traslados_{mes_proceso}.xlsx")
                     else: st.info("Sin movimientos")
                 with c5:
                     if not st.session_state['tg_p5'].empty:
-                        st.download_button("⬇️ 5. P. Liquidación a Ventas", data=generar_nexus_bytes(st.session_state['tg_p5']), file_name=f"5_Nex_Liq_{mes_proceso}.xlsx")
+                        monto_mostrar = st.session_state.get('total_liquidad_display', 0.0)
+                        st.download_button(
+                            f"⬇️ 5. P. Liquidación (${monto_mostrar:,.2f})", 
+                            data=generar_nexus_bytes(st.session_state['tg_p5']), 
+                            file_name=f"Partida5_Liquidacion_Mes_{mes_proceso}.xlsx"
+                        )
                     else: st.info("Sin OP facturadas.")
                 with c6: st.empty()
 
