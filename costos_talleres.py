@@ -69,7 +69,7 @@ def extraer_ordenes(texto):
     return [limpiar_orden(o) for o in ordenes]
 
 def tiene_orden_valida(ordenes_extraidas, ordenes_sgt):
-    """Verifica si alguna de las órdenes extraídas existe en el maestro SGT"""
+    """Verifica si alguna de las órdenes extraídas existe en el maestro de válidas"""
     for o in ordenes_extraidas:
         if o in ordenes_sgt: 
             return True
@@ -143,6 +143,7 @@ def generar_excel_filtrado(df, nombre_hoja):
 def guardar_en_google_sheets(df_kardex, df_wip):
     """Espacio reservado para la conexión a la base de datos"""
     try:
+        # AQUI DEBES METER TU CODIGO DE CONEXION DE GOOGLE SHEETS
         st.success("💾 ¡Datos guardados exitosamente en Google Sheets (Kardex y Saldos)!")
     except Exception as e:
         st.error(f"Error al intentar guardar en Google Sheets: {e}")
@@ -209,6 +210,8 @@ def mostrar_modulo_costos():
             if st.button("🔍 Escanear Archivos y Aplicar Filtros", type="primary", use_container_width=True):
                 with st.spinner("Leyendo y cruzando datos..."):
                     try:
+                        ordenes_validas_set = set()
+
                         # -----------------------------
                         # 0. LECTURA HISTÓRICO WIP
                         # -----------------------------
@@ -217,6 +220,11 @@ def mostrar_modulo_costos():
                             try:
                                 df_wip_ant = pd.read_excel(arch_wip_ant, dtype=str)
                                 df_wip_ant.columns = df_wip_ant.columns.str.strip()
+                                col_ord = next((c for c in df_wip_ant.columns if 'ORDEN' in c.upper()), None)
+                                if col_ord:
+                                    for o in df_wip_ant[col_ord].dropna():
+                                        oc = limpiar_orden(o)
+                                        if oc != "" and oc != "NAN": ordenes_validas_set.add(oc)
                             except: 
                                 pass
 
@@ -225,7 +233,10 @@ def mostrar_modulo_costos():
                         # -----------------------------
                         df_sgt = pd.read_excel(arch_sgt, dtype=str)
                         df_sgt.columns = df_sgt.columns.str.strip()
-                        ordenes_validas = [limpiar_orden(o) for o in df_sgt['Orden'].dropna()] if 'Orden' in df_sgt.columns else []
+                        if 'Orden' in df_sgt.columns:
+                            for o in df_sgt['Orden'].dropna():
+                                oc = limpiar_orden(o)
+                                if oc != "" and oc != "NAN": ordenes_validas_set.add(oc)
 
                         # -----------------------------
                         # 2. LECTURA FACTURACIÓN
@@ -235,6 +246,12 @@ def mostrar_modulo_costos():
                         
                         df_fact['Texto_Completo_Factura'] = df_fact.apply(lambda r: " ".join(r.dropna().astype(str)), axis=1)
                         df_fact['Ordenes_Detectadas'] = df_fact['Texto_Completo_Factura'].apply(extraer_ordenes)
+                        
+                        # ¡AQUÍ ESTÁ LA MAGIA! Agregamos las órdenes facturadas al registro de válidas
+                        for ords in df_fact['Ordenes_Detectadas']:
+                            ordenes_validas_set.update(ords)
+
+                        ordenes_validas = list(ordenes_validas_set)
                         
                         def clasificar_factura(row):
                             desc = str(row.get('Descripcion', '')).upper()
@@ -413,7 +430,7 @@ def mostrar_modulo_costos():
                                 if orden == "": 
                                     errores.append(f"En {nom}, dejaste el código en blanco.")
                                 elif acc == "Asignar Orden" and orden not in ordenes_validas: 
-                                    errores.append(f"En {nom}, '{orden}' NO existe en SGT.")
+                                    errores.append(f"En {nom}, '{orden}' NO existe en los archivos válidos.")
                                 else: 
                                     df_orig.at[i, 'Clasificacion'] = "Orden Lista"
                                     df_orig.at[i, 'Orden_SGT'] = orden
@@ -618,10 +635,10 @@ def mostrar_modulo_costos():
                     st.session_state['tg_df_wip'] = pd.DataFrame(filas_wip)
 
                     # ==================================================
-                    # PARTIDA 5: Liquidación Final
+                    # PARTIDA 5: Liquidación Final 
                     # ==================================================
                     p5 = []
-                    if len(ordenes_facturadas) > 0 or total_liq_cv > 0:
+                    if len(ordenes_facturadas) > 0 or total_liq_cv >= 0:
                         p5.append({
                             "CUENTA": "410104", 
                             "VACIO": "", 
