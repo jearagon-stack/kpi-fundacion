@@ -1,17 +1,12 @@
 import streamlit as st
 
-# Importaciones de los módulos (AQUÍ ESTÁ LA CORRECCIÓN DE costs_library)
+# Solo importamos de manera obligatoria los que ya sabemos que existen al 100%
 from costos_cafeteria import mostrar_modulo_costos as modulo_cafeteria
 from costos_talleres import mostrar_modulo_costos as modulo_talleres
 from costs_library import mostrar_modulo_libreria as modulo_libreria
-from costs_soho import mostrar_modulo_soho as modulo_soho
-from costs_terraza import mostrar_modulo_terraza as modulo_terraza
-from costs_campus import mostrar_modulo_campus as modulo_campus
-from costs_despensa import mostrar_modulo_despensa as modulo_despensa
-from costs_gerencia import mostrar_modulo_gerencia as modulo_gerencia
 
 def mostrar_modulo_costos():
-    # El Menú con todas las unidades nuevas
+    # El Menú completo
     unidad = st.radio(
         "🎯 Selecciona la Unidad de Negocio a evaluar:",
         [
@@ -29,7 +24,7 @@ def mostrar_modulo_costos():
     
     st.markdown("---")
 
-    # Lógica de ruteo
+    # Lógica de ruteo con protección (Try/Except) para evitar caídas
     if unidad == "☕ Cafetería":
         modulo_cafeteria()
     elif unidad == "🖨️ Talleres":
@@ -37,12 +32,32 @@ def mostrar_modulo_costos():
     elif unidad == "📚 Librería":
         modulo_libreria()
     elif unidad == "🏢 Centro Soho":
-        modulo_soho()
+        try:
+            from costs_soho import mostrar_modulo_soho
+            mostrar_modulo_soho()
+        except ImportError:
+            st.warning("⚠️ El archivo 'costs_soho.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
     elif unidad == "🌅 Terraza":
-        modulo_terraza()
+        try:
+            from costs_terraza import mostrar_modulo_terraza
+            mostrar_modulo_terraza()
+        except ImportError:
+            st.warning("⚠️ El archivo 'costs_terraza.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
     elif unidad == "🏫 CID Campus":
-        modulo_campus()
+        try:
+            from costs_campus import mostrar_modulo_campus
+            mostrar_modulo_campus()
+        except ImportError:
+            st.warning("⚠️ El archivo 'costs_campus.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
     elif unidad == "🛒 Despensa":
-        modulo_despensa()
+        try:
+            from costs_despensa import mostrar_modulo_despensa
+            mostrar_modulo_despensa()
+        except ImportError:
+            st.warning("⚠️ El archivo 'costs_despensa.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
     elif unidad == "💼 Gerencia Comercial":
-        modulo_gerencia()
+        try:
+            from costs_gerencia import mostrar_modulo_gerencia
+            mostrar_modulo_gerencia()
+        except ImportError:
+            st.warning("⚠️ El archivo 'costs_gerencia.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
