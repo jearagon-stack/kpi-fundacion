@@ -149,7 +149,6 @@ def mostrar_modulo_costos():
             if not df_hist_tras.empty:
                 df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0.0)
                 
-                # LA SOLUCIÓN MAESTRA: Este filtro_base ya existía y es perfecto.
                 if es_consolidado:
                     meses_indices = [list(meses_texto.keys())[list(meses_texto.values()).index(m)] for m in nombres_meses]
                     filtro_base = (pd.to_numeric(df_hist_tras['Mes'], errors='coerce').isin(meses_indices)) & \
@@ -161,7 +160,6 @@ def mostrar_modulo_costos():
                 mask_dest = df_hist_tras['Destino'].apply(lambda x: es_de_unidad(x, unidad_cierre))
                 mask_orig = df_hist_tras['Origen'].apply(lambda x: es_de_unidad(x, unidad_cierre))
                 
-                # Ahora amarramos el filtro_base exacto de meses a los orígenes y destinos
                 f_t_in = filtro_base & mask_dest
                 f_t_out = filtro_base & mask_orig
 
@@ -272,7 +270,16 @@ def mostrar_modulo_costos():
                                         df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, regexCantCompras), errors='coerce').fillna(0.0)
                                         df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, regexMontoCompras), errors='coerce').fillna(0.0)
                                         df_comp_unitario = df_temp_com.groupby('Codigo').agg({'Monto_Mes': 'sum', 'Unidades_Mes': 'sum'}).reset_index()
-                                        df_comp_unitario['Costo_Baseline'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
+                                        df_comp_unitario['Compras_Promedio'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
+                                    except: pass
+
+                                df_ini_unitario = pd.DataFrame()
+                                if not df_ini_m.empty:
+                                    df_temp_ini = df_ini_m.copy()
+                                    try:
+                                        regexCostoUnitIni = [['COSTO', 'U'], ['PRECIO', 'U']]
+                                        df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, regexCostoUnitIni), errors='coerce').fillna(0.0)
+                                        df_ini_unitario = df_temp_ini.groupby('Codigo')['Costo_Inicial'].max().reset_index()
                                     except: pass
 
                                 df_inv_actual = pd.DataFrame()
@@ -286,12 +293,18 @@ def mostrar_modulo_costos():
 
                                 df_var_costos = pd.DataFrame()
                                 if not df_comp_unitario.empty and not df_inv_actual.empty:
-                                    df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Costo_Baseline']], on='Codigo', how='inner')
+                                    df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Compras_Promedio']], on='Codigo', how='inner')
                                     df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0]
-                                    df_var_costos = df_var_costos.rename(columns={'Costo_Baseline': 'Valor_Inicial', 'Costo_Unitario_Actual': 'Costo_Actual'})
-                                    df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Valor_Inicial'].replace(0, 1)) - 1
+                                    
+                                    if not df_ini_unitario.empty:
+                                        df_var_costos = pd.merge(df_var_costos, df_ini_unitario[['Codigo', 'Costo_Inicial']], on='Codigo', how='left')
+                                    else:
+                                        df_var_costos['Costo_Inicial'] = 0.0
+                                        
+                                    df_var_costos = df_var_costos.rename(columns={'Costo_Unitario_Actual': 'Costo_Actual'})
+                                    df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
                                     df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
-                                    df_var_costos = df_var_costos[['Codigo', 'Producto', 'Valor_Inicial', 'Costo_Actual', 'Variacion_Porcentual']]
+                                    df_var_costos = df_var_costos[['Codigo', 'Producto', 'Costo_Inicial', 'Compras_Promedio', 'Costo_Actual', 'Variacion_Porcentual']]
 
                                 st.session_state['memoria_cierre'] = {
                                     'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
@@ -432,7 +445,16 @@ def mostrar_modulo_costos():
                                     df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, regexCantCompras), errors='coerce').fillna(0.0)
                                     df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, regexMontoCompras), errors='coerce').fillna(0.0)
                                     df_comp_unitario = df_temp_com.groupby('Codigo').agg({'Monto_Mes': 'sum', 'Unidades_Mes': 'sum'}).reset_index()
-                                    df_comp_unitario['Costo_Baseline'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
+                                    df_comp_unitario['Compras_Promedio'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
+                                except: pass
+
+                            df_ini_unitario = pd.DataFrame()
+                            if not df_ini_m.empty:
+                                df_temp_ini = df_ini_m.copy()
+                                try:
+                                    regexCostoUnitIni = [['COSTO', 'U'], ['PRECIO', 'U']]
+                                    df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, regexCostoUnitIni), errors='coerce').fillna(0.0)
+                                    df_ini_unitario = df_temp_ini.groupby('Codigo')['Costo_Inicial'].max().reset_index()
                                 except: pass
 
                             df_inv_actual = pd.DataFrame()
@@ -446,12 +468,18 @@ def mostrar_modulo_costos():
 
                             df_var_costos = pd.DataFrame()
                             if not df_comp_unitario.empty and not df_inv_actual.empty:
-                                df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Costo_Baseline']], on='Codigo', how='inner')
+                                df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Compras_Promedio']], on='Codigo', how='inner')
                                 df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0]
-                                df_var_costos = df_var_costos.rename(columns={'Costo_Baseline': 'Valor_Inicial', 'Costo_Unitario_Actual': 'Costo_Actual'})
-                                df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Valor_Inicial'].replace(0, 1)) - 1
+                                
+                                if not df_ini_unitario.empty:
+                                    df_var_costos = pd.merge(df_var_costos, df_ini_unitario[['Codigo', 'Costo_Inicial']], on='Codigo', how='left')
+                                else:
+                                    df_var_costos['Costo_Inicial'] = 0.0
+                                    
+                                df_var_costos = df_var_costos.rename(columns={'Costo_Unitario_Actual': 'Costo_Actual'})
+                                df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
                                 df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
-                                df_var_costos = df_var_costos[['Codigo', 'Producto', 'Valor_Inicial', 'Costo_Actual', 'Variacion_Porcentual']]
+                                df_var_costos = df_var_costos[['Codigo', 'Producto', 'Costo_Inicial', 'Compras_Promedio', 'Costo_Actual', 'Variacion_Porcentual']]
 
                             st.session_state['memoria_cierre'] = {
                                 'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
