@@ -1,4 +1,4 @@
-import streamlit as st
+    import streamlit as st
 import pandas as pd
 import io
 from datetime import date
@@ -60,6 +60,7 @@ def gen_excels_memory(partidas_dict, mes_proceso):
             for sheet_name, partidas_list in tabs_dict.items():
                 if not partidas_list: continue
                 df_nexus = pd.DataFrame(partidas_list)
+                
                 # Agrupación por cuenta y concepto para Nexus
                 df_grouped = df_nexus.groupby(["CUENTA", "VACIO", "CONCEPTO", "AUXILIAR"], as_index=False)[["DEBE", "HABER"]].sum()
                 df_grouped = df_grouped[(df_grouped["DEBE"] > 0) | (df_grouped["HABER"] > 0)]
@@ -122,12 +123,12 @@ def mostrar_modulo_libreria():
                         sender_desc = raw_sender if raw_sender else "ORIGEN"
                         receiver_desc = raw_receiver if raw_receiver else "DESTINO"
 
-                        # A. AJUSTES (Separados por pestaña y sumando el costo como LIBRERÍA CENTRAL)
+                        # A. AJUSTES
                         if 'AJUS' in tipo or (not ('TRASLAD' in tipo or (raw_sender and raw_receiver)) and 'CONSIGNACION' not in category):
-                            if is_receiver_lib: # Entrada por ajuste
+                            if is_receiver_lib:
                                 desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                 partidas_dict["AJUSTES"]["Entradas_por_Ajuste"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
-                            else: # Salida por ajuste
+                            else:
                                 desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                 partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
 
@@ -151,18 +152,19 @@ def mostrar_modulo_libreria():
                                     tab_name = "Salidas_Consignacion"
                                     desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                 
-                                # Espacio invisible para generar la doble partida idéntica sin que Nexus sume todo en 2 líneas
-                                desc_rev = desc + " " 
-                                
                                 if tab_name not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_name] = []
-                                partidas_dict["CONSIGNACION"][tab_name].extend([
-                                    # Partida Original
-                                    gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender),
-                                    gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender),
-                                    # Partida Efecto Contrario (Se lee igual pero contablemente revierte)
-                                    gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_rev, total, 0, raw_sender),
-                                    gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_rev, 0, total, raw_sender)
-                                ])
+                                
+                                # Partida Original
+                                p1 = gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender)
+                                p2 = gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender)
+                                
+                                # Partida Efecto Contrario: Se agrega el espacio posterior a la limpieza para separar las líneas
+                                p3 = gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc, total, 0, raw_sender)
+                                p3["CONCEPTO"] += " "
+                                p4 = gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc, 0, total, raw_sender)
+                                p4["CONCEPTO"] += " "
+                                
+                                partidas_dict["CONSIGNACION"][tab_name].extend([p1, p2, p3, p4])
 
                         # C. TRASLADOS ESTÁNDAR
                         elif is_sender_lib:
