@@ -2,7 +2,7 @@ import streamlit as st
 import urllib.parse
 import pandas as pd
 from datetime import datetime, timedelta
-import auth, gastos, ventas, costos, validacion  # <--- Importamos el nuevo módulo
+import auth, gastos, ventas, costos, validacion, costs_library  # <--- Aquí agregamos costs_library
 from utils import conectar_hoja, obtener_dataframe
 
 st.set_page_config(page_title="Auditoría DTE Pro", layout="wide")
@@ -78,8 +78,8 @@ if not st.session_state.logged_in:
 # --- Sidebar y Menú ---
 with st.sidebar:
     st.title("Menú Principal")
-    # Agregamos la opción de VALIDACIÓN DE COSTOS al menú
-    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS"]
+    # <--- Aquí agregamos "LIBRERÍA" al menú de opciones
+    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "LIBRERÍA"]
     
     if st.session_state.rol_actual == "ADMIN":
         opciones_menu.append("CONFIGURACIÓN")
@@ -123,7 +123,10 @@ elif opcion == "KPI DE VENTAS":
 elif opcion == "CONTABILIDAD DE COSTOS":
     costos.mostrar_modulo_costos()
 elif opcion == "VALIDACIÓN DE COSTOS":
-    validacion.mostrar_modulo_validacion()  # <--- Llamada al nuevo módulo independiente
+    validacion.mostrar_modulo_validacion()
+# <--- Aquí agregamos la llamada al nuevo módulo de Librería
+elif opcion == "LIBRERÍA":
+    costs_library.mostrar_modulo_libreria() 
 elif opcion == "CONFIGURACIÓN":
     st.title("⚙️ Configuración del Sistema")
     st.markdown("Desde aquí puedes administrar los accesos a la plataforma de forma rápida.")
