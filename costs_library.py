@@ -105,7 +105,7 @@ def mostrar_modulo_libreria():
                     partidas_dict = {
                         "TRASLADOS": {},
                         "AJUSTES": {"Entradas_por_Ajuste": [], "Salidas_por_Ajuste": []},
-                        "CONSIGNACION": {"Consignacion": []}
+                        "CONSIGNACION": {}
                     }
 
                     for _, row in df.iterrows():
@@ -122,29 +122,49 @@ def mostrar_modulo_libreria():
                         sender_desc = raw_sender if raw_sender else "ORIGEN"
                         receiver_desc = raw_receiver if raw_receiver else "DESTINO"
 
-                        # A. AJUSTES (Separados por pestaña)
+                        # A. AJUSTES (Separados por pestaña y sumando el costo como LIBRERÍA CENTRAL)
                         if 'AJUS' in tipo or (not ('TRASLAD' in tipo or (raw_sender and raw_receiver)) and 'CONSIGNACION' not in category):
                             if is_receiver_lib: # Entrada por ajuste
-                                desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                 partidas_dict["AJUSTES"]["Entradas_por_Ajuste"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
                             else: # Salida por ajuste
-                                desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE {sender_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                 partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
 
-                        # B. CONSIGNACIÓN (Doble efecto entre cuentas 7101 y 8101)
-                        elif 'CONSIGNACION' in category and is_sender_lib:
-                            desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION DE {sender_desc}, MES {mes_proceso} DE {anio_proceso}."
-                            desc_rev = f"REVERSION POR EFECTO CONTRARIO DE {tipo} CONSIGNACION {sender_desc}, MES {mes_proceso} DE {anio_proceso}."
-                            partidas_dict["CONSIGNACION"]["Consignacion"].extend([
-                                # Partida Original
-                                gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender),
-                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender),
-                                # Partida Efecto Contrario
-                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_rev, total, 0, raw_sender),
-                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_rev, 0, total, raw_sender)
-                            ])
+                        # B. CONSIGNACIÓN
+                        elif 'CONSIGNACION' in category:
+                            # 1. Entradas de Consignación
+                            if is_receiver_lib and not is_sender_lib:
+                                desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                if "Entradas_Consignacion" not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"]["Entradas_Consignacion"] = []
+                                partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
+                                    gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
+                                    gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
+                                ])
+                            # 2. Salidas o Traslados de Consignación
+                            elif is_sender_lib:
+                                es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
+                                if es_traslado and receiver_desc != "DESTINO":
+                                    tab_name = receiver_desc
+                                    desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                else:
+                                    tab_name = "Salidas_Consignacion"
+                                    desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                
+                                # Espacio invisible para generar la doble partida idéntica sin que Nexus sume todo en 2 líneas
+                                desc_rev = desc + " " 
+                                
+                                if tab_name not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_name] = []
+                                partidas_dict["CONSIGNACION"][tab_name].extend([
+                                    # Partida Original
+                                    gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender),
+                                    gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender),
+                                    # Partida Efecto Contrario (Se lee igual pero contablemente revierte)
+                                    gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_rev, total, 0, raw_sender),
+                                    gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_rev, 0, total, raw_sender)
+                                ])
 
-                        # C. TRASLADOS ESTÁNDAR (Doble partida en la misma hoja por destino)
+                        # C. TRASLADOS ESTÁNDAR
                         elif is_sender_lib:
                             if receiver_desc not in partidas_dict["TRASLADOS"]: partidas_dict["TRASLADOS"][receiver_desc] = []
                             d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTO DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
