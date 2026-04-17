@@ -758,4 +758,4 @@ def mostrar_modulo_costos():
                         
                         st.download_button(f"⬇️ Descargar Partida ({m_cons}/{a_cons})", generar_excel_bytes(p_v_h), f"H_P1_{m_cons}_{a_cons}.xlsx", key="btn_h_descarga")
         else:
-            st.info("No hay cierres previos registrados en el historial.")
+            st.info("No hay cierres previos registrados en el histsrial.")
