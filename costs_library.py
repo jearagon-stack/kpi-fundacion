@@ -49,7 +49,8 @@ def gen_excels_memory(partidas_dict, mes_proceso):
     nombres_amigables = {
         "TRASLADOS": "Traslados_y_Recepciones",
         "AJUSTES": "Ajustes_de_Inventario",
-        "CONSIGNACION": "Movimientos_Consignacion"
+        "CONSIGNACION": "Movimientos_Consignacion",
+        "VENTAS_CONSIGNACION": "Ventas_Consignacion"
     }
     
     for categoria, tabs_dict in partidas_dict.items():
@@ -77,7 +78,7 @@ def gen_excels_memory(partidas_dict, mes_proceso):
 # ==========================================
 def mostrar_modulo_libreria():
     st.title("📚 Módulo de Inventarios - Librería")
-    st.info("Automatización de Partidas Contables de Inventario.")
+    st.info("Automatización de Partidas Contables de Inventario y Ventas.")
 
     tab_carga, tab_liquidacion = st.tabs(["📥 1. Carga de Datos", "💰 2. Partidas y Nexus"])
 
@@ -88,93 +89,137 @@ def mostrar_modulo_libreria():
         with col_m2: anio_proceso = st.number_input("Año:", min_value=2024, value=date.today().year, key="y_lib")
 
         st.markdown("---")
-        arch_mov_inv = st.file_uploader("Subir Reporte de Movimientos", type=["xls", "xlsx"])
-        btn_scan = st.button("🔍 Procesar Auditoría", type="primary", use_container_width=True)
+        st.subheader("Archivos Base")
+        
+        col_f1, col_f2 = st.columns(2)
+        with col_f1:
+            arch_mov_inv = st.file_uploader("1. Reporte de Movimientos (Inventario)", type=["xls", "xlsx"], key="file_inv_lib")
+        with col_f2:
+            arch_ventas = st.file_uploader("2. Reporte de Ventas (Consignación)", type=["xls", "xlsx"], key="file_ven_lib")
 
-        if arch_mov_inv and btn_scan:
-            with st.spinner("Analizando movimientos..."):
+        btn_scan = st.button("🔍 Procesar Auditoría", type="primary", use_container_width=True, key="btn_lib")
+
+        if btn_scan:
+            if not arch_mov_inv and not arch_ventas:
+                st.warning("⚠️ Debes subir al menos un archivo para procesar.")
+                return
+
+            with st.spinner("Analizando información..."):
                 try:
-                    df = pd.read_excel(arch_mov_inv, dtype=str)
-                    df.columns = df.columns.str.strip()
-                    c_tipo = next((c for c in df.columns if 'TIPO' in c.upper() or 'CONCEPT' in c.upper()), None)
-                    c_sender = next((c for c in df.columns if 'SALIDA' in c.upper().replace(' ', '')), None)
-                    c_receiver = next((c for c in df.columns if 'INGRESO' in c.upper().replace(' ', '')), None)
-                    c_category = next((c for c in df.columns if 'CATEGOR' in c.upper()), 'Categoria')
-                    c_total = next((c for c in df.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '') or 'COSTO' in c.upper()), 'PrecioTotal')
-                    
-                    df[c_total] = pd.to_numeric(df[c_total], errors='coerce').fillna(0)
                     partidas_dict = {
                         "TRASLADOS": {},
                         "AJUSTES": {"Entradas_por_Ajuste": [], "Salidas_por_Ajuste": []},
-                        "CONSIGNACION": {}
+                        "CONSIGNACION": {},
+                        "VENTAS_CONSIGNACION": {}
                     }
 
-                    for _, row in df.iterrows():
-                        raw_sender, raw_receiver = clean_value(row[c_sender]), clean_value(row[c_receiver])
-                        tipo, category, total = clean_value(row[c_tipo]), clean_value(row[c_category]), float(row[c_total])
-                        if total == 0: continue
-
-                        is_sender_lib, is_receiver_lib = raw_sender in UNIDADES_LIBRERIA_SET, raw_receiver in UNIDADES_LIBRERIA_SET
+                    # ====================================================
+                    # PROCESAMIENTO 1: ARCHIVO DE INVENTARIOS
+                    # ====================================================
+                    if arch_mov_inv:
+                        df = pd.read_excel(arch_mov_inv, dtype=str)
+                        df.columns = df.columns.str.strip()
+                        c_tipo = next((c for c in df.columns if 'TIPO' in c.upper() or 'CONCEPT' in c.upper()), None)
+                        c_sender = next((c for c in df.columns if 'SALIDA' in c.upper().replace(' ', '')), None)
+                        c_receiver = next((c for c in df.columns if 'INGRESO' in c.upper().replace(' ', '')), None)
+                        c_category = next((c for c in df.columns if 'CATEGOR' in c.upper()), 'Categoria')
+                        c_total = next((c for c in df.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '') or 'COSTO' in c.upper()), 'PrecioTotal')
                         
-                        # Filtros de exclusión
-                        if not (is_sender_lib or is_receiver_lib) or (is_sender_lib and is_receiver_lib) or 'SERVICIO' in category: continue
+                        df[c_total] = pd.to_numeric(df[c_total], errors='coerce').fillna(0)
 
-                        inv_acc = INV_ACCOUNT_MAP.get(category, INV_ACCOUNT_MAP['DEFAULT'])
-                        sender_desc = raw_sender if raw_sender else "ORIGEN"
-                        receiver_desc = raw_receiver if raw_receiver else "DESTINO"
+                        for _, row in df.iterrows():
+                            raw_sender, raw_receiver = clean_value(row[c_sender]), clean_value(row[c_receiver])
+                            tipo, category, total = clean_value(row[c_tipo]), clean_value(row[c_category]), float(row[c_total])
+                            if total == 0: continue
 
-                        # A. AJUSTES
-                        if 'AJUS' in tipo or (not ('TRASLAD' in tipo or (raw_sender and raw_receiver)) and 'CONSIGNACION' not in category):
-                            if is_receiver_lib:
-                                desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                partidas_dict["AJUSTES"]["Entradas_por_Ajuste"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
-                            else:
-                                desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
+                            is_sender_lib = raw_sender in UNIDADES_LIBRERIA_SET
+                            is_receiver_lib = raw_receiver in UNIDADES_LIBRERIA_SET
+                            
+                            # Filtros de exclusión
+                            if not (is_sender_lib or is_receiver_lib) or (is_sender_lib and is_receiver_lib) or 'SERVICIO' in category: continue
 
-                        # B. CONSIGNACIÓN
-                        elif 'CONSIGNACION' in category:
-                            # 1. Entradas de Consignación
-                            if is_receiver_lib and not is_sender_lib:
-                                desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                if "Entradas_Consignacion" not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"]["Entradas_Consignacion"] = []
-                                partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
-                                    gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
-                                    gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
-                                ])
-                            # 2. Salidas o Traslados de Consignación
+                            inv_acc = INV_ACCOUNT_MAP.get(category, INV_ACCOUNT_MAP['DEFAULT'])
+                            sender_desc = raw_sender if raw_sender else "ORIGEN"
+                            receiver_desc = raw_receiver if raw_receiver else "DESTINO"
+
+                            # A. AJUSTES REGULARES
+                            if 'AJUS' in tipo or (not ('TRASLAD' in tipo or (raw_sender and raw_receiver)) and 'CONSIGNACION' not in category):
+                                if is_receiver_lib: 
+                                    desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                    partidas_dict["AJUSTES"]["Entradas_por_Ajuste"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
+                                else: 
+                                    desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                    partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
+
+                            # B. CONSIGNACIÓN (INVENTARIO)
+                            elif 'CONSIGNACION' in category:
+                                if is_receiver_lib and not is_sender_lib:
+                                    desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                    if "Entradas_Consignacion" not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"]["Entradas_Consignacion"] = []
+                                    partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
+                                        gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
+                                        gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
+                                    ])
+                                elif is_sender_lib:
+                                    es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
+                                    if es_traslado and receiver_desc != "DESTINO":
+                                        tab_name = receiver_desc
+                                        desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                    else:
+                                        tab_name = "Salidas_Consignacion"
+                                        desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                    
+                                    if tab_name not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_name] = []
+                                    
+                                    # Partida Original
+                                    p1 = gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender)
+                                    p2 = gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender)
+                                    
+                                    # Partida Efecto Contrario con espacios
+                                    p3 = gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc, total, 0, raw_sender)
+                                    p3["CONCEPTO"] += " "
+                                    p4 = gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc, 0, total, raw_sender)
+                                    p4["CONCEPTO"] += " "
+                                    
+                                    partidas_dict["CONSIGNACION"][tab_name].extend([p1, p2, p3, p4])
+
+                            # C. TRASLADOS ESTÁNDAR
                             elif is_sender_lib:
-                                es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
-                                if es_traslado and receiver_desc != "DESTINO":
-                                    tab_name = receiver_desc
-                                    desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
-                                else:
-                                    tab_name = "Salidas_Consignacion"
-                                    desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                
-                                if tab_name not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_name] = []
-                                
-                                # Partida Original
-                                p1 = gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender)
-                                p2 = gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender)
-                                
-                                # Partida Efecto Contrario: Se agrega el espacio posterior a la limpieza para separar las líneas
-                                p3 = gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc, total, 0, raw_sender)
-                                p3["CONCEPTO"] += " "
-                                p4 = gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc, 0, total, raw_sender)
-                                p4["CONCEPTO"] += " "
-                                
-                                partidas_dict["CONSIGNACION"][tab_name].extend([p1, p2, p3, p4])
+                                if receiver_desc not in partidas_dict["TRASLADOS"]: partidas_dict["TRASLADOS"][receiver_desc] = []
+                                d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTO DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                d_r = d_s.replace("SALIDA", "ENTRADA")
+                                partidas_dict["TRASLADOS"][receiver_desc].extend([
+                                    gen_nexus_spec(CTA_PROVISION_PUENTE, d_s, total, 0), gen_nexus_spec(inv_acc, d_s, 0, total),
+                                    gen_nexus_spec(INV_ACCOUNT_MAP.get('DEFAULT'), d_r, total, 0), gen_nexus_spec(CTA_PROVISION_PUENTE, d_r, 0, total)
+                                ])
 
-                        # C. TRASLADOS ESTÁNDAR
-                        elif is_sender_lib:
-                            if receiver_desc not in partidas_dict["TRASLADOS"]: partidas_dict["TRASLADOS"][receiver_desc] = []
-                            d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTO DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
-                            d_r = d_s.replace("SALIDA", "ENTRADA")
-                            partidas_dict["TRASLADOS"][receiver_desc].extend([
-                                gen_nexus_spec(CTA_PROVISION_PUENTE, d_s, total, 0), gen_nexus_spec(inv_acc, d_s, 0, total),
-                                gen_nexus_spec(INV_ACCOUNT_MAP.get('DEFAULT'), d_r, total, 0), gen_nexus_spec(CTA_PROVISION_PUENTE, d_r, 0, total)
-                            ])
+                    # ====================================================
+                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS (NUEVO REQUERIMIENTO)
+                    # ====================================================
+                    if arch_ventas:
+                        df_v = pd.read_excel(arch_ventas, dtype=str)
+                        df_v.columns = df_v.columns.str.strip()
+                        
+                        c_cat_v = next((c for c in df_v.columns if 'CATEGOR' in c.upper()), None)
+                        c_costo_v = next((c for c in df_v.columns if 'TOTALCOSTO' in c.upper().replace(' ', '') or 'COSTO' in c.upper()), None)
+                        
+                        if c_cat_v and c_costo_v:
+                            df_v[c_costo_v] = pd.to_numeric(df_v[c_costo_v], errors='coerce').fillna(0)
+                            
+                            # Filtrar solo ventas de consignación
+                            df_consignacion_ventas = df_v[df_v[c_cat_v].astype(str).str.upper().str.strip() == 'CONSIGNACION']
+                            total_ventas_consignacion = df_consignacion_ventas[c_costo_v].sum()
+                            
+                            if total_ventas_consignacion > 0:
+                                desc_venta_consig = f"RECONOCIMIENTO POR VENTA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                
+                                partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consignacion"] = [
+                                    # Partida Única: Reversión de la consignación (Sin afectación al costo)
+                                    gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0, "LIBRERÍA CENTRAL"),
+                                    gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion, "LIBRERÍA CENTRAL")
+                                ]
+                        else:
+                            st.warning("⚠️ No se encontraron las columnas 'Categoria' o 'TotalCosto' en el reporte de ventas.")
 
                     st.success("✅ Procesamiento finalizado con éxito.")
                     st.session_state['nexus_libreria_buffers'] = gen_excels_memory(partidas_dict, mes_proceso)
