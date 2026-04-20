@@ -16,9 +16,16 @@ CTA_BASE_GASTO = "410104"
 CTA_BASE_PT = "110603" 
 CTA_BASE_MP = "110601" 
 
-# Bodegas oficiales de la unidad (AQUÍ LEEMOS SOLO SOHO)
+# Bodegas oficiales de la unidad actual
 UNIDADES_SOHO_SET = {
     "CENTRO SOHO", "BODEGA SOHO", "SOHO"
+}
+
+# Lista maestra de otras unidades para evitar duplicar entradas internas
+OTRAS_UNIDADES_INTERNAS = {
+    "LIBRERÍA CENTRAL", "LIBRERÍA BODEGA", "LIBRERÍA BODEGA TG", "LIBRERÍA CAMPUS", "LIBRERÍA CENTRAL (B001)",
+    "TERRAZA", "CID CAMPUS", "BODEGA CID CAMPUS", "DESPENSA", "CAFETERIA", "CAFETERIA CENTRAL",
+    "TALLERES", "GERENCIA COMERCIAL"
 }
 
 INV_ACCOUNT_MAP = {
@@ -113,7 +120,6 @@ def mostrar_modulo_soho():
                         tipo, category, total = clean_value(row[c_tipo]), clean_value(row[c_category]), float(row[c_total])
                         if total == 0: continue
 
-                        # LA LECTURA ESTRICTA DE LA UNIDAD SOHO
                         is_sender_unidad = raw_sender in UNIDADES_SOHO_SET
                         is_receiver_unidad = raw_receiver in UNIDADES_SOHO_SET
                         
@@ -124,7 +130,7 @@ def mostrar_modulo_soho():
                         sender_desc = raw_sender if raw_sender else "ORIGEN"
                         receiver_desc = raw_receiver if raw_receiver else "DESTINO"
 
-                        # A. AJUSTES (Ahora referenciando CENTRO SOHO)
+                        # A. AJUSTES REGULARES
                         if 'AJUS' in tipo or (not ('TRASLAD' in tipo or (raw_sender and raw_receiver)) and 'CONSIGNACION' not in category):
                             if is_receiver_unidad:
                                 desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
@@ -133,16 +139,21 @@ def mostrar_modulo_soho():
                                 desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
                                 partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
 
-                        # B. CONSIGNACIÓN (Aplicando el efecto contrario)
+                        # B. CONSIGNACIÓN
                         elif 'CONSIGNACION' in category:
                             # 1. Entradas de Consignación
                             if is_receiver_unidad and not is_sender_unidad:
-                                desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                if "Entradas_Consignacion" not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"]["Entradas_Consignacion"] = []
-                                partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
-                                    gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
-                                    gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
-                                ])
+                                # Regla 1: Omitir si viene de otra unidad interna (ej. Librería) o es traslado
+                                if raw_sender in OTRAS_UNIDADES_INTERNAS or 'TRASLAD' in tipo:
+                                    pass 
+                                else:
+                                    desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
+                                    if "Entradas_Consignacion" not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"]["Entradas_Consignacion"] = []
+                                    partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
+                                        gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
+                                        gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
+                                    ])
+                            
                             # 2. Salidas o Traslados de Consignación
                             elif is_sender_unidad:
                                 es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
@@ -155,17 +166,25 @@ def mostrar_modulo_soho():
                                 
                                 if tab_name not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_name] = []
                                 
-                                # Partida Original
+                                # Partida Original de Consignación
                                 p1 = gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender)
                                 p2 = gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender)
                                 
-                                # Partida Efecto Contrario: Se agrega el espacio para separar las líneas en Excel
+                                # Partida Efecto Contrario de Consignación (Espacios al final para evitar agrupación indebida)
                                 p3 = gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc, total, 0, raw_sender)
                                 p3["CONCEPTO"] += " "
                                 p4 = gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc, 0, total, raw_sender)
                                 p4["CONCEPTO"] += " "
                                 
                                 partidas_dict["CONSIGNACION"][tab_name].extend([p1, p2, p3, p4])
+
+                                # Regla 2: Impacto adicional al Costo si es Salida por Ajuste
+                                if 'AJUS' in tipo:
+                                    desc_ajuste_costo = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
+                                    partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([
+                                        gen_nexus_spec(CTA_BASE_GASTO, desc_ajuste_costo, total, 0), 
+                                        gen_nexus_spec(inv_acc, desc_ajuste_costo, 0, total)
+                                    ])
 
                         # C. TRASLADOS ESTÁNDAR
                         elif is_sender_unidad:
