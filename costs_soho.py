@@ -123,7 +123,7 @@ def mostrar_modulo_soho():
             with st.spinner("Analizando información..."):
                 
                 # ====================================================
-                # NUEVO BLOQUE: AUDITORÍA DE KARDEX (1%)
+                # NUEVO BLOQUE: AUDITORÍA DE KARDEX (1%) CON LÓGICA EN CASCADA
                 # ====================================================
                 if arch_kardex:
                     try:
@@ -131,75 +131,95 @@ def mostrar_modulo_soho():
                         st.subheader("🕵️ Resultado de Auditoría Kardex")
                         
                         df_k = pd.read_excel(arch_kardex, dtype=str)
-                        # Limpieza extrema de espacios en los nombres de las columnas
-                        df_k.columns = df_k.columns.astype(str).str.strip()
+                        df_k.columns = df_k.columns.astype(str).str.strip().str.upper()
                         
-                        # Identificación dinámica (resistente a cambios de posición)
-                        c_cod = next((c for c in df_k.columns if 'IDPRODUCTO' in c.upper() or 'COD' in c.upper()), df_k.columns[2])
-                        c_pref = next((c for c in df_k.columns if 'PREFI' in c.upper()), df_k.columns[4])
-                        c_ent_u = next((c for c in df_k.columns if 'ENTRADASUNID' in c.upper()), df_k.columns[9])
-                        c_ent_v = next((c for c in df_k.columns if 'ENTRADASVAL' in c.upper()), df_k.columns[11])
-                        c_costo = next((c for c in df_k.columns if 'COSTOPROMEDIO' in c.upper() or 'COSTO' in c.upper()), df_k.columns[17])
+                        # Búsqueda dinámica ultra-resistente
+                        c_cod = next((c for c in df_k.columns if 'IDPRODUCTO' in c), None)
+                        c_pref = next((c for c in df_k.columns if 'PREFI' in c), None)
+                        c_doc = next((c for c in df_k.columns if 'DOCUMENTO' in c), None)
+                        c_ent_u = next((c for c in df_k.columns if 'ENTRADASUNID' in c), None)
+                        c_ent_v = next((c for c in df_k.columns if 'ENTRADASVAL' in c), None)
+                        c_costo = next((c for c in df_k.columns if 'COSTOPROMEDIO' in c), None)
 
-                        df_k[c_cod] = df_k[c_cod].astype(str).str.strip()
-
-                        # Filtro por Categorías usando Diccionario (evita errores de merge)
-                        if arch_cat:
-                            df_c = pd.read_excel(arch_cat, dtype=str)
-                            df_c.columns = df_c.columns.astype(str).str.strip()
-                            
-                            c_cod_cat = df_c.columns[0]
-                            c_desc_cat = df_c.columns[1] if len(df_c.columns) > 1 else df_c.columns[0]
-                            
-                            # Mapeamos los códigos limpios
-                            mapa_categorias = dict(zip(
-                                df_c[c_cod_cat].astype(str).str.strip(), 
-                                df_c[c_desc_cat].astype(str).str.upper().str.strip()
-                            ))
-                            
-                            df_k['Cat_Temp'] = df_k[c_cod].map(mapa_categorias).fillna('DESCONOCIDA')
-                            df_k = df_k[df_k['Cat_Temp'] != 'SERVICIO']
-
-                        # Limpieza matemática
-                        df_k[c_ent_u] = pd.to_numeric(df_k[c_ent_u], errors='coerce').fillna(0)
-                        df_k[c_ent_v] = pd.to_numeric(df_k[c_ent_v], errors='coerce').fillna(0)
-                        df_k[c_costo] = pd.to_numeric(df_k[c_costo], errors='coerce').fillna(0)
-                        df_k['Prefijo_Upper'] = df_k[c_pref].astype(str).str.upper().str.strip()
-
-                        # 1. Costo Base (Prioridad CFE, rescate con INI/Vacío)
-                        df_cfe = df_k[df_k['Prefijo_Upper'] == 'CFE']
-                        ref_compra = df_cfe.groupby(c_cod).apply(
-                            lambda x: x[c_ent_v].sum() / x[c_ent_u].sum() if x[c_ent_u].sum() != 0 else 0
-                        ).reset_index(name='Costo_Ref_CFE')
-
-                        df_ini = df_k[df_k['Prefijo_Upper'].isin(['INI', 'NAN', '']) | df_k[c_pref].isna()]
-                        ref_ini = df_ini.groupby(c_cod)[c_costo].first().reset_index(name='Costo_Ref_INI')
-
-                        ref_base = pd.merge(ref_compra, ref_ini, on=c_cod, how='outer')
-                        ref_base['Costo_Base'] = ref_base['Costo_Ref_CFE'].fillna(ref_base['Costo_Ref_INI'])
-
-                        # 2. Costo de Venta (Promedio de FCF / CCF)
-                        df_ventas_k = df_k[df_k['Prefijo_Upper'].isin(['FCF', 'CCF'])]
-                        costo_ventas = df_ventas_k.groupby(c_cod)[c_costo].mean().reset_index(name='Costo_Venta_Promedio')
-
-                        # 3. Cruzar y Validar Variación del 1%
-                        df_audit = pd.merge(costo_ventas, ref_base[[c_cod, 'Costo_Base']], on=c_cod, how='inner')
-                        df_audit['Costo_Base_Safe'] = df_audit['Costo_Base'].replace(0, 1)
-                        df_audit['Variacion_%'] = (df_audit['Costo_Venta_Promedio'] / df_audit['Costo_Base_Safe']) - 1
-
-                        anomalias = df_audit[df_audit['Variacion_%'].abs() > 0.01].copy()
-
-                        if not anomalias.empty:
-                            st.error(f"🚨 ALERTA: Se detectaron {len(anomalias)} productos con variación mayor al 1%.")
-                            anomalias_show = anomalias[[c_cod, 'Costo_Base', 'Costo_Venta_Promedio', 'Variacion_%']].copy()
-                            anomalias_show.columns = ['Código', 'Costo Base (CFE/INI)', 'Costo Prom. Ventas', 'Variación']
-                            st.dataframe(anomalias_show.style.format({
-                                'Costo Base (CFE/INI)': '${:.4f}',
-                                'Costo Prom. Ventas': '${:.4f}',
-                                'Variación': '{:.2%}'
-                            }), use_container_width=True)
+                        if not all([c_cod, c_pref, c_ent_u, c_ent_v, c_costo]):
+                            st.error("Error: No se encontraron todas las columnas clave en el Kardex (IdProducto, Prefijo, EntradasUnidades, EntradasValor, CostoPromedio).")
                         else:
-                            st.success("✅ Validación del 1% exitosa. Los costos de venta cuadran con las compras/saldos.")
+                            df_k[c_cod] = df_k[c_cod].astype(str).str.strip()
+
+                            # Filtro por Categorías usando Diccionario
+                            if arch_cat:
+                                df_c = pd.read_excel(arch_cat, dtype=str)
+                                df_c.columns = df_c.columns.astype(str).str.strip()
+                                c_cod_cat = df_c.columns[0]
+                                c_desc_cat = df_c.columns[1] if len(df_c.columns) > 1 else df_c.columns[0]
+                                mapa_categorias = dict(zip(
+                                    df_c[c_cod_cat].astype(str).str.strip(), 
+                                    df_c[c_desc_cat].astype(str).str.upper().str.strip()
+                                ))
+                                df_k['Cat_Temp'] = df_k[c_cod].map(mapa_categorias).fillna('DESCONOCIDA')
+                                df_k = df_k[df_k['Cat_Temp'] != 'SERVICIO']
+
+                            # Limpieza matemática
+                            df_k[c_ent_u] = pd.to_numeric(df_k[c_ent_u], errors='coerce').fillna(0)
+                            df_k[c_ent_v] = pd.to_numeric(df_k[c_ent_v], errors='coerce').fillna(0)
+                            df_k[c_costo] = pd.to_numeric(df_k[c_costo], errors='coerce').fillna(0)
+                            
+                            df_k['Prefijo_Upper'] = df_k[c_pref].astype(str).str.upper().str.strip()
+                            df_k['Doc_Upper'] = df_k[c_doc].astype(str).str.upper().str.strip() if c_doc else ""
+
+                            # LÓGICA EN CASCADA PARA COSTO BASE
+                            
+                            # 1. CFE (Compras)
+                            df_cfe = df_k[df_k['Prefijo_Upper'] == 'CFE']
+                            ref_compra = df_cfe.groupby(c_cod).apply(
+                                lambda x: x[c_ent_v].sum() / x[c_ent_u].sum() if x[c_ent_u].sum() != 0 else 0
+                            ).reset_index(name='Costo_Ref_CFE')
+
+                            # 2. INI o Saldo Anterior
+                            df_ini = df_k[(df_k['Prefijo_Upper'].isin(['INI', 'NAN', ''])) | (df_k['Doc_Upper'].str.contains('SALDO ANTERIOR'))]
+                            ref_ini = df_ini.groupby(c_cod)[c_costo].first().reset_index(name='Costo_Ref_INI')
+
+                            # 3. TRD (Traslados de Entrada)
+                            df_trd = df_k[(df_k['Prefijo_Upper'] == 'TRD') & (df_k[c_ent_u] > 0)]
+                            ref_trd = df_trd.groupby(c_cod).apply(
+                                lambda x: x[c_ent_v].sum() / x[c_ent_u].sum() if x[c_ent_u].sum() != 0 else 0
+                            ).reset_index(name='Costo_Ref_TRD')
+
+                            # Unificar bases
+                            ref_base = pd.DataFrame({c_cod: df_k[c_cod].unique()})
+                            ref_base = pd.merge(ref_base, ref_compra, on=c_cod, how='left')
+                            ref_base = pd.merge(ref_base, ref_ini, on=c_cod, how='left')
+                            ref_base = pd.merge(ref_base, ref_trd, on=c_cod, how='left')
+                            
+                            # Cascada: Toma CFE, si no hay toma INI, si no hay toma TRD.
+                            ref_base['Costo_Base'] = ref_base['Costo_Ref_CFE'].fillna(ref_base['Costo_Ref_INI']).fillna(ref_base['Costo_Ref_TRD']).fillna(0)
+
+                            # Costo de Venta (Promedio de FCF / CCF)
+                            df_ventas_k = df_k[df_k['Prefijo_Upper'].isin(['FCF', 'CCF'])]
+                            costo_ventas = df_ventas_k.groupby(c_cod)[c_costo].mean().reset_index(name='Costo_Venta_Promedio')
+
+                            # Cruzar y Validar Variación
+                            df_audit = pd.merge(costo_ventas, ref_base[[c_cod, 'Costo_Base']], on=c_cod, how='inner')
+                            
+                            # Filtro Antiruido: Quitar si ambos son 0 para evitar el -100% absurdo
+                            df_audit = df_audit[(df_audit['Costo_Base'] > 0) | (df_audit['Costo_Venta_Promedio'] > 0)]
+
+                            df_audit['Costo_Base_Safe'] = df_audit['Costo_Base'].replace(0, 1) # Evitar división por cero
+                            df_audit['Variacion_%'] = (df_audit['Costo_Venta_Promedio'] / df_audit['Costo_Base_Safe']) - 1
+
+                            anomalias = df_audit[df_audit['Variacion_%'].abs() > 0.01].copy()
+
+                            if not anomalias.empty:
+                                st.error(f"🚨 ALERTA: Se detectaron {len(anomalias)} productos con variación mayor al 1%.")
+                                anomalias_show = anomalias[[c_cod, 'Costo_Base', 'Costo_Venta_Promedio', 'Variacion_%']].copy()
+                                anomalias_show.columns = ['Código', 'Costo Base (CFE/INI/TRD)', 'Costo Prom. Ventas', 'Variación']
+                                st.dataframe(anomalias_show.style.format({
+                                    'Costo Base (CFE/INI/TRD)': '${:.4f}',
+                                    'Costo Prom. Ventas': '${:.4f}',
+                                    'Variación': '{:.2%}'
+                                }), use_container_width=True)
+                            else:
+                                st.success("✅ Validación del 1% exitosa. Los costos de venta cuadran con las compras/saldos.")
 
                     except Exception as e_k:
                         st.error(f"Error procesando el Kardex: {e_k}")
@@ -285,7 +305,7 @@ def mostrar_modulo_soho():
                             elif es_ajuste:
                                 if is_receiver_unidad:
                                     desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                    partidas_dict["AJUSTES"]["Entradas_por_Ajuste"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
+                                    partidas_dict["AJUSTES"]["Entradas_por_Ajuste"].extend([gen_nexus_spec(inv_acc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
                                 else:
                                     desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
                                     partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
