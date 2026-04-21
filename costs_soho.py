@@ -99,22 +99,99 @@ def mostrar_modulo_soho():
         with col_m2: anio_proceso = st.number_input("Año:", min_value=2024, value=date.today().year, key="y_soho")
 
         st.markdown("---")
-        st.subheader("Archivos Base")
-        
+        st.subheader("Archivos de Operación (Generación Nexus)")
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             arch_mov_inv = st.file_uploader("1. Reporte de Movimientos (Inventario)", type=["xls", "xlsx"], key="file_inv_soho")
         with col_f2:
             arch_ventas = st.file_uploader("2. Reporte de Ventas (Para Consignación)", type=["xls", "xlsx"], key="file_ven_soho")
             
+        st.subheader("Archivos de Auditoría (Validación 1%)")
+        col_a1, col_a2 = st.columns(2)
+        with col_a1:
+            arch_kardex = st.file_uploader("3. Kardex Consolidado", type=["xls", "xlsx"], key="file_kar_soho")
+        with col_a2:
+            arch_cat = st.file_uploader("4. Maestro Categorías (Opcional)", type=["xls", "xlsx"], key="file_cat_soho")
+
         btn_scan = st.button("🔍 Procesar Auditoría", type="primary", use_container_width=True, key="btn_soho")
 
         if btn_scan:
-            if not arch_mov_inv and not arch_ventas:
+            if not arch_mov_inv and not arch_ventas and not arch_kardex:
                 st.warning("⚠️ Debes subir al menos un archivo para procesar.")
                 return
                 
             with st.spinner("Analizando información..."):
+                
+                # ====================================================
+                # NUEVO BLOQUE: AUDITORÍA DE KARDEX (1%)
+                # ====================================================
+                if arch_kardex:
+                    try:
+                        st.markdown("---")
+                        st.subheader("🕵️ Resultado de Auditoría Kardex")
+                        df_k = pd.read_excel(arch_kardex)
+                        
+                        # Lectura posicional estricta según estructura Kardex
+                        c_cod = df_k.columns[0]   # Columna A: Codigo
+                        c_pref = df_k.columns[4]  # Columna E: Prefijo
+                        c_ent_u = df_k.columns[5] # Columna F: Entradas Unidades
+                        c_ent_v = df_k.columns[6] # Columna G: Entradas Valor
+                        c_costo = df_k.columns[8] # Columna I: Costo (Unitario/Promedio)
+
+                        # Filtro de categorías si se sube el archivo
+                        if arch_cat:
+                            df_c = pd.read_excel(arch_cat, dtype=str)
+                            c_cod_cat = df_c.columns[0]
+                            c_desc_cat = df_c.columns[1] if len(df_c.columns) > 1 else df_c.columns[0]
+                            df_k = pd.merge(df_k, df_c, left_on=c_cod, right_on=c_cod_cat, how='left')
+                            df_k = df_k[df_k[c_desc_cat].astype(str).str.upper().str.strip() != 'SERVICIO']
+
+                        df_k[c_ent_u] = pd.to_numeric(df_k[c_ent_u], errors='coerce').fillna(0)
+                        df_k[c_ent_v] = pd.to_numeric(df_k[c_ent_v], errors='coerce').fillna(0)
+                        df_k[c_costo] = pd.to_numeric(df_k[c_costo], errors='coerce').fillna(0)
+                        df_k['Prefijo_Upper'] = df_k[c_pref].astype(str).str.upper().str.strip()
+
+                        # 1. Costo Base (Prioridad CFE, rescate con INI/Vacío)
+                        df_cfe = df_k[df_k['Prefijo_Upper'] == 'CFE']
+                        ref_compra = df_cfe.groupby(c_cod).apply(
+                            lambda x: x[c_ent_v].sum() / x[c_ent_u].sum() if x[c_ent_u].sum() != 0 else 0
+                        ).reset_index(name='Costo_Ref_CFE')
+
+                        df_ini = df_k[df_k['Prefijo_Upper'].isin(['INI', 'NAN', '']) | df_k[c_pref].isna()]
+                        ref_ini = df_ini.groupby(c_cod)[c_costo].first().reset_index(name='Costo_Ref_INI')
+
+                        ref_base = pd.merge(ref_compra, ref_ini, on=c_cod, how='outer')
+                        ref_base['Costo_Base'] = ref_base['Costo_Ref_CFE'].fillna(ref_base['Costo_Ref_INI'])
+
+                        # 2. Costo de Venta (Promedio de FCF / CCF)
+                        df_ventas_k = df_k[df_k['Prefijo_Upper'].isin(['FCF', 'CCF'])]
+                        costo_ventas = df_ventas_k.groupby(c_cod)[c_costo].mean().reset_index(name='Costo_Venta_Promedio')
+
+                        # 3. Cruzar y Validar Variación del 1%
+                        df_audit = pd.merge(costo_ventas, ref_base[[c_cod, 'Costo_Base']], on=c_cod, how='inner')
+                        df_audit['Costo_Base_Safe'] = df_audit['Costo_Base'].replace(0, 1)
+                        df_audit['Variacion_%'] = (df_audit['Costo_Venta_Promedio'] / df_audit['Costo_Base_Safe']) - 1
+
+                        anomalias = df_audit[df_audit['Variacion_%'].abs() > 0.01].copy()
+
+                        if not anomalias.empty:
+                            st.error(f"🚨 ALERTA: Se detectaron {len(anomalias)} productos con variación mayor al 1%.")
+                            anomalias_show = anomalias[[c_cod, 'Costo_Base', 'Costo_Venta_Promedio', 'Variacion_%']].copy()
+                            anomalias_show.columns = ['Código', 'Costo Base (CFE/INI)', 'Costo Prom. Ventas', 'Variación']
+                            st.dataframe(anomalias_show.style.format({
+                                'Costo Base (CFE/INI)': '${:.4f}',
+                                'Costo Prom. Ventas': '${:.4f}',
+                                'Variación': '{:.2%}'
+                            }), use_container_width=True)
+                        else:
+                            st.success("✅ Validación del 1% exitosa. Los costos de venta cuadran con las compras/saldos.")
+
+                    except Exception as e_k:
+                        st.error(f"Error procesando el Kardex: {e_k}")
+
+                # ====================================================
+                # PROCESAMIENTO 1: ARCHIVO DE INVENTARIOS
+                # ====================================================
                 try:
                     partidas_dict = {
                         "TRASLADOS": {},
@@ -123,9 +200,6 @@ def mostrar_modulo_soho():
                         "VENTAS_CONSIGNACION": {}
                     }
 
-                    # ====================================================
-                    # PROCESAMIENTO 1: ARCHIVO DE INVENTARIOS
-                    # ====================================================
                     if arch_mov_inv:
                         df = pd.read_excel(arch_mov_inv, dtype=str)
                         df.columns = df.columns.str.strip()
@@ -212,7 +286,7 @@ def mostrar_modulo_soho():
                                 ])
 
                     # ====================================================
-                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS (NUEVO REQUERIMIENTO)
+                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS 
                     # ====================================================
                     if arch_ventas:
                         df_v = pd.read_excel(arch_ventas, dtype=str)
@@ -244,12 +318,13 @@ def mostrar_modulo_soho():
                         else:
                             st.warning("⚠️ No se encontraron las columnas 'Categoria' o 'TotalCosto' en el reporte de ventas.")
 
-                    st.success("✅ Procesamiento finalizado con éxito.")
-                    st.session_state['nexus_soho_buffers'] = gen_excels_memory(partidas_dict, mes_proceso)
-                    st.session_state['tab_results_soho'] = True
+                    if arch_mov_inv or arch_ventas:
+                        st.success("✅ Procesamiento contable finalizado con éxito.")
+                        st.session_state['nexus_soho_buffers'] = gen_excels_memory(partidas_dict, mes_proceso)
+                        st.session_state['tab_results_soho'] = True
                     
                 except Exception as e: 
-                    st.error(f"Error técnico: {e}")
+                    st.error(f"Error técnico en procesamiento contable: {e}")
 
     with tab_liquidacion:
         if st.session_state.get('tab_results_soho', False):
