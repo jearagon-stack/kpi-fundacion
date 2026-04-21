@@ -129,23 +129,30 @@ def mostrar_modulo_soho():
                     try:
                         st.markdown("---")
                         st.subheader("🕵️ Resultado de Auditoría Kardex")
-                        df_k = pd.read_excel(arch_kardex)
+                        # Leer como texto para evitar el error de int64 vs str
+                        df_k = pd.read_excel(arch_kardex, dtype=str)
                         
-                        # Lectura posicional estricta según estructura Kardex
-                        c_cod = df_k.columns[0]   # Columna A: Codigo
-                        c_pref = df_k.columns[4]  # Columna E: Prefijo
-                        c_ent_u = df_k.columns[5] # Columna F: Entradas Unidades
-                        c_ent_v = df_k.columns[6] # Columna G: Entradas Valor
-                        c_costo = df_k.columns[8] # Columna I: Costo (Unitario/Promedio)
+                        # Búsqueda dinámica de las columnas basada en tu archivo
+                        c_cod = next((c for c in df_k.columns if 'IDPRODUCTO' in str(c).upper() or 'COD' in str(c).upper()), df_k.columns[2])
+                        c_pref = next((c for c in df_k.columns if 'PREFI' in str(c).upper()), df_k.columns[4])
+                        c_ent_u = next((c for c in df_k.columns if 'ENTRADASUNID' in str(c).upper()), df_k.columns[9])
+                        c_ent_v = next((c for c in df_k.columns if 'ENTRADASVAL' in str(c).upper()), df_k.columns[11])
+                        c_costo = next((c for c in df_k.columns if 'COSTOPROMEDIO' in str(c).upper() or 'COSTO' in str(c).upper()), df_k.columns[17])
 
                         # Filtro de categorías si se sube el archivo
                         if arch_cat:
                             df_c = pd.read_excel(arch_cat, dtype=str)
                             c_cod_cat = df_c.columns[0]
                             c_desc_cat = df_c.columns[1] if len(df_c.columns) > 1 else df_c.columns[0]
+                            
+                            # Limpiar espacios en blanco de los códigos para que el cruce sea exacto
+                            df_k[c_cod] = df_k[c_cod].astype(str).str.strip()
+                            df_c[c_cod_cat] = df_c[c_cod_cat].astype(str).str.strip()
+                            
                             df_k = pd.merge(df_k, df_c, left_on=c_cod, right_on=c_cod_cat, how='left')
                             df_k = df_k[df_k[c_desc_cat].astype(str).str.upper().str.strip() != 'SERVICIO']
 
+                        # Convertir a numérico solo lo necesario para la matemática
                         df_k[c_ent_u] = pd.to_numeric(df_k[c_ent_u], errors='coerce').fillna(0)
                         df_k[c_ent_v] = pd.to_numeric(df_k[c_ent_v], errors='coerce').fillna(0)
                         df_k[c_costo] = pd.to_numeric(df_k[c_costo], errors='coerce').fillna(0)
@@ -286,7 +293,7 @@ def mostrar_modulo_soho():
                                 ])
 
                     # ====================================================
-                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS 
+                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS (NUEVO REQUERIMIENTO)
                     # ====================================================
                     if arch_ventas:
                         df_v = pd.read_excel(arch_ventas, dtype=str)
