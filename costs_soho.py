@@ -133,7 +133,6 @@ def mostrar_modulo_soho():
                         df_k = pd.read_excel(arch_kardex, dtype=str)
                         df_k.columns = df_k.columns.astype(str).str.strip().str.upper()
                         
-                        # Búsqueda dinámica ultra-resistente
                         c_cod = next((c for c in df_k.columns if 'IDPRODUCTO' in c), None)
                         c_pref = next((c for c in df_k.columns if 'PREFI' in c), None)
                         c_doc = next((c for c in df_k.columns if 'DOCUMENTO' in c), None)
@@ -191,7 +190,12 @@ def mostrar_modulo_soho():
                             ref_base = pd.merge(ref_base, ref_ini, on=c_cod, how='left')
                             ref_base = pd.merge(ref_base, ref_trd, on=c_cod, how='left')
                             
-                            # Cascada: Toma CFE, si no hay toma INI, si no hay toma TRD.
+                            # FILTRO DE CEROS: Si el costo de la referencia es 0, lo convertimos en Nulo
+                            # para que la cascada salte a la siguiente opción y no se detenga.
+                            for col in ['Costo_Ref_CFE', 'Costo_Ref_INI', 'Costo_Ref_TRD']:
+                                ref_base[col] = ref_base[col].apply(lambda x: x if pd.notna(x) and x > 0 else None)
+                            
+                            # Cascada Final: Toma CFE, si no hay o es 0 toma INI, si no hay toma TRD.
                             ref_base['Costo_Base'] = ref_base['Costo_Ref_CFE'].fillna(ref_base['Costo_Ref_INI']).fillna(ref_base['Costo_Ref_TRD']).fillna(0)
 
                             # Costo de Venta (Promedio de FCF / CCF)
@@ -201,7 +205,7 @@ def mostrar_modulo_soho():
                             # Cruzar y Validar Variación
                             df_audit = pd.merge(costo_ventas, ref_base[[c_cod, 'Costo_Base']], on=c_cod, how='inner')
                             
-                            # Filtro Antiruido: Quitar si ambos son 0 para evitar el -100% absurdo
+                            # Quitar de la vista los productos que tienen Base $0 y Venta $0 para limpiar el reporte
                             df_audit = df_audit[(df_audit['Costo_Base'] > 0) | (df_audit['Costo_Venta_Promedio'] > 0)]
 
                             df_audit['Costo_Base_Safe'] = df_audit['Costo_Base'].replace(0, 1) # Evitar división por cero
@@ -305,7 +309,7 @@ def mostrar_modulo_soho():
                             elif es_ajuste:
                                 if is_receiver_unidad:
                                     desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                    partidas_dict["AJUSTES"]["Entradas_por_Ajuste"].extend([gen_nexus_spec(inv_acc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
+                                    partidas_dict["AJUSTES"]["Entradas_por_Ajuste"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)]) # CORREGIDO AQUÍ
                                 else:
                                     desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
                                     partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
@@ -321,7 +325,7 @@ def mostrar_modulo_soho():
                                 ])
 
                     # ====================================================
-                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS (NUEVO REQUERIMIENTO)
+                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS 
                     # ====================================================
                     if arch_ventas:
                         df_v = pd.read_excel(arch_ventas, dtype=str)
