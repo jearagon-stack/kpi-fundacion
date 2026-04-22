@@ -106,7 +106,7 @@ def mostrar_modulo_soho():
         with col_f2:
             arch_ventas = st.file_uploader("2. Reporte de Ventas (Para Consignación)", type=["xls", "xlsx"], key="file_ven_soho")
             
-        st.subheader("Archivos de Auditoría (Validación 1%)")
+        st.subheader("Archivos de Auditoría (Validación 1% y $0.02)")
         col_a1, col_a2 = st.columns(2)
         with col_a1:
             arch_kardex = st.file_uploader("3. Kardex Consolidado", type=["xls", "xlsx"], key="file_kar_soho")
@@ -123,7 +123,7 @@ def mostrar_modulo_soho():
             with st.spinner("Analizando información..."):
                 
                 # ====================================================
-                # NUEVO BLOQUE: AUDITORÍA DE KARDEX (1%) EN CASCADA Y FILA X FILA
+                # NUEVO BLOQUE: AUDITORÍA DE KARDEX CON FILTRO DOBLE
                 # ====================================================
                 if arch_kardex:
                     try:
@@ -204,20 +204,26 @@ def mostrar_modulo_soho():
 
                             df_ventas['COSTO_BASE_SAFE'] = df_ventas['COSTO_BASE'].replace(0, 1) # Evitar división por cero
                             df_ventas['VARIACION_%'] = (df_ventas[c_costo] / df_ventas['COSTO_BASE_SAFE']) - 1
+                            df_ventas['DIFERENCIA_$'] = df_ventas[c_costo] - df_ventas['COSTO_BASE']
 
-                            anomalias = df_ventas[df_ventas['VARIACION_%'].abs() > 0.01].copy()
+                            # Doble Filtro: Variación > 1% Y Diferencia Monetaria >= $0.02
+                            condicion_porcentaje = df_ventas['VARIACION_%'].abs() > 0.01
+                            condicion_moneda = df_ventas['DIFERENCIA_$'].abs() >= 0.02
+
+                            anomalias = df_ventas[condicion_porcentaje & condicion_moneda].copy()
 
                             if not anomalias.empty:
-                                st.error(f"🚨 ALERTA: Se detectaron {len(anomalias)} movimientos de venta con desviación > 1%.")
-                                anomalias_show = anomalias[[c_cod, 'Prefijo_Upper', c_doc, 'COSTO_BASE', c_costo, 'VARIACION_%']].copy()
-                                anomalias_show.columns = ['Código', 'Tipo Doc', 'N° Documento', 'Costo Base', 'Costo Venta', 'Variación']
+                                st.error(f"🚨 ALERTA: Se detectaron {len(anomalias)} movimientos de venta con desviación > 1% y diferencia >= $0.02.")
+                                anomalias_show = anomalias[[c_cod, 'Prefijo_Upper', c_doc, 'COSTO_BASE', c_costo, 'DIFERENCIA_$', 'VARIACION_%']].copy()
+                                anomalias_show.columns = ['Código', 'Tipo Doc', 'N° Documento', 'Costo Base', 'Costo Venta', 'Diferencia ($)', 'Variación']
                                 st.dataframe(anomalias_show.style.format({
                                     'Costo Base': '${:.4f}',
                                     'Costo Venta': '${:.4f}',
+                                    'Diferencia ($)': '${:.4f}',
                                     'Variación': '{:.2%}'
                                 }), use_container_width=True)
                             else:
-                                st.success("✅ Validación del 1% exitosa. Todas las facturas y comprobantes cuadran.")
+                                st.success("✅ Validación exitosa. No hay variaciones significativas (mayores al 1% y a $0.02).")
 
                     except Exception as e_k:
                         st.error(f"Error procesando el Kardex: {e_k}")
