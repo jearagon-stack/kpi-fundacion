@@ -253,7 +253,6 @@ def mostrar_modulo_costos():
                                 base_c['C_PRO'] = base_c.index.map(ref_pro)
                                 base_c['C_EAJ'] = base_c.index.map(ref_eaj)
                                 
-                                # Cascada Segura Unificada
                                 base_c['C_BASE'] = base_c['C_CFE'].fillna(base_c['C_INI']).fillna(base_c['C_TRD']).fillna(base_c['C_PRO']).fillna(base_c['C_EAJ']).fillna(0.0)
 
                                 df_v = df_k[df_k['Prefijo_Upper'].isin(['FCF', 'CCF'])].copy()
@@ -421,7 +420,8 @@ def mostrar_modulo_costos():
                             if 'pre_proceso' in st.session_state: del st.session_state['pre_proceso']
                             
                             st.rerun()
-                            else:
+
+        else:
             # ==========================================
             # DESCARGA DE PARTIDAS Y GUARDADO
             # ==========================================
