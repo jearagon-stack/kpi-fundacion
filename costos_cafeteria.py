@@ -198,24 +198,18 @@ def mostrar_modulo_costos():
                                     st.session_state['huerfanos_df'] = df_faltantes
                                     st.rerun()
 
-                                # 4. MATEMÁTICA DE CONSUMO POR CUENTA (Agrupado para las Partidas)
+                                # 4. MATEMÁTICA DE CONSUMO POR CUENTA
                                 df_k['CUENTA'] = df_k['CUENTA'].fillna("SIN CUENTA REGISTRADA")
                                 df_k = df_k[~df_k['CUENTA'].astype(str).str.upper().isin(["NO APLICA", "0", "0.0", "OMITIDO_MANUAL"])]
 
-                                # Extracción de rubros globales y por cuenta
                                 cuentas_validas = df_k['CUENTA'].unique()
                                 consumo_por_cuenta = {}
                                 total_ini_val = total_com_val = total_tras_val = total_fin_val = costo_operativo = 0.0
 
-                                # Evaluamos cuenta por cuenta iterando sobre el dataframe filtrado
                                 for cta in cuentas_validas:
                                     df_cta = df_k[df_k['CUENTA'] == cta]
-                                    
-                                    # INI: Primer Saldo Anterior cronológico por producto de esta cuenta
                                     ini_cta = df_cta[df_cta['Doc_Upper'].str.contains('SALDO ANTERIOR')].groupby(c_cod).first()[c_saldo_v].sum()
-                                    # FIN: Última fila cronológica por producto de esta cuenta
                                     fin_cta = df_cta.groupby(c_cod).tail(1)[c_saldo_v].sum()
-                                    # COMPRAS y TRASLADOS de la cuenta
                                     com_cta = df_cta[df_cta['Prefijo_Upper'] == 'CFE'][c_ent_v].sum()
                                     tras_in_cta = df_cta[df_cta['Prefijo_Upper'] == 'TRD'][c_ent_v].sum()
                                     tras_out_cta = df_cta[df_cta['Prefijo_Upper'].isin(['TRS', 'TRD']) & (df_cta[c_sal_u] > 0)][c_sal_v].sum()
@@ -235,30 +229,42 @@ def mostrar_modulo_costos():
                                 costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                                 costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
-                                # 5. AUDITORÍA DE CASCADA (Doble Filtro)
-                                def get_ref(df_sub, pref):
+                                # 5. AUDITORÍA DE CASCADA A PRUEBA DE ERRORES (Map Bulletproof)
+                                def get_ref_series(df_sub, pref):
                                     v = df_sub[df_sub['Prefijo_Upper'] == pref]
                                     v = v[v[c_ent_u] > 0]
-                                    return v.groupby(c_cod).apply(lambda x: x[c_ent_v].sum() / x[c_ent_u].sum()).replace(0, None)
+                                    if v.empty: return pd.Series(dtype=float)
+                                    s = v.groupby(c_cod).apply(lambda x: x[c_ent_v].sum() / x[c_ent_u].sum())
+                                    if isinstance(s, pd.DataFrame): s = s.iloc[:, 0]
+                                    return s.astype(float).replace(0, pd.NA)
 
-                                ref_cfe = get_ref(df_k, 'CFE')
-                                ref_ini = df_k[df_k['Doc_Upper'].str.contains('SALDO ANTERIOR') & (df_k[c_costo] > 0)].groupby(c_cod)[c_costo].first()
-                                ref_trd = get_ref(df_k, 'TRD')
-                                ref_pro = get_ref(df_k, 'PRO')
-                                ref_eaj = get_ref(df_k, 'EAJ')
+                                ref_cfe = get_ref_series(df_k, 'CFE')
+                                ref_trd = get_ref_series(df_k, 'TRD')
+                                ref_pro = get_ref_series(df_k, 'PRO')
+                                ref_eaj = get_ref_series(df_k, 'EAJ')
+                                
+                                mask_ini = df_k['Doc_Upper'].str.contains('SALDO ANTERIOR', na=False) & (df_k[c_costo] > 0)
+                                ref_ini = df_k[mask_ini].groupby(c_cod)[c_costo].first().astype(float).replace(0, pd.NA)
 
                                 base_c = pd.DataFrame(index=df_k[c_cod].unique())
-                                base_c['C_BASE'] = ref_cfe.fillna(ref_ini).fillna(ref_trd).fillna(ref_pro).fillna(ref_eaj).fillna(0)
+                                base_c['C_CFE'] = base_c.index.map(ref_cfe)
+                                base_c['C_INI'] = base_c.index.map(ref_ini)
+                                base_c['C_TRD'] = base_c.index.map(ref_trd)
+                                base_c['C_PRO'] = base_c.index.map(ref_pro)
+                                base_c['C_EAJ'] = base_c.index.map(ref_eaj)
+                                
+                                # Cascada Segura Unificada
+                                base_c['C_BASE'] = base_c['C_CFE'].fillna(base_c['C_INI']).fillna(base_c['C_TRD']).fillna(base_c['C_PRO']).fillna(base_c['C_EAJ']).fillna(0.0)
 
                                 df_v = df_k[df_k['Prefijo_Upper'].isin(['FCF', 'CCF'])].copy()
-                                df_v = df_v.merge(base_c, left_on=c_cod, right_index=True, how='left')
+                                df_v = df_v.merge(base_c[['C_BASE']], left_on=c_cod, right_index=True, how='left')
                                 df_v['VAR_P'] = (df_v[c_costo] / df_v['C_BASE'].replace(0, 1)) - 1
                                 df_v['DIF_M'] = df_v[c_costo] - df_v['C_BASE']
                                 
                                 anomalias = df_v[(df_v['VAR_P'].abs() > 0.01) & (df_v['DIF_M'].abs() >= 0.019)]
 
                                 st.session_state['memoria_cierre'] = {
-                                    'df_k_raw': df_k, # Guardamos un snapshot por si queremos extraer detalles
+                                    'df_k_raw': df_k, 
                                     'grp_ini_sum': total_ini_val, 'grp_comp_sum': total_com_val, 
                                     'grp_tras_sum': total_tras_val, 'grp_fin_sum': total_fin_val,
                                     'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
@@ -320,6 +326,7 @@ def mostrar_modulo_costos():
                             c_sal_u = st.session_state['pre_proceso']['c_sal_u']
                             c_ent_u = st.session_state['pre_proceso']['c_ent_u']
                             c_costo = st.session_state['pre_proceso']['c_costo']
+                            c_doc = st.session_state['pre_proceso']['c_doc']
 
                             codigos_omitir = edited_df[edited_df['Accion'] == 'Omitir (No sumar al costo)']['Codigo'].tolist()
                             df_asignar = edited_df[edited_df['Accion'] == 'Escribir Cuenta Manual']
@@ -366,23 +373,34 @@ def mostrar_modulo_costos():
                             costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                             costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
-                            # Auditoría (Sin recalcular, solo aplicando lógica igual)
-                            def get_ref(df_sub, pref):
+                            # Auditoría Asegurada (Map Bulletproof)
+                            def get_ref_series(df_sub, pref):
                                 v = df_sub[df_sub['Prefijo_Upper'] == pref]
                                 v = v[v[c_ent_u] > 0]
-                                return v.groupby(c_cod).apply(lambda x: x[c_ent_v].sum() / x[c_ent_u].sum()).replace(0, None)
+                                if v.empty: return pd.Series(dtype=float)
+                                s = v.groupby(c_cod).apply(lambda x: x[c_ent_v].sum() / x[c_ent_u].sum())
+                                if isinstance(s, pd.DataFrame): s = s.iloc[:, 0]
+                                return s.astype(float).replace(0, pd.NA)
 
-                            ref_cfe = get_ref(df_k, 'CFE')
-                            ref_ini = df_k[df_k['Doc_Upper'].str.contains('SALDO ANTERIOR') & (df_k[c_costo] > 0)].groupby(c_cod)[c_costo].first()
-                            ref_trd = get_ref(df_k, 'TRD')
-                            ref_pro = get_ref(df_k, 'PRO')
-                            ref_eaj = get_ref(df_k, 'EAJ')
+                            ref_cfe = get_ref_series(df_k, 'CFE')
+                            ref_trd = get_ref_series(df_k, 'TRD')
+                            ref_pro = get_ref_series(df_k, 'PRO')
+                            ref_eaj = get_ref_series(df_k, 'EAJ')
+                            
+                            mask_ini = df_k['Doc_Upper'].str.contains('SALDO ANTERIOR', na=False) & (df_k[c_costo] > 0)
+                            ref_ini = df_k[mask_ini].groupby(c_cod)[c_costo].first().astype(float).replace(0, pd.NA)
 
                             base_c = pd.DataFrame(index=df_k[c_cod].unique())
-                            base_c['C_BASE'] = ref_cfe.fillna(ref_ini).fillna(ref_trd).fillna(ref_pro).fillna(ref_eaj).fillna(0)
+                            base_c['C_CFE'] = base_c.index.map(ref_cfe)
+                            base_c['C_INI'] = base_c.index.map(ref_ini)
+                            base_c['C_TRD'] = base_c.index.map(ref_trd)
+                            base_c['C_PRO'] = base_c.index.map(ref_pro)
+                            base_c['C_EAJ'] = base_c.index.map(ref_eaj)
+                            
+                            base_c['C_BASE'] = base_c['C_CFE'].fillna(base_c['C_INI']).fillna(base_c['C_TRD']).fillna(base_c['C_PRO']).fillna(base_c['C_EAJ']).fillna(0.0)
 
                             df_v = df_k[df_k['Prefijo_Upper'].isin(['FCF', 'CCF'])].copy()
-                            df_v = df_v.merge(base_c, left_on=c_cod, right_index=True, how='left')
+                            df_v = df_v.merge(base_c[['C_BASE']], left_on=c_cod, right_index=True, how='left')
                             df_v['VAR_P'] = (df_v[c_costo] / df_v['C_BASE'].replace(0, 1)) - 1
                             df_v['DIF_M'] = df_v[c_costo] - df_v['C_BASE']
                             
@@ -396,15 +414,14 @@ def mostrar_modulo_costos():
                                 'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
                                 'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
                                 'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses,
-                                'anomalias': anomalias[[c_cod, 'Prefijo_Upper', df_k.columns[df_k.columns.str.contains('DOCUMENTO')][0], 'C_BASE', c_costo, 'DIF_M', 'VAR_P']]
+                                'anomalias': anomalias[[c_cod, 'Prefijo_Upper', c_doc, 'C_BASE', c_costo, 'DIF_M', 'VAR_P']]
                             }
                             
                             if 'huerfanos_df' in st.session_state: del st.session_state['huerfanos_df']
                             if 'pre_proceso' in st.session_state: del st.session_state['pre_proceso']
                             
                             st.rerun()
-
-        else:
+                            else:
             # ==========================================
             # DESCARGA DE PARTIDAS Y GUARDADO
             # ==========================================
@@ -483,3 +500,184 @@ def mostrar_modulo_costos():
                             st.session_state['auditoria_aprobada'] = False
                             st.cache_data.clear()
                             st.rerun()
+
+    # =========================================================================
+    # PESTAÑA 2: REGISTRO DE TRASLADOS (CON SELECTOR MANUAL)
+    # =========================================================================
+    with tab2:
+        st.subheader("🚚 Registro Automático de Traslados Nexus")
+
+        col_t1, col_t2, col_t3 = st.columns(3)
+        with col_t1:
+            mes_reg = st.selectbox("Mes:", range(1, 13), index=date.today().month - 1, key="mt_reg")
+        with col_t2:
+            anio_reg = st.number_input("Año:", min_value=2024, value=2026, key="at_reg")
+        with col_t3:
+            u_responsable = st.selectbox("Módulo Responsable:", ["CAFETERIA", "DESPENSA"], key="uni_reg")
+
+        st.divider()
+        tipo_movimiento = st.radio(
+            "¿Qué tipo de movimientos deseas registrar?", 
+            ["📥 Mostrar solo INGRESOS (Destino = Mi Unidad)", "📤 Mostrar solo SALIDAS (Origen = Mi Unidad)"], 
+            horizontal=True
+        )
+        
+        st.info(f"💡 Filtro Activo: Mostrando los registros de la opción seleccionada arriba para {u_responsable}.")
+
+        archivo_nexus = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
+
+        if archivo_nexus:
+            try:
+                df_raw_t = pd.read_excel(archivo_nexus, usecols="I,K,N,AA,AB,AC", header=0, names=['Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], dtype=str)
+                df_raw_t['Codigo'] = df_raw_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                df_raw_t['Monto'] = pd.to_numeric(df_raw_t['Monto'], errors='coerce').fillna(0.0)
+                df_raw_t['Cantidad'] = pd.to_numeric(df_raw_t['Cantidad'], errors='coerce').fillna(0.0)
+
+                condicion_destino = df_raw_t['Destino'].apply(lambda x: es_de_unidad(x, u_responsable))
+                condicion_origen = df_raw_t['Origen'].apply(lambda x: es_de_unidad(x, u_responsable))
+
+                if "ingreso" in tipo_movimiento.lower():
+                    filtro_direccion = condicion_destino
+                else:
+                    filtro_direccion = condicion_origen
+
+                mask_no_es_fantasma = ~df_raw_t['Destino'].isin(destinos_ignorados)
+                mask_base_tecnica = (df_raw_t['Monto'] > 0) & (df_raw_t['Categoria'] != 'SERVICIO')
+
+                df_tras_filtrados = df_raw_t[filtro_direccion & mask_no_es_fantasma & mask_base_tecnica]
+
+                if df_tras_filtrados.empty:
+                    st.warning("⚠️ No se encontraron movimientos que coincidan con tu filtro en este archivo.")
+                else:
+                    df_maestro_cta = obtener_dataframe("Categorias_Costos")
+                    df_maestro_cta['Codigo'] = df_maestro_cta['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                    df_tras_final = pd.merge(df_tras_filtrados, df_maestro_cta[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
+
+                    c_nulas = df_tras_final['Cuenta_Contable'].isna() | df_tras_final['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
+
+                    if c_nulas.any():
+                        st.warning("⚠️ CÓDIGOS SIN CUENTA DETECTADOS: Asignales una acción para poder guardar.")
+                        huerfanos_t = df_tras_final[c_nulas][['Codigo', 'Categoria', 'Origen', 'Destino']].drop_duplicates(subset=['Codigo'])
+                        huerfanos_t['Accion'] = "Usar Categoría Nativa"
+                        huerfanos_t['Cuenta_Manual'] = ""
+
+                        ed_tras_h = st.data_editor(huerfanos_t, hide_index=True, use_container_width=True, key="ed_huerfanos_tras")
+
+                        for _, r_ed in ed_tras_h.iterrows():
+                            if r_ed['Accion'] == 'Omitir (No guardar)':
+                                df_tras_final.loc[df_tras_final['Codigo'] == r_ed['Codigo'], 'Cuenta_Contable'] = 'OMITIDO_MANUAL'
+                            elif r_ed['Accion'] == 'Escribir Cuenta Manual':
+                                df_tras_final.loc[df_tras_final['Codigo'] == r_ed['Codigo'], 'Cuenta_Contable'] = r_ed['Cuenta_Manual']
+                            else:
+                                df_tras_final.loc[df_tras_final['Codigo'] == r_ed['Codigo'], 'Cuenta_Contable'] = r_ed['Categoria']
+
+                    df_tras_final = df_tras_final[~df_tras_final['Cuenta_Contable'].astype(str).str.upper().isin(["OMITIDO_MANUAL", "NO APLICA", "0", "0.0"])]
+
+                    if not df_tras_final.empty:
+                        st.success(f"✅ {len(df_tras_final)} Movimientos validados.")
+                        st.dataframe(df_tras_final, use_container_width=True)
+
+                        st.markdown("#### 📥 Partidas para Descargar:")
+                        grupos_descarga = df_tras_final.groupby(['Origen', 'Destino'])
+                        
+                        for idx_g, ((o_v, d_v), df_g) in enumerate(grupos_descarga):
+                            resumen_cta = df_g.groupby('Cuenta_Contable')['Monto'].sum()
+                            glosa = f"TRASLADO DE {o_v} A {d_v}, {meses_texto[mes_reg]} {anio_reg}"
+                            
+                            datos_partida = []
+                            for c_c, m_v in resumen_cta.items():
+                                if m_v > 0.01: datos_partida.append([str(c_c).replace(".0",""), "", glosa, round(m_v, 2), 0.00, ""])
+                            for c_c, m_v in resumen_cta.items():
+                                if m_v > 0.01: datos_partida.append([str(c_c).replace(".0",""), "", glosa, 0.00, round(m_v, 2), ""])
+                            
+                            st.download_button(f"⬇️ {d_v} (Origen: {o_v})", generar_excel_bytes(datos_partida), f"Partida_{d_v}_desde_{o_v}.xlsx", key=f"dl_t_btn_{idx_g}")
+
+                        if st.button("💾 Guardar registros en el Historial", type="primary", use_container_width=True):
+                            with st.spinner("Procesando guardado..."):
+                                st.cache_data.clear()
+                                df_hist_v = obtener_dataframe("Historico_Traslados")
+                                
+                                def gen_key(r, m, a): return f"{m}|{a}|{r['Origen']}|{r['Destino']}|{r['Codigo']}"
+                                df_tras_final['llave_auditoria'] = df_tras_final.apply(lambda r: gen_key(r, mes_reg, anio_reg), axis=1)
+
+                                if not df_hist_v.empty:
+                                    df_hist_v['llave'] = df_hist_v.apply(lambda r: f"{r['Mes']}|{r['Año']}|{r['Origen']}|{r['Destino']}|{r.get('Codigo', r.get('Código',''))}", axis=1)
+                                    df_insertar = df_tras_final[~df_tras_final['llave_auditoria'].isin(df_hist_v['llave'].values)]
+                                else:
+                                    df_insertar = df_tras_final
+
+                                if not df_insertar.empty:
+                                    ws_historico = conectar_hoja("Historico_Traslados")
+                                    f_actual = date.today().strftime('%d/%m/%Y')
+                                    filas_batch = [[f_actual, mes_reg, anio_reg, r['Origen'], r['Destino'], str(r['Cuenta_Contable']), round(r['Monto'],2), r['Codigo'], "Traslado Nexus", r['Cantidad']] for _, r in df_insertar.iterrows()]
+                                    ws_historico.append_rows(filas_batch)
+                                    st.success(f"🎉 Éxito: {len(df_insertar)} nuevos registros almacenados.")
+                                else:
+                                    st.warning("⚠️ No hay datos nuevos que guardar (Duplicados detectados).")
+                                st.cache_data.clear()
+
+            except Exception as e_t:
+                st.error(f"Error procesando el archivo: {e_t}")
+
+    # =========================================================================
+    # PESTAÑA 3: CONSULTA DE HISTORIAL OPERATIVO
+    # =========================================================================
+    with tab3:
+        st.subheader("🔍 Consulta de Historial de Cierres")
+        
+        if st.button("🔄 Actualizar Base de Datos", key="btn_update_historico"):
+            st.cache_data.clear()
+
+        df_resumen_c = obtener_dataframe("Cierres_Costos")
+        df_detalle_c = obtener_dataframe("Detalle_Cuentas")
+
+        if not df_resumen_c.empty:
+            df_resumen_c['Periodo'] = df_resumen_c['Mes'].astype(str).str.replace('.0','') + "/" + df_resumen_c['Año'].astype(str).str.replace('.0','') + " - " + df_resumen_c['Unidad']
+            p_sel = st.selectbox("Seleccione el Cierre:", df_resumen_c['Periodo'].unique().tolist(), index=len(df_resumen_c['Periodo'].unique())-1)
+
+            if p_sel:
+                f_res = df_resumen_c[df_resumen_c['Periodo'] == p_sel].iloc[-1]
+                m_cons, a_cons = str(f_res['Mes']).strip(), str(f_res['Año']).strip()
+                
+                v_i = float(f_res.iloc[4]); v_c = float(f_res.iloc[5]); v_f = float(f_res.iloc[6])
+                v_a = float(f_res.iloc[7]); v_d = float(f_res.iloc[8]); v_r = float(f_res.iloc[9])
+
+                c_m1, c_m2, c_m3, c_m4, c_m5 = st.columns(5)
+                c_m1.metric("Inicial", f"${v_i:,.2f}")
+                c_m2.metric("Compras", f"${v_c:,.2f}")
+                c_m3.metric("Final", f"${v_f:,.2f}")
+                c_m4.metric("Diferido", f"${v_d:,.2f}")
+                c_m5.metric("Costo Real", f"${v_r:,.2f}")
+
+                df_det_huerf = df_detalle_c[(df_detalle_c['Mes'].astype(str).str.replace('.0','') == m_cons) & (df_detalle_c['Año'].astype(str).str.replace('.0','') == a_cons)].copy()
+                
+                if not df_det_huerf.empty:
+                    df_det_huerf['Consumo'] = pd.to_numeric(df_det_huerf['Consumo'], errors='coerce').fillna(0.0)
+                    
+                    if st.checkbox("📂 Mostrar Detalle de Cuentas", key="chk_ver_detalle_h"):
+                        st.dataframe(df_det_huerf, use_container_width=True)
+
+                    st.divider()
+                    st.markdown("#### 📥 Regenerar Partidas Contables")
+                    
+                    f_partida = st.radio("Formato de Partida:", ["Cierre Estándar", "Cierre Consolidado"], key="r_tipo_h")
+                    dict_c_h = df_det_huerf.groupby('Cuenta')['Consumo'].sum().to_dict()
+                    total_h = sum(dict_c_h.values())
+
+                    if f_partida == "Cierre Estándar":
+                        con_h = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {m_cons}/{a_cons}."
+                        p_v_h = [["410104", "", con_h, round(total_h, 2), 0.00, ""]]
+                        
+                        for ct_h, mt_h in dict_c_h.items():
+                            cl_h = str(ct_h).replace(".0","").strip()
+                            if cl_h != "" and cl_h.lower() not in ["nan", "nat", "no aplica"]:
+                                if abs(mt_h) > 0.01:
+                                    p_v_h.append([cl_h, "", con_h, 0.00, round(mt_h, 2), ""])
+                        
+                        st.download_button(f"⬇️ Descargar Partida ({m_cons}/{a_cons})", generar_excel_bytes(p_v_h), f"H_P1_{m_cons}_{a_cons}.xlsx", key="btn_h_descarga")
+        else:
+            st.info("No hay cierres previos registrados en el histsrial.")
+
+# Ejecución del módulo
+if __name__ == "__main__":
+    mostrar_modulo_costos()
