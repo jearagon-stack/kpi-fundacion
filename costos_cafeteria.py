@@ -177,6 +177,10 @@ def mostrar_modulo_costos():
             with col_u2: arch_com = st.file_uploader("2. Compras", type=["xlsx"], accept_multiple_files=True)
             with col_u3: arch_fin = st.file_uploader("3. Inv. Final", type=["xlsx"], accept_multiple_files=True)
 
+            # NUEVO UPLOADER: Kardex de Auditoría
+            st.markdown("---")
+            arch_kardex_aud = st.file_uploader("4. Kardex de Auditoría (Opcional, previene bloqueos por costo promedio)", type=["xlsx"])
+
             if arch_ini and arch_com and arch_fin:
                 if 'huerfanos_df' not in st.session_state:
                     forzar_calculo = st.checkbox("⚠️ Forzar cálculo ciego (Omitir revisión de cuentas)")
@@ -260,51 +264,115 @@ def mostrar_modulo_costos():
                                 costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                                 costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
-                                # --- CÁLCULO DE VARIACIÓN DE COSTOS PARA AUDITORÍA ---
-                                df_comp_unitario = pd.DataFrame()
-                                if not df_com_m.empty:
-                                    df_temp_com = df_com_m.copy()
-                                    try:
-                                        regexCantCompras = [['CANTIDAD'], ['UNIDADES'], ['EXISTENCIAS'], ['SALDO']]
-                                        regexMontoCompras = [['TOTAL'], ['MONTO'], ['VALOR']]
-                                        df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, regexCantCompras), errors='coerce').fillna(0.0)
-                                        df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, regexMontoCompras), errors='coerce').fillna(0.0)
-                                        df_comp_unitario = df_temp_com.groupby('Codigo').agg({'Monto_Mes': 'sum', 'Unidades_Mes': 'sum'}).reset_index()
-                                        df_comp_unitario['Compras_Promedio'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
-                                    except: pass
-
-                                df_ini_unitario = pd.DataFrame()
-                                if not df_ini_m.empty:
-                                    df_temp_ini = df_ini_m.copy()
-                                    try:
-                                        regexCostoUnitIni = [['COSTO', 'U'], ['PRECIO', 'U']]
-                                        df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, regexCostoUnitIni), errors='coerce').fillna(0.0)
-                                        df_ini_unitario = df_temp_ini.groupby('Codigo')['Costo_Inicial'].max().reset_index()
-                                    except: pass
-
-                                df_inv_actual = pd.DataFrame()
-                                if not df_fin_m.empty:
-                                    df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
-                                    regexCantInv = [['EXISTENCIAS'], ['SALDO']]
-                                    regexCostoUnitInv = [['COSTO', 'U'], ['PRECIO', 'U']] 
-                                    df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCantInv), errors='coerce').fillna(0.0)
-                                    df_inv_actual['Costo_Unitario_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCostoUnitInv), errors='coerce').fillna(0.0)
-                                    df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
-
+                                # --- AUDITORÍA DE COSTOS INTEGRADAS (KARDEX O COMPRAS) ---
                                 df_var_costos = pd.DataFrame()
-                                if not df_comp_unitario.empty and not df_inv_actual.empty:
-                                    df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Compras_Promedio']], on='Codigo', how='inner')
-                                    df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0]
+                                
+                                if arch_kardex_aud:
+                                    # LÓGICA AVANZADA DEL KARDEX
+                                    df_k = pd.read_excel(arch_kardex_aud, dtype=str)
+                                    df_k.columns = df_k.columns.astype(str).str.strip().str.upper()
                                     
-                                    if not df_ini_unitario.empty:
-                                        df_var_costos = pd.merge(df_var_costos, df_ini_unitario[['Codigo', 'Costo_Inicial']], on='Codigo', how='left')
-                                    else:
-                                        df_var_costos['Costo_Inicial'] = 0.0
+                                    c_cod = next((c for c in df_k.columns if 'IDPRODUCTO' in c), None)
+                                    c_pref = next((c for c in df_k.columns if 'PREFI' in c), None)
+                                    c_doc = next((c for c in df_k.columns if 'DOCUMENTO' in c), None)
+                                    c_ent_u = next((c for c in df_k.columns if 'ENTRADASUNID' in c), None)
+                                    c_ent_v = next((c for c in df_k.columns if 'ENTRADASVAL' in c), None)
+                                    c_costo = next((c for c in df_k.columns if 'COSTOPROMEDIO' in c), None)
+
+                                    if all([c_cod, c_pref, c_ent_u, c_ent_v, c_costo]):
+                                        df_k[c_cod] = df_k[c_cod].astype(str).str.strip()
+                                        df_k[c_ent_u] = pd.to_numeric(df_k[c_ent_u], errors='coerce').fillna(0)
+                                        df_k[c_ent_v] = pd.to_numeric(df_k[c_ent_v], errors='coerce').fillna(0)
+                                        df_k[c_costo] = pd.to_numeric(df_k[c_costo], errors='coerce').fillna(0)
+                                        df_k['Prefijo_Upper'] = df_k[c_pref].fillna('').astype(str).str.upper().str.strip()
+                                        df_k['Doc_Upper'] = df_k[c_doc].fillna('').astype(str).str.upper().str.strip() if c_doc else ""
+
+                                        def get_weighted(df_sub):
+                                            df_valid = df_sub[df_sub[c_ent_u] > 0]
+                                            if df_valid.empty: return pd.DataFrame(columns=[c_cod, 'Costo_Ref'])
+                                            return df_valid.groupby(c_cod).apply(
+                                                lambda x: x[c_ent_v].sum() / x[c_ent_u].sum() if x[c_ent_u].sum() > 0 else None
+                                            ).dropna().reset_index(name='Costo_Ref')
+
+                                        ref_cfe = get_weighted(df_k[df_k['Prefijo_Upper'] == 'CFE']).rename(columns={'Costo_Ref': 'C_CFE'})
+                                        ref_trd = get_weighted(df_k[df_k['Prefijo_Upper'] == 'TRD']).rename(columns={'Costo_Ref': 'C_TRD'})
+                                        ref_pro = get_weighted(df_k[df_k['Prefijo_Upper'] == 'PRO']).rename(columns={'Costo_Ref': 'C_PRO'})
+                                        ref_eaj = get_weighted(df_k[df_k['Prefijo_Upper'] == 'EAJ']).rename(columns={'Costo_Ref': 'C_EAJ'})
+
+                                        df_ini = df_k[(df_k['Prefijo_Upper'].isin(['INI', 'NAN', ''])) | (df_k['Doc_Upper'].str.contains('SALDO ANTERIOR'))]
+                                        ref_ini = df_ini[df_ini[c_costo] > 0].groupby(c_cod)[c_costo].first().reset_index(name='C_INI')
+
+                                        ref_base = pd.DataFrame({c_cod: df_k[c_cod].unique()})
+                                        for df_ref, col in zip([ref_cfe, ref_ini, ref_trd, ref_pro, ref_eaj], ['C_CFE', 'C_INI', 'C_TRD', 'C_PRO', 'C_EAJ']):
+                                            if not df_ref.empty: ref_base = pd.merge(ref_base, df_ref, on=c_cod, how='left')
+                                            else: ref_base[col] = pd.NA
+
+                                        ref_base['COSTO_BASE'] = ref_base['C_CFE'].fillna(ref_base['C_INI']).fillna(ref_base['C_TRD']).fillna(ref_base['C_PRO']).fillna(ref_base['C_EAJ']).fillna(0)
+
+                                        # Obtener Costo Actual de df_fin_m
+                                        df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
+                                        df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                                        df_inv_actual['Costo_Actual'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                        df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
+
+                                        df_var_costos = pd.merge(df_inv_actual, ref_base[[c_cod, 'COSTO_BASE']], on='Codigo', how='inner')
+                                        df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0]
+                                        df_var_costos = df_var_costos.rename(columns={'COSTO_BASE': 'Compras_Promedio'}) # Mapear para compatibilidad
+                                        df_var_costos['Costo_Inicial'] = df_var_costos['Compras_Promedio'] # Llenar para no romper UI
+
+                                        df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
+                                        df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
+                                        df_var_costos['Diferencia_$'] = df_var_costos['Costo_Actual'] - df_var_costos['Compras_Promedio']
                                         
-                                    df_var_costos = df_var_costos.rename(columns={'Costo_Unitario_Actual': 'Costo_Actual'})
-                                    df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
-                                    df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
-                                    df_var_costos = df_var_costos[['Codigo', 'Producto', 'Costo_Inicial', 'Compras_Promedio', 'Costo_Actual', 'Variacion_Porcentual']]
+                                        # Aplicar Doble Filtro de la Auditoría
+                                        cond_perc = df_var_costos['Variacion_Porcentual'].abs() > 0.01
+                                        cond_mone = df_var_costos['Diferencia_$'].abs() >= 0.019
+                                        df_var_costos = df_var_costos[cond_perc & cond_mone]
+
+                                else:
+                                    # LÓGICA ANTIGUA (Solo si NO suben Kardex)
+                                    df_comp_unitario = pd.DataFrame()
+                                    if not df_com_m.empty:
+                                        df_temp_com = df_com_m.copy()
+                                        try:
+                                            df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, [['CANTIDAD'], ['UNIDADES'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                                            df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
+                                            df_comp_unitario = df_temp_com.groupby('Codigo').agg({'Monto_Mes': 'sum', 'Unidades_Mes': 'sum'}).reset_index()
+                                            df_comp_unitario['Compras_Promedio'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
+                                        except: pass
+
+                                    df_ini_unitario = pd.DataFrame()
+                                    if not df_ini_m.empty:
+                                        df_temp_ini = df_ini_m.copy()
+                                        try:
+                                            df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                            df_ini_unitario = df_temp_ini.groupby('Codigo')['Costo_Inicial'].max().reset_index()
+                                        except: pass
+
+                                    df_inv_actual = pd.DataFrame()
+                                    if not df_fin_m.empty:
+                                        df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
+                                        df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                                        df_inv_actual['Costo_Actual'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                        df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
+
+                                    if not df_comp_unitario.empty and not df_inv_actual.empty:
+                                        df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Compras_Promedio']], on='Codigo', how='inner')
+                                        df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0]
+                                        
+                                        if not df_ini_unitario.empty:
+                                            df_var_costos = pd.merge(df_var_costos, df_ini_unitario[['Codigo', 'Costo_Inicial']], on='Codigo', how='left')
+                                        else:
+                                            df_var_costos['Costo_Inicial'] = 0.0
+                                            
+                                        df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
+                                        df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
+                                        df_var_costos['Diferencia_$'] = df_var_costos['Costo_Actual'] - df_var_costos['Compras_Promedio']
+                                        # Filtro Conservador
+                                        cond_perc = df_var_costos['Variacion_Porcentual'].abs() > 0.01
+                                        cond_mone = df_var_costos['Diferencia_$'].abs() >= 0.019
+                                        df_var_costos = df_var_costos[cond_perc & cond_mone]
+
 
                                 st.session_state['memoria_cierre'] = {
                                     'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
@@ -435,7 +503,7 @@ def mostrar_modulo_costos():
                             costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                             costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
-                            # --- CÁLCULO DE VARIACIÓN DE COSTOS PARA AUDITORÍA ---
+                            # --- CÁLCULO DE VARIACIÓN (KARDEX NO DISPONIBLE AQUI) ---
                             df_comp_unitario = pd.DataFrame()
                             if not df_com_m.empty:
                                 df_temp_com = df_com_m.copy()
@@ -479,6 +547,11 @@ def mostrar_modulo_costos():
                                 df_var_costos = df_var_costos.rename(columns={'Costo_Unitario_Actual': 'Costo_Actual'})
                                 df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
                                 df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
+                                df_var_costos['Diferencia_$'] = df_var_costos['Costo_Actual'] - df_var_costos['Compras_Promedio']
+                                
+                                cond_perc = df_var_costos['Variacion_Porcentual'].abs() > 0.01
+                                cond_mone = df_var_costos['Diferencia_$'].abs() >= 0.019
+                                df_var_costos = df_var_costos[cond_perc & cond_mone]
                                 df_var_costos = df_var_costos[['Codigo', 'Producto', 'Costo_Inicial', 'Compras_Promedio', 'Costo_Actual', 'Variacion_Porcentual']]
 
                             st.session_state['memoria_cierre'] = {
