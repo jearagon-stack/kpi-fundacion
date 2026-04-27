@@ -786,35 +786,41 @@ def mostrar_modulo_costos():
         
         st.info(f"💡 Filtro Activo: Mostrando los registros de la opción seleccionada arriba para {u_responsable}.")
 
-        archivo_nexus = st.file_uploader("Reporte Nexus (I:Cod, K:Cant, N:Monto, AA:Cat, AB:Origen, AC:Destino)", type=["xlsx"], key="atf_reg")
+        archivo_nexus = st.file_uploader("Reporte Nexus (A:Tipo, I:Cod, K:Cant, N:Monto, AA:Cat, AC:Salida, AD:Ingreso)", type=["xlsx"], key="atf_reg")
 
         if archivo_nexus:
             try:
-                df_raw_t = pd.read_excel(archivo_nexus, usecols="I,K,N,AA,AB,AC", header=0, names=['Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], dtype=str)
+                # 1. Leer las columnas exactas solicitadas
+                df_raw_t = pd.read_excel(archivo_nexus, usecols="A,I,K,N,AA,AC,AD", header=0, names=['Tipo', 'Codigo', 'Cantidad', 'Monto', 'Categoria', 'Origen', 'Destino'], dtype=str)
+                
                 df_raw_t['Codigo'] = df_raw_t['Codigo'].astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                 df_raw_t['Monto'] = pd.to_numeric(df_raw_t['Monto'], errors='coerce').fillna(0.0)
                 df_raw_t['Cantidad'] = pd.to_numeric(df_raw_t['Cantidad'], errors='coerce').fillna(0.0)
 
-                mask_dest_caf = df_raw_t['Destino'].apply(es_cafeteria)
-                mask_orig_caf = df_raw_t['Origen'].apply(es_cafeteria)
-                mask_dest_desp = df_raw_t['Destino'].apply(es_despensa)
-                mask_orig_desp = df_raw_t['Origen'].apply(es_despensa)
+                # 2. Función para validar que la bodega sea una sucursal interna permitida
+                def es_valida_interna(b):
+                    b = str(b).strip().upper()
+                    bodegas_validas = ["CAFETERIA", "TERRAZA", "CENTRO SOHO", "DESPENSA"]
+                    return any(val in b for val in bodegas_validas) and not any(ign in b for ign in destinos_ignorados)
 
-                if u_responsable == "CAFETERIA":
-                    if "ingreso" in tipo_movimiento.lower():
-                        filtro_direccion = mask_dest_caf & (mask_orig_caf | mask_orig_desp)
-                    else:
-                        filtro_direccion = mask_orig_caf & (mask_dest_caf | mask_dest_desp)
+                mask_dest_mi_unidad = df_raw_t['Destino'].apply(lambda x: es_de_unidad(x, u_responsable))
+                mask_orig_mi_unidad = df_raw_t['Origen'].apply(lambda x: es_de_unidad(x, u_responsable))
+                
+                mask_dest_es_interna = df_raw_t['Destino'].apply(es_valida_interna)
+                mask_orig_es_interna = df_raw_t['Origen'].apply(es_valida_interna)
+
+                # 3. Lógica cruzada: Validar Origen vs Destino excluyendo traspasos a la misma unidad
+                if "ingreso" in tipo_movimiento.lower():
+                    # Entra a MI unidad (Destino), proviniendo de OTRA unidad interna (Origen)
+                    filtro_direccion = mask_dest_mi_unidad & mask_orig_es_interna & ~mask_orig_mi_unidad
                 else:
-                    if "ingreso" in tipo_movimiento.lower():
-                        filtro_direccion = mask_dest_desp & (mask_orig_desp | mask_orig_caf)
-                    else:
-                        filtro_direccion = mask_orig_desp & (mask_dest_desp | mask_dest_caf)
+                    # Sale de MI unidad (Origen), hacia OTRA unidad interna (Destino)
+                    filtro_direccion = mask_orig_mi_unidad & mask_dest_es_interna & ~mask_dest_mi_unidad
 
-                mask_no_es_fantasma = ~df_raw_t['Destino'].isin(destinos_ignorados)
+                # Excluir servicios y montos en cero
                 mask_base_tecnica = (df_raw_t['Monto'] > 0) & (df_raw_t['Categoria'] != 'SERVICIO')
 
-                df_tras_filtrados = df_raw_t[filtro_direccion & mask_no_es_fantasma & mask_base_tecnica]
+                df_tras_filtrados = df_raw_t[filtro_direccion & mask_base_tecnica]
 
                 if df_tras_filtrados.empty:
                     st.warning("⚠️ No se encontraron movimientos que coincidan con tu filtro en este archivo.")
