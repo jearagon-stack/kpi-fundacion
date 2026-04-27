@@ -5,7 +5,7 @@ from utils import obtener_dataframe, conectar_hoja
 import io
 
 def mostrar_modulo_costos():
-    st.title("Contabilidad de Costos")
+    st.title("Contabilidad de Costos - Cafetería")
 
     tab1, tab2, tab3 = st.tabs(["📝 Generar Cierre", "🚚 Partidas de Traslados", "🔍 Consultar Histórico"])
 
@@ -16,6 +16,18 @@ def mostrar_modulo_costos():
         "CAFETERIA": ["TERRAZA", "CENTRO SOHO", "CAFETERIA CENTRAL", "CAFETERIA", "CAFETERIA ABASTECIMIENTO"],
         "DESPENSA":  ["DESPENSA"]
     }
+
+    # BODEGAS PERMITIDAS PARA LA AUDITORÍA DE KARDEX
+    BODEGAS_CAFETERIA = [
+        "CAFETERIA CENTRAL", 
+        "CAFETERIA ABASTECIMIENTO", 
+        "CAFETERIA ICAS", 
+        "CAFETERIA POLIDEPORTIVO", 
+        "CAFETERIA EVENTOS", 
+        "CAFETERIA JARDINES",
+        "TERRAZA",
+        "CENTRO SOHO"
+    ]
 
     # LA LISTA NEGRA: Destinos que el sistema ignorará por completo
     destinos_ignorados = [
@@ -172,22 +184,29 @@ def mostrar_modulo_costos():
 
             costo_diferido_anterior = st.number_input("Costo Diferido de Arrastre (110602):", min_value=0.0, value=0.0)
             
+            # --- MOTOR CONTABLE (LA MATEMÁTICA PRINCIPAL) ---
+            st.markdown("#### 📁 Archivos Base de Cierre (Cálculo de Consumo)")
             col_u1, col_u2, col_u3 = st.columns(3)
             with col_u1: arch_ini = st.file_uploader("1. Inv. Inicial", type=["xlsx"], accept_multiple_files=True)
             with col_u2: arch_com = st.file_uploader("2. Compras", type=["xlsx"], accept_multiple_files=True)
             with col_u3: arch_fin = st.file_uploader("3. Inv. Final", type=["xlsx"], accept_multiple_files=True)
 
-            # NUEVO UPLOADER: Kardex de Auditoría
+            # --- MOTOR AUDITOR (EL SEMÁFORO KARDEX) ---
             st.markdown("---")
-            arch_kardex_aud = st.file_uploader("4. Kardex de Auditoría (Opcional, previene bloqueos por costo promedio)", type=["xlsx"])
+            st.markdown("#### 🛡️ Auditoría Inteligente (Validación de Costos)")
+            col_k1, col_k2 = st.columns(2)
+            with col_k1: arch_kardex_aud = st.file_uploader("4. Kardex Valuado (Opcional)", type=["xlsx"], accept_multiple_files=True)
+            with col_k2: arch_kardex_res = st.file_uploader("5. Kardex Resumen (Para Categorías)", type=["xlsx"])
+
 
             if arch_ini and arch_com and arch_fin:
                 if 'huerfanos_df' not in st.session_state:
                     forzar_calculo = st.checkbox("⚠️ Forzar cálculo ciego (Omitir revisión de cuentas)")
                     
                     if st.button("⚙️ Procesar Archivos y Guardar en Memoria", type="primary", use_container_width=True):
-                        with st.spinner("Realizando validación cruzada y buscando anomalías..."):
+                        with st.spinner("Realizando cálculos contables y verificando Kardex..."):
                             try:
+                                # --- 1. LÓGICA CONTABLE ORIGINAL (CÁLCULO DEL CONSUMO) ---
                                 df_inicial = consolidar(arch_ini); df_compras = consolidar(arch_com); df_final = consolidar(arch_fin)
                                 df_dic = obtener_dataframe("Categorias_Costos")
                                 def limpiar_cod(s): return s.astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
@@ -264,79 +283,126 @@ def mostrar_modulo_costos():
                                 costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                                 costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
-                                # --- AUDITORÍA DE COSTOS INTEGRADAS (KARDEX O COMPRAS) ---
+
+                                # --- 2. EL AUDITOR INTELIGENTE (KARDEX VALUADO + RESUMEN) ---
                                 df_var_costos = pd.DataFrame()
-                                
-                                if arch_kardex_aud:
-                                    # LÓGICA AVANZADA DEL KARDEX
-                                    df_k = pd.read_excel(arch_kardex_aud, dtype=str)
-                                    df_k.columns = df_k.columns.astype(str).str.strip().str.upper()
-                                    
-                                    c_cod = next((c for c in df_k.columns if 'IDPRODUCTO' in c), None)
-                                    c_pref = next((c for c in df_k.columns if 'PREFI' in c), None)
-                                    c_doc = next((c for c in df_k.columns if 'DOCUMENTO' in c), None)
-                                    c_ent_u = next((c for c in df_k.columns if 'ENTRADASUNID' in c), None)
-                                    c_ent_v = next((c for c in df_k.columns if 'ENTRADASVAL' in c), None)
-                                    c_costo = next((c for c in df_k.columns if 'COSTOPROMEDIO' in c), None)
+                                df_anomalias_kardex = pd.DataFrame()
 
-                                    if all([c_cod, c_pref, c_ent_u, c_ent_v, c_costo]):
-                                        df_k[c_cod] = df_k[c_cod].astype(str).str.strip()
-                                        df_k[c_ent_u] = pd.to_numeric(df_k[c_ent_u], errors='coerce').fillna(0)
-                                        df_k[c_ent_v] = pd.to_numeric(df_k[c_ent_v], errors='coerce').fillna(0)
-                                        df_k[c_costo] = pd.to_numeric(df_k[c_costo], errors='coerce').fillna(0)
-                                        df_k['Prefijo_Upper'] = df_k[c_pref].fillna('').astype(str).str.upper().str.strip()
-                                        df_k['Doc_Upper'] = df_k[c_doc].fillna('').astype(str).str.upper().str.strip() if c_doc else ""
+                                if arch_kardex_aud and arch_kardex_res:
+                                    try:
+                                        # Diccionario de Categorías
+                                        df_res_k = pd.read_excel(arch_kardex_res, dtype=str)
+                                        df_res_k.columns = df_res_k.columns.astype(str).str.strip().str.upper()
+                                        c_cod_res = next((c for c in df_res_k.columns if 'IDPRODUCTO' in c or 'COD' in c), df_res_k.columns[0])
+                                        c_cat_res = next((c for c in df_res_k.columns if 'CATEGOR' in c), None)
+                                        mapa_cat_k = dict(zip(df_res_k[c_cod_res].str.strip(), df_res_k[c_cat_res].str.upper().str.strip())) if c_cat_res else {}
 
-                                        def get_weighted(df_sub):
-                                            df_valid = df_sub[df_sub[c_ent_u] > 0]
-                                            if df_valid.empty: return pd.DataFrame(columns=[c_cod, 'Costo_Ref'])
-                                            return df_valid.groupby(c_cod).apply(
-                                                lambda x: x[c_ent_v].sum() / x[c_ent_u].sum() if x[c_ent_u].sum() > 0 else None
-                                            ).dropna().reset_index(name='Costo_Ref')
+                                        # Kardex Valuado Multi-Archivo
+                                        dfs_k = [pd.read_excel(f, dtype=str) for f in arch_kardex_aud]
+                                        df_k = pd.concat(dfs_k, ignore_index=True)
+                                        df_k.columns = df_k.columns.astype(str).str.strip().str.upper()
 
-                                        ref_cfe = get_weighted(df_k[df_k['Prefijo_Upper'] == 'CFE']).rename(columns={'Costo_Ref': 'C_CFE'})
-                                        ref_trd = get_weighted(df_k[df_k['Prefijo_Upper'] == 'TRD']).rename(columns={'Costo_Ref': 'C_TRD'})
-                                        ref_pro = get_weighted(df_k[df_k['Prefijo_Upper'] == 'PRO']).rename(columns={'Costo_Ref': 'C_PRO'})
-                                        ref_eaj = get_weighted(df_k[df_k['Prefijo_Upper'] == 'EAJ']).rename(columns={'Costo_Ref': 'C_EAJ'})
+                                        # Mapeo Exacto
+                                        c_cod_k = next((c for c in df_k.columns if 'IDPRODUCTO' in c), None)
+                                        c_bod_k = next((c for c in df_k.columns if 'NOMBREBODEGA' in c), None)
+                                        c_doc_k = next((c for c in df_k.columns if 'DOCUMENTO' in c), None)
+                                        c_pref_k = next((c for c in df_k.columns if 'PREFI' in c), None)
+                                        c_ent_u_k = next((c for c in df_k.columns if 'ENTRADASUNID' in c), None)
+                                        c_ent_v_k = next((c for c in df_k.columns if 'ENTRADASVAL' in c), None)
+                                        c_costo_k = next((c for c in df_k.columns if 'COSTOPROMEDIO' in c), None)
 
-                                        df_ini = df_k[(df_k['Prefijo_Upper'].isin(['INI', 'NAN', ''])) | (df_k['Doc_Upper'].str.contains('SALDO ANTERIOR'))]
-                                        ref_ini = df_ini[df_ini[c_costo] > 0].groupby(c_cod)[c_costo].first().reset_index(name='C_INI')
+                                        if all([c_cod_k, c_bod_k, c_doc_k, c_ent_u_k, c_ent_v_k, c_costo_k]):
+                                            df_k[c_cod_k] = df_k[c_cod_k].str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
+                                            
+                                            # Herencia de Bodega para 'Saldo anterior'
+                                            df_k[c_bod_k] = df_k.groupby(c_cod_k)[c_bod_k].ffill().bfill()
+                                            
+                                            # Filtro de Bodegas y Categorías
+                                            bodegas_validas = BODEGAS_CAFETERIA if unidad_cierre == "CAFETERIA" else ["DESPENSA"]
+                                            df_k = df_k[df_k[c_bod_k].str.strip().isin(bodegas_validas)]
+                                            
+                                            df_k['CAT_REAL'] = df_k[c_cod_k].map(mapa_cat_k).fillna('DESCONOCIDA')
+                                            df_k = df_k[df_k['CAT_REAL'] != 'SERVICIO']
 
-                                        ref_base = pd.DataFrame({c_cod: df_k[c_cod].unique()})
-                                        for df_ref, col in zip([ref_cfe, ref_ini, ref_trd, ref_pro, ref_eaj], ['C_CFE', 'C_INI', 'C_TRD', 'C_PRO', 'C_EAJ']):
-                                            if not df_ref.empty: ref_base = pd.merge(ref_base, df_ref, on=c_cod, how='left')
-                                            else: ref_base[col] = pd.NA
+                                            # Conversión Segura a Float
+                                            for col in [c_ent_u_k, c_ent_v_k, c_costo_k]:
+                                                df_k[col] = pd.to_numeric(df_k[col], errors='coerce').fillna(0.0).astype(float)
 
-                                        ref_base['COSTO_BASE'] = ref_base['C_CFE'].fillna(ref_base['C_INI']).fillna(ref_base['C_TRD']).fillna(ref_base['C_PRO']).fillna(ref_base['C_EAJ']).fillna(0)
+                                            df_k['Prefijo_Upper'] = df_k[c_pref_k].fillna('').astype(str).str.upper().str.strip()
+                                            df_k['Doc_Upper'] = df_k[c_doc_k].fillna('').astype(str).str.upper().str.strip()
 
-                                        # Obtener Costo Actual de df_fin_m
-                                        df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
-                                        df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
-                                        df_inv_actual['Costo_Actual'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-                                        df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
+                                            # Función Cascada Blindada
+                                            def get_ref_series(df_sub, pref_list):
+                                                v = df_sub[df_sub['Prefijo_Upper'].isin(pref_list)]
+                                                v = v[v[c_ent_u_k] > 0]
+                                                if v.empty: return pd.Series(dtype=float)
+                                                ent_v_sum = v.groupby(c_cod_k)[c_ent_v_k].sum().astype(float)
+                                                ent_u_sum = v.groupby(c_cod_k)[c_ent_u_k].sum().astype(float)
+                                                s = ent_v_sum / ent_u_sum
+                                                return s.replace([float('inf'), -float('inf')], 0.0).fillna(0.0).replace(0.0, pd.NA)
 
-                                        df_var_costos = pd.merge(df_inv_actual, ref_base[[c_cod, 'COSTO_BASE']], on='Codigo', how='inner')
-                                        df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0]
-                                        df_var_costos = df_var_costos.rename(columns={'COSTO_BASE': 'Compras_Promedio'}) # Mapear para compatibilidad
-                                        df_var_costos['Costo_Inicial'] = df_var_costos['Compras_Promedio'] # Llenar para no romper UI
+                                            ref_compras = get_ref_series(df_k, ['CFE', 'FCOM', 'FSE'])
+                                            ref_trd = get_ref_series(df_k, ['TRD'])
+                                            ref_pro = get_ref_series(df_k, ['PRO'])
+                                            ref_eaj = get_ref_series(df_k, ['EAJ'])
 
-                                        df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
-                                        df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
-                                        df_var_costos['Diferencia_$'] = df_var_costos['Costo_Actual'] - df_var_costos['Compras_Promedio']
-                                        
-                                        # Aplicar Doble Filtro de la Auditoría
-                                        cond_perc = df_var_costos['Variacion_Porcentual'].abs() > 0.01
-                                        cond_mone = df_var_costos['Diferencia_$'].abs() >= 0.019
-                                        df_var_costos = df_var_costos[cond_perc & cond_mone]
+                                            mask_ini_k = df_k['Doc_Upper'].str.contains('SALDO ANTERIOR', na=False) & (df_k[c_costo_k] > 0)
+                                            ref_ini = df_k[mask_ini_k].groupby(c_cod_k)[c_costo_k].first().astype(float).replace(0.0, pd.NA)
 
+                                            # Construcción de la Base de Costo
+                                            base_c = pd.DataFrame(index=df_k[c_cod_k].unique())
+                                            base_c['C_COMPRA'] = base_c.index.map(ref_compras)
+                                            base_c['C_INI'] = base_c.index.map(ref_ini)
+                                            base_c['C_TRD'] = base_c.index.map(ref_trd)
+                                            base_c['C_PRO'] = base_c.index.map(ref_pro)
+                                            base_c['C_EAJ'] = base_c.index.map(ref_eaj)
+
+                                            base_c['C_BASE'] = base_c['C_COMPRA']
+                                            base_c['ORIGEN'] = 'COMPRA'
+
+                                            mask = base_c['C_BASE'].isna()
+                                            base_c.loc[mask, 'C_BASE'] = base_c.loc[mask, 'C_INI']
+                                            base_c.loc[mask, 'ORIGEN'] = 'SALDO ANTERIOR'
+
+                                            mask = base_c['C_BASE'].isna()
+                                            base_c.loc[mask, 'C_BASE'] = base_c.loc[mask, 'C_TRD']
+                                            base_c.loc[mask, 'ORIGEN'] = 'TRASLADO'
+
+                                            mask = base_c['C_BASE'].isna()
+                                            base_c.loc[mask, 'C_BASE'] = base_c.loc[mask, 'C_PRO']
+                                            base_c.loc[mask, 'ORIGEN'] = 'PRODUCCION'
+
+                                            mask = base_c['C_BASE'].isna()
+                                            base_c.loc[mask, 'C_BASE'] = base_c.loc[mask, 'C_EAJ']
+                                            base_c.loc[mask, 'ORIGEN'] = 'AJUSTE ENTRADA'
+
+                                            base_c['C_BASE'] = base_c['C_BASE'].fillna(0.0).astype(float)
+
+                                            # Evaluación final contra las Ventas
+                                            df_v = df_k[df_k['Prefijo_Upper'].isin(['FCF', 'CCF'])].copy()
+                                            df_v = df_v.merge(base_c[['C_BASE', 'ORIGEN']], left_on=c_cod_k, right_index=True, how='left')
+
+                                            df_v['C_BASE'] = pd.to_numeric(df_v['C_BASE'], errors='coerce').fillna(0.0).astype(float)
+                                            df_v['COSTO_NUM'] = pd.to_numeric(df_v[c_costo_k], errors='coerce').fillna(0.0).astype(float)
+
+                                            safe_base = df_v['C_BASE'].replace(0.0, 1.0)
+                                            df_v['VAR_P'] = (df_v['COSTO_NUM'] / safe_base) - 1.0
+                                            df_v['DIF_M'] = df_v['COSTO_NUM'] - df_v['C_BASE']
+
+                                            anomalias = df_v[(df_v['VAR_P'].abs() > 0.01) & (df_v['DIF_M'].abs() >= 0.019)]
+                                            df_anomalias_kardex = anomalias[[c_cod_k, 'Prefijo_Upper', c_doc_k, 'ORIGEN', 'C_BASE', 'COSTO_NUM', 'DIF_M', 'VAR_P']].copy()
+                                    except Exception as e:
+                                        st.warning(f"Auditoría Kardex omitida por error de formato: {e}")
                                 else:
-                                    # LÓGICA ANTIGUA (Solo si NO suben Kardex)
+                                    # Fallback a variación antigua si no suben el Kardex
                                     df_comp_unitario = pd.DataFrame()
                                     if not df_com_m.empty:
                                         df_temp_com = df_com_m.copy()
                                         try:
-                                            df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, [['CANTIDAD'], ['UNIDADES'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
-                                            df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
+                                            regexCantCompras = [['CANTIDAD'], ['UNIDADES'], ['EXISTENCIAS'], ['SALDO']]
+                                            regexMontoCompras = [['TOTAL'], ['MONTO'], ['VALOR']]
+                                            df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, regexCantCompras), errors='coerce').fillna(0.0)
+                                            df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, regexMontoCompras), errors='coerce').fillna(0.0)
                                             df_comp_unitario = df_temp_com.groupby('Codigo').agg({'Monto_Mes': 'sum', 'Unidades_Mes': 'sum'}).reset_index()
                                             df_comp_unitario['Compras_Promedio'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
                                         except: pass
@@ -345,15 +411,18 @@ def mostrar_modulo_costos():
                                     if not df_ini_m.empty:
                                         df_temp_ini = df_ini_m.copy()
                                         try:
-                                            df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                            regexCostoUnitIni = [['COSTO', 'U'], ['PRECIO', 'U']]
+                                            df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, regexCostoUnitIni), errors='coerce').fillna(0.0)
                                             df_ini_unitario = df_temp_ini.groupby('Codigo')['Costo_Inicial'].max().reset_index()
                                         except: pass
 
                                     df_inv_actual = pd.DataFrame()
                                     if not df_fin_m.empty:
                                         df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
-                                        df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
-                                        df_inv_actual['Costo_Actual'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                        regexCantInv = [['EXISTENCIAS'], ['SALDO']]
+                                        regexCostoUnitInv = [['COSTO', 'U'], ['PRECIO', 'U']] 
+                                        df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCantInv), errors='coerce').fillna(0.0)
+                                        df_inv_actual['Costo_Unitario_Actual'] = pd.to_numeric(get_num(df_fin_m, regexCostoUnitInv), errors='coerce').fillna(0.0)
                                         df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
 
                                     if not df_comp_unitario.empty and not df_inv_actual.empty:
@@ -365,13 +434,15 @@ def mostrar_modulo_costos():
                                         else:
                                             df_var_costos['Costo_Inicial'] = 0.0
                                             
+                                        df_var_costos = df_var_costos.rename(columns={'Costo_Unitario_Actual': 'Costo_Actual'})
                                         df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
                                         df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
                                         df_var_costos['Diferencia_$'] = df_var_costos['Costo_Actual'] - df_var_costos['Compras_Promedio']
-                                        # Filtro Conservador
+                                        
                                         cond_perc = df_var_costos['Variacion_Porcentual'].abs() > 0.01
                                         cond_mone = df_var_costos['Diferencia_$'].abs() >= 0.019
                                         df_var_costos = df_var_costos[cond_perc & cond_mone]
+                                        df_var_costos = df_var_costos[['Codigo', 'Producto', 'Costo_Inicial', 'Compras_Promedio', 'Costo_Actual', 'Variacion_Porcentual']]
 
 
                                 st.session_state['memoria_cierre'] = {
@@ -381,7 +452,9 @@ def mostrar_modulo_costos():
                                     'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
                                     'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
                                     'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
-                                    'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
+                                    'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses,
+                                    'anomalias_kardex': df_anomalias_kardex,
+                                    'anomalias_antiguas': df_var_costos
                                 }
 
                                 st.session_state['datos_auditoria'] = {
@@ -503,7 +576,7 @@ def mostrar_modulo_costos():
                             costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                             costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
-                            # --- CÁLCULO DE VARIACIÓN (KARDEX NO DISPONIBLE AQUI) ---
+                            # Fallback Variación (Para no romper si no suben Kardex)
                             df_comp_unitario = pd.DataFrame()
                             if not df_com_m.empty:
                                 df_temp_com = df_com_m.copy()
@@ -561,7 +634,9 @@ def mostrar_modulo_costos():
                                 'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
                                 'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
                                 'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
-                                'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses
+                                'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses,
+                                'anomalias_kardex': pd.DataFrame(), # Dejar vacío si se forzó por el flujo viejo
+                                'anomalias_antiguas': df_var_costos
                             }
 
                             st.session_state['datos_auditoria'] = {
@@ -590,15 +665,44 @@ def mostrar_modulo_costos():
             r6.metric("Real (=)", f"${mem['costo_real']:,.2f}")
 
             st.divider()
-            if st.checkbox("📂 Ver Detalle de Movimientos / Cuentas"):
+            
+            # --- RENDERIZADO DEL AUDITOR INTELIGENTE ---
+            st.subheader("🕵️ Auditoría de Costo de Venta (Doble Filtro)")
+            
+            if 'anomalias_kardex' in mem and not mem['anomalias_kardex'].empty:
+                df_a = mem['anomalias_kardex']
+                df_criticas = df_a[df_a['ORIGEN'] != 'COMPRA']
+                
+                if not df_criticas.empty:
+                    st.error("⚠️ ALERTAS CRÍTICAS: Elevación de costo NO relacionada a Compras")
+                    st.dataframe(df_criticas.style.format({'C_BASE':'${:.4f}', 'COSTO_NUM':'${:.4f}', 'DIF_M':'${:.4f}', 'VAR_P':'{:.2%}'}), use_container_width=True)
+                else:
+                    st.success("✅ No hay elevaciones sospechosas por Ajustes, Producción o Traslados.")
+                
+                with st.expander("🔍 Ver Auditoría Completa (Incluye variaciones de Mercado/Compras)"):
+                    st.write("Esta tabla muestra todos los productos que variaron su costo en más del 1% y $0.02.")
+                    st.dataframe(df_a.style.format({'C_BASE':'${:.4f}', 'COSTO_NUM':'${:.4f}', 'DIF_M':'${:.4f}', 'VAR_P':'{:.2%}'}), use_container_width=True)
+
+            elif 'anomalias_antiguas' in mem and not mem['anomalias_antiguas'].empty:
+                st.warning("Visualizando auditoría básica (Kardex no subido o no válido).")
+                st.dataframe(mem['anomalias_antiguas'], use_container_width=True)
+            else:
+                st.success("✅ Validación impecable: No hay desviaciones significativas detectadas.")
+
+            st.divider()
+            if st.checkbox("📂 Ver Detalle de Consumo por Cuentas"):
                 df_det_view = pd.DataFrame(list(mem['consumo_por_cuenta'].items()), columns=['Cuenta Contable', 'Consumo (Impacto)'])
                 st.dataframe(df_det_view, use_container_width=True)
 
             if not st.session_state.get('auditoria_aprobada', False):
-                st.warning("⚠️ Ve al módulo **'VALIDACIÓN DE COSTOS'** en el menú izquierdo para auditar y aprobar este periodo.")
-                if st.button("🗑️ Descartar Memoria y Subir Archivos Nuevos"):
+                st.warning("⚠️ Debes revisar los resultados operativos antes de dar el cierre por bueno.")
+                col_b1, col_b2 = st.columns(2)
+                if col_b1.button("🗑️ Descartar Memoria y Subir Archivos Nuevos"):
                     del st.session_state['memoria_cierre']
                     if 'datos_auditoria' in st.session_state: del st.session_state['datos_auditoria']
+                    st.rerun()
+                if col_b2.button("✅ Aprobar Auditoría y Proceder"):
+                    st.session_state['auditoria_aprobada'] = True
                     st.rerun()
             else:
                 st.success("✅ Protocolo de Integridad Aprobado. Proceda con las descargas y el cierre.")
@@ -653,7 +757,6 @@ def mostrar_modulo_costos():
                             st.cache_data.clear()
                             st.rerun()
 
-    # ==========================================
     # =========================================================================
     # PESTAÑA 2: REGISTRO DE TRASLADOS (CON SELECTOR MANUAL)
     # =========================================================================
@@ -669,7 +772,6 @@ def mostrar_modulo_costos():
             u_responsable = st.selectbox("Módulo Responsable:", ["CAFETERIA", "DESPENSA"], key="uni_reg")
 
         st.divider()
-        # === EL SELECTOR MANUAL QUE ACORDAMOS ===
         tipo_movimiento = st.radio(
             "¿Qué tipo de movimientos deseas registrar?", 
             ["📥 Mostrar solo INGRESOS (Destino = Mi Unidad)", "📤 Mostrar solo SALIDAS (Origen = Mi Unidad)"], 
@@ -690,7 +792,6 @@ def mostrar_modulo_costos():
                 condicion_destino = df_raw_t['Destino'].apply(lambda x: es_de_unidad(x, u_responsable))
                 condicion_origen = df_raw_t['Origen'].apply(lambda x: es_de_unidad(x, u_responsable))
 
-               # LÓGICA SEGÚN EL SELECTOR (Ignorando mayúsculas/minúsculas y permitiendo internos)
                 if "ingreso" in tipo_movimiento.lower():
                     filtro_direccion = condicion_destino
                 else:
@@ -831,4 +932,8 @@ def mostrar_modulo_costos():
                         
                         st.download_button(f"⬇️ Descargar Partida ({m_cons}/{a_cons})", generar_excel_bytes(p_v_h), f"H_P1_{m_cons}_{a_cons}.xlsx", key="btn_h_descarga")
         else:
-            st.info("No hay cierres previos registrados en el histsrial.")
+            st.info("No hay cierres previos registrados en el historial.")
+
+# Ejecución del módulo
+if __name__ == "__main__":
+    mostrar_modulo_costos()
