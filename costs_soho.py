@@ -220,7 +220,7 @@ def mostrar_modulo_soho():
                         st.error(f"Error procesando el Kardex: {e_k}")
 
                 # ====================================================
-                # PROCESAMIENTO 1: ARCHIVO DE INVENTARIOS CON FILTRO FECHA
+                # PROCESAMIENTO 1: ARCHIVO DE INVENTARIOS (FILTRO BLINDADO)
                 # ====================================================
                 try:
                     partidas_dict = {
@@ -229,21 +229,35 @@ def mostrar_modulo_soho():
                         "CONSIGNACION": {},
                         "VENTAS_CONSIGNACION": {}
                     }
+                    
+                    nombres_meses = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
 
                     if arch_mov_inv:
                         df = pd.read_excel(arch_mov_inv, dtype=str)
                         df.columns = df.columns.str.strip()
                         
-                        # FILTRO DE FECHA ESTRICTO PARA MOVIMIENTOS
-                        c_fecha = next((c for c in df.columns if 'FECHA' in c.upper()), None)
+                        # Buscar columna explícita o forzar Columna F (índice 5)
+                        c_fecha = next((c for c in df.columns if 'FECHA' in str(c).upper()), None)
+                        if not c_fecha and len(df.columns) >= 6:
+                            c_fecha = df.columns[5]
+                            
                         if c_fecha:
+                            # Parseo dual (fechas normales y números de serie de Excel)
                             df['Fecha_DT'] = pd.to_datetime(df[c_fecha], errors='coerce', dayfirst=True)
+                            mask_nat = df['Fecha_DT'].isna()
+                            if mask_nat.any():
+                                safe_nums = pd.to_numeric(df.loc[mask_nat, c_fecha], errors='coerce')
+                                df.loc[mask_nat, 'Fecha_DT'] = pd.to_datetime(safe_nums, origin='1899-12-30', unit='D', errors='coerce')
+
                             mask_fecha = (df['Fecha_DT'].dt.month == mes_proceso) & (df['Fecha_DT'].dt.year == anio_proceso)
+                            
+                            total_antes = len(df)
                             df = df[mask_fecha]
-                            if df.empty:
-                                st.warning(f"⚠️ El archivo de Movimientos se quedó vacío tras filtrar por el mes {mes_proceso} del año {anio_proceso}.")
+                            total_despues = len(df)
+                            
+                            st.info(f"📅 **Auditoría de Fechas (Movimientos):** Se conservaron {total_despues} registros del mes de {nombres_meses.get(mes_proceso, mes_proceso)} (Total original en Excel: {total_antes}).")
                         else:
-                            st.warning("⚠️ No se detectó columna de FECHA en el archivo de movimientos. Se procesará todo el archivo sin importar el mes.")
+                            st.warning("No se logró identificar la columna F para filtrar las fechas.")
 
                         if not df.empty:
                             c_tipo = next((c for c in df.columns if 'TIPO' in c.upper() or 'CONCEPT' in c.upper()), None)
@@ -271,7 +285,7 @@ def mostrar_modulo_soho():
                                 es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
                                 es_ajuste = 'AJUS' in tipo or not es_traslado
 
-                                # BLOQUE 1: CONSIGNACIÓN (Inventario)
+                                # BLOQUE CONSIGNACIÓN
                                 if 'CONSIGNACION' in category:
                                     if is_receiver_unidad and not is_sender_unidad:
                                         if raw_sender in OTRAS_UNIDADES_INTERNAS or es_traslado:
@@ -293,14 +307,12 @@ def mostrar_modulo_soho():
                                         
                                         if tab_name not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_name] = []
                                         
-                                        p1 = gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender)
-                                        p2 = gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender)
-                                        p3 = gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc, total, 0, raw_sender)
-                                        p3["CONCEPTO"] += " "
-                                        p4 = gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc, 0, total, raw_sender)
-                                        p4["CONCEPTO"] += " "
-                                        
-                                        partidas_dict["CONSIGNACION"][tab_name].extend([p1, p2, p3, p4])
+                                        partidas_dict["CONSIGNACION"][tab_name].extend([
+                                            gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender),
+                                            gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender),
+                                            gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc + " ", total, 0, raw_sender),
+                                            gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc + " ", 0, total, raw_sender)
+                                        ])
 
                                         if 'AJUS' in tipo or not es_traslado:
                                             desc_ajuste_costo = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
@@ -309,7 +321,7 @@ def mostrar_modulo_soho():
                                                 gen_nexus_spec(inv_acc, desc_ajuste_costo, 0, total)
                                             ])
 
-                                # BLOQUE 2: AJUSTES REGULARES
+                                # BLOQUE AJUSTES REGULARES
                                 elif es_ajuste:
                                     if is_receiver_unidad:
                                         desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
@@ -318,7 +330,7 @@ def mostrar_modulo_soho():
                                         desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
                                         partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
 
-                                # BLOQUE 3: TRASLADOS ESTÁNDAR
+                                # BLOQUE TRASLADOS ESTÁNDAR
                                 elif is_sender_unidad and es_traslado:
                                     if receiver_desc not in partidas_dict["TRASLADOS"]: partidas_dict["TRASLADOS"][receiver_desc] = []
                                     d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTO DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
@@ -329,22 +341,30 @@ def mostrar_modulo_soho():
                                     ])
 
                     # ====================================================
-                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS CON FILTRO FECHA
+                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS (FILTRO BLINDADO)
                     # ====================================================
                     if arch_ventas:
                         df_v = pd.read_excel(arch_ventas, dtype=str)
                         df_v.columns = df_v.columns.str.strip()
                         
-                        # FILTRO DE FECHA ESTRICTO PARA VENTAS
-                        c_fecha_v = next((c for c in df_v.columns if 'FECHA' in c.upper()), None)
+                        c_fecha_v = next((c for c in df_v.columns if 'FECHA' in str(c).upper()), None)
+                        if not c_fecha_v and len(df_v.columns) >= 6:
+                            c_fecha_v = df_v.columns[5]
+                            
                         if c_fecha_v:
                             df_v['Fecha_DT'] = pd.to_datetime(df_v[c_fecha_v], errors='coerce', dayfirst=True)
+                            mask_nat_v = df_v['Fecha_DT'].isna()
+                            if mask_nat_v.any():
+                                safe_nums_v = pd.to_numeric(df_v.loc[mask_nat_v, c_fecha_v], errors='coerce')
+                                df_v.loc[mask_nat_v, 'Fecha_DT'] = pd.to_datetime(safe_nums_v, origin='1899-12-30', unit='D', errors='coerce')
+
                             mask_fecha_v = (df_v['Fecha_DT'].dt.month == mes_proceso) & (df_v['Fecha_DT'].dt.year == anio_proceso)
+                            
+                            total_antes_v = len(df_v)
                             df_v = df_v[mask_fecha_v]
-                            if df_v.empty:
-                                st.warning(f"⚠️ El archivo de Ventas se quedó vacío tras filtrar por el mes {mes_proceso} del año {anio_proceso}.")
-                        else:
-                            st.warning("⚠️ No se detectó columna de FECHA en el archivo de ventas. Se procesará todo.")
+                            total_despues_v = len(df_v)
+                            
+                            st.info(f"📅 **Auditoría de Fechas (Ventas):** Se conservaron {total_despues_v} registros del mes de {nombres_meses.get(mes_proceso, mes_proceso)} (Total original en Excel: {total_antes_v}).")
 
                         if not df_v.empty:
                             c_cat_v = next((c for c in df_v.columns if 'CATEGOR' in c.upper()), None)
@@ -353,7 +373,6 @@ def mostrar_modulo_soho():
                             if c_cat_v and c_costo_v:
                                 df_v[c_costo_v] = pd.to_numeric(df_v[c_costo_v], errors='coerce').fillna(0)
                                 
-                                # Filtrar solo ventas de consignacion
                                 df_consignacion_ventas = df_v[df_v[c_cat_v].astype(str).str.upper().str.strip() == 'CONSIGNACION']
                                 total_ventas_consignacion = df_consignacion_ventas[c_costo_v].sum()
                                 
@@ -364,12 +383,9 @@ def mostrar_modulo_soho():
                                     partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consignacion"] = [
                                         gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0, "CENTRO SOHO"),
                                         gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion, "CENTRO SOHO"),
-                                        
                                         gen_nexus_spec(CTA_BASE_GASTO, desc_costo_consig, total_ventas_consignacion, 0, "CENTRO SOHO"),
                                         gen_nexus_spec(CTA_BASE_PT, desc_costo_consig, 0, total_ventas_consignacion, "CENTRO SOHO")
                                     ]
-                            else:
-                                st.warning("⚠️ No se encontraron las columnas 'Categoria' o 'TotalCosto' en el reporte de ventas.")
 
                     if arch_mov_inv or arch_ventas:
                         st.success("✅ Procesamiento contable finalizado con éxito.")
