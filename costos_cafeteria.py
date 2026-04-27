@@ -255,17 +255,23 @@ def mostrar_modulo_costos():
                                 df_com_m = proteger_cuentas_nulas(df_com_m)
                                 df_fin_m = proteger_cuentas_nulas(df_fin_m)
 
-                                # UNIFICACIÓN DEL COSTO FINAL
+                                # --- CÁLCULO ESTRICTO DE CANTIDADES Y COSTOS ---
+                                # 1. Forzar Costo Final desde Kardex Resumen
                                 if mapa_costo_unificado:
                                     df_fin_m['Costo_Unificado'] = df_fin_m['Codigo'].map(mapa_costo_unificado)
-                                    costo_original = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-                                    df_fin_m['Costo_Usar'] = df_fin_m['Costo_Unificado'].combine_first(costo_original)
+                                    df_fin_m['Costo_Usar'] = pd.to_numeric(df_fin_m['Costo_Unificado'], errors='coerce').fillna(0.0)
                                 else:
                                     df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
 
-                                df_ini_m['Valor'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * pd.to_numeric(get_num(df_ini_m, [['COSTO', 'U']]), errors='coerce').fillna(0.0)
-                                df_fin_m['Valor'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * df_fin_m['Costo_Usar']
-                                df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO']]), errors='coerce').fillna(0.0)
+                                # 2. Diferenciar estrictamente Existencia Inicial de Final
+                                df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIA', 'INIC'], ['SALDO', 'INIC'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                                df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                df_ini_m['Valor'] = df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']
+
+                                df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIA', 'FIN'], ['SALDO', 'FIN'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                                df_fin_m['Valor'] = df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']
+                                
+                                df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
 
                                 grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum()
                                 grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
@@ -299,7 +305,6 @@ def mostrar_modulo_costos():
                                 
                                 costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                                 costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
-
 
                                 # --- EL AUDITOR INTELIGENTE ---
                                 df_var_costos = pd.DataFrame()
@@ -543,16 +548,20 @@ def mostrar_modulo_costos():
                             df_com_m = proteger_cuentas_nulas(df_com_m)
                             df_fin_m = proteger_cuentas_nulas(df_fin_m)
 
-                            # UNIFICACIÓN DEL COSTO FINAL
+                            # --- CÁLCULO ESTRICTO ---
                             if mapa_costo_unificado:
                                 df_fin_m['Costo_Unificado'] = df_fin_m['Codigo'].map(mapa_costo_unificado)
-                                costo_original = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-                                df_fin_m['Costo_Usar'] = df_fin_m['Costo_Unificado'].combine_first(costo_original)
+                                df_fin_m['Costo_Usar'] = pd.to_numeric(df_fin_m['Costo_Unificado'], errors='coerce').fillna(0.0)
                             else:
                                 df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
 
-                            df_ini_m['Valor'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * pd.to_numeric(get_num(df_ini_m, [['COSTO', 'U']]), errors='coerce').fillna(0.0)
-                            df_fin_m['Valor'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0) * df_fin_m['Costo_Usar']
+                            df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIA', 'INIC'], ['SALDO', 'INIC'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                            df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                            df_ini_m['Valor'] = df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']
+
+                            df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIA', 'FIN'], ['SALDO', 'FIN'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                            df_fin_m['Valor'] = df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']
+                            
                             df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO']]), errors='coerce').fillna(0.0)
 
                             grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum()
