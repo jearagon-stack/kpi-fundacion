@@ -224,70 +224,10 @@ def mostrar_modulo_soho():
                 # ====================================================
                 try:
                     partidas_dict = {
-                        "TRASLADOS": {"Traslados_Consolidados": []},
-                        "AJUSTES": {"Ajustes_Globales": []},
-                        "CONSIGNACION": {"Movimientos_Consig": []},
-                        "VENTAS_CONSIGNACION": {"Ventas_Consig": []}
-                    }
-                    
-                    nombres_meses = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
-
-                    def extraer_fechas_seguras(df_temp, col_name):
-                        # Intento 1: Formato Nativo de Excel a String (YYYY-MM-DD HH:MM:SS)
-                        s_dt = pd.to_datetime(df_temp[col_name], errors='coerce')
-                        
-                        # Intento 2: Formato DD/MM/YYYY
-                        m1 = s_dt.isna()
-                        if m1.any():
-                            s_dt.loc[m1] = pd.to_datetime(df_temp.loc[m1, col_name], format='%d/%m/%Y', errors='coerce')
-                            
-                        # Intento 3: Numérico (Serial Excel)
-                        m2 = s_dt.isna()
-                        if m2.any():
-                            nums = pd.to_numeric(df_temp.loc[m2, col_name], errors='coerce')
-                            s_dt.loc[m2] = pd.to_datetime(nums, origin='1899-12-30', unit='D', errors='coerce')
-                            
-                        return s_dt
-
-                    if arch_mov_inv:
-                        df = pd.read_excel(arch_mov_inv, dtype=str)
-                        df.columns = df.columns.str.strip()
-                        
-                        c_fecha = next((c for c in df.columns if str(c).upper().strip() == 'FECHA'), None)
-                        if not c_fecha and len(df.columns) >= 6: c_fecha = df.columns[5]
-                            
-                        if c_fecha:
-                            df['Fecha_DT'] = extraer_fechas_seguras(df, c_fecha)
-                            mask_fecha = (df['Fecha_DT'].dt.month == mes_proceso) & (df['Fecha_DT'].dt.year == anio_proceso)
-                            
-                            total_antes = len(df)
-                            df = df[mask_fecha]
-                            total_despues = len(df)
-                            st.info(f"📅 **Movimientos:** Se conservaron {total_despues} registros de {nombres_meses.get(mes_proceso, mes_proceso)} (Total en Excel: {total_antes}).")
-
-                        if not df.empty:
-                            c_tipo = next((c for c in df.columns if 'TIPO' in c.upper() or 'CONCEPT' in c.upper()), None)
-                            
-                            # Fallback para Salidas y Entradas
-                            c_sender = next((c for c in df.columns if 'BODEGASALIDA' in c.upper().replace(' ', '')), None)
-                            if not c_sender: c_sender = next((c for c in df.columns if 'SALIDA' in c.upper().replace(' ', '') and 'BODEGA' in c.upper()), None)
-                            
-                            c_receiver = next((c for c in df.columns if 'BODEGAINGRESO' in c.upper().replace(' ', '')), None)
-                            if not c_receiver: c_receiver = next((c for c in df.columns if 'INGRESO' in c.upper().replace(' ', '') and 'BODEGA' in c.upper()), None)
-
-                            c_bodega = next((c for c in df.columns if c.upper().strip() == 'BODEGA'), None)
-                            c_category = next((c for c in df.columns if 'CATEGOR' in c.upper()), 'Categoria')
-                            
-                            c_total = next((c for c in df.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '')), None)
-                            if not c_total: c_total = next((c for c in df.columns if 'COSTO' in c.upper()), 'PrecioTotal')
-                            
-                            df[c_total] = pd.to_numeric(df[c_total], errors='coerce').fillna(0)
-
-                            partidas_dict = {
                         "TRASLADOS": {},
                         "AJUSTES": {"Ajustes_Globales": []},
-                        "CONSIGNACION": {"Salidas_por_Inventario": []},
-                        "VENTAS_CONSIGNACION": {"Ventas_Consig": []}
+                        "CONSIGNACION": {},
+                        "VENTAS_CONSIGNACION": {}
                     }
                     
                     nombres_meses = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
@@ -322,7 +262,6 @@ def mostrar_modulo_soho():
                         if not df.empty:
                             c_tipo = next((c for c in df.columns if 'TIPO' in c.upper() or 'CONCEPT' in c.upper()), None)
                             
-                            # Fallback para Salidas y Entradas
                             c_sender = next((c for c in df.columns if 'BODEGASALIDA' in c.upper().replace(' ', '')), None)
                             if not c_sender: c_sender = next((c for c in df.columns if 'SALIDA' in c.upper().replace(' ', '') and 'BODEGA' in c.upper()), None)
                             
@@ -376,7 +315,7 @@ def mostrar_modulo_soho():
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
                                             ])
                                     elif is_sender_unidad:
-                                        # 1. Salida Global (Inventarito)
+                                        # 1. Salida Global (Inventario)
                                         tab_salida = "Salida_Consig_Global"
                                         if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
                                         desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
@@ -415,11 +354,18 @@ def mostrar_modulo_soho():
 
                                 # BLOQUE TRASLADOS ESTÁNDAR
                                 elif is_sender_unidad and es_traslado:
+                                    safe_rec_t = str(receiver_desc).replace('/', '-').replace('\\', '-')[:25]
+                                    if safe_rec_t not in partidas_dict["TRASLADOS"]: 
+                                        partidas_dict["TRASLADOS"][safe_rec_t] = []
+                                        
                                     d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTO DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
                                     d_r = d_s.replace("SALIDA", "ENTRADA")
-                                    partidas_dict["TRASLADOS"]["Traslados_Consolidados"].extend([
-                                        gen_nexus_spec(CTA_PROVISION_PUENTE, d_s, total, 0), gen_nexus_spec(inv_acc, d_s, 0, total),
-                                        gen_nexus_spec(INV_ACCOUNT_MAP.get('DEFAULT'), d_r, total, 0), gen_nexus_spec(CTA_PROVISION_PUENTE, d_r, 0, total)
+                                    
+                                    partidas_dict["TRASLADOS"][safe_rec_t].extend([
+                                        gen_nexus_spec(CTA_PROVISION_PUENTE, d_s, total, 0), 
+                                        gen_nexus_spec(inv_acc, d_s, 0, total),
+                                        gen_nexus_spec(INV_ACCOUNT_MAP.get('DEFAULT'), d_r, total, 0), 
+                                        gen_nexus_spec(CTA_PROVISION_PUENTE, d_r, 0, total)
                                     ])
 
                     # ====================================================
@@ -453,14 +399,17 @@ def mostrar_modulo_soho():
                                 
                                 if not df_consignacion_ventas.empty:
                                     
-                                    # 1. PESTAÑA GLOBAL (Salida por inventarito de Ventas)
+                                    # 1. PESTAÑA GLOBAL (Salida por inventario de Ventas)
                                     total_ventas_consignacion = df_consignacion_ventas[c_costo_v].sum()
                                     desc_venta_consig = f"RECONOCIMIENTO POR VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
                                     
-                                    partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consig_Global"] = [
+                                    if "Ventas_Consig_Global" not in partidas_dict["VENTAS_CONSIGNACION"]:
+                                        partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consig_Global"] = []
+                                        
+                                    partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consig_Global"].extend([
                                         gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0, "CENTRO SOHO"),
                                         gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion, "CENTRO SOHO")
-                                    ]
+                                    ])
 
                                     # 2. PESTAÑAS DE TRASLADO POR UNIDAD (Doble Partida cruzada)
                                     c_origen_v = next((c for c in df_consignacion_ventas.columns if 'BODEGASALIDA' in c.upper().replace(' ', '')), None)
@@ -491,7 +440,7 @@ def mostrar_modulo_soho():
                                         ])
 
                     if arch_mov_inv or arch_ventas:
-                        st.success("✅ Procesamiento contable finalizado con éxito.")
+                        st.success("Procesamiento contable finalizado con éxito.")
                         st.session_state['nexus_soho_buffers'] = gen_excels_memory(partidas_dict, mes_proceso)
                         st.session_state['tab_results_soho'] = True
                     
