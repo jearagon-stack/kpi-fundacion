@@ -797,14 +797,18 @@ def mostrar_modulo_costos():
                 df_raw_t['Monto'] = pd.to_numeric(df_raw_t['Monto'], errors='coerce').fillna(0.0)
                 df_raw_t['Cantidad'] = pd.to_numeric(df_raw_t['Cantidad'], errors='coerce').fillna(0.0)
 
-                # 2. Función para validar que la bodega sea una sucursal interna permitida
+                # 2. Validaciones de unidad (usando las nuevas funciones)
                 def es_valida_interna(b):
                     b = str(b).strip().upper()
                     bodegas_validas = ["CAFETERIA", "TERRAZA", "CENTRO SOHO", "DESPENSA"]
                     return any(val in b for val in bodegas_validas) and not any(ign in b for ign in destinos_ignorados)
 
-                mask_dest_mi_unidad = df_raw_t['Destino'].apply(lambda x: es_de_unidad(x, u_responsable))
-                mask_orig_mi_unidad = df_raw_t['Origen'].apply(lambda x: es_de_unidad(x, u_responsable))
+                if u_responsable == "CAFETERIA":
+                    mask_dest_mi_unidad = df_raw_t['Destino'].apply(es_cafeteria)
+                    mask_orig_mi_unidad = df_raw_t['Origen'].apply(es_cafeteria)
+                else:
+                    mask_dest_mi_unidad = df_raw_t['Destino'].apply(es_despensa)
+                    mask_orig_mi_unidad = df_raw_t['Origen'].apply(es_despensa)
                 
                 mask_dest_es_interna = df_raw_t['Destino'].apply(es_valida_interna)
                 mask_orig_es_interna = df_raw_t['Origen'].apply(es_valida_interna)
