@@ -778,13 +778,7 @@ def mostrar_modulo_costos():
             u_responsable = st.selectbox("Módulo Responsable:", ["CAFETERIA", "DESPENSA"], key="uni_reg")
 
         st.divider()
-        tipo_movimiento = st.radio(
-            "¿Qué tipo de movimientos deseas registrar?", 
-            ["📥 Mostrar solo INGRESOS (Destino = Mi Unidad)", "📤 Mostrar solo SALIDAS (Origen = Mi Unidad)"], 
-            horizontal=True
-        )
-        
-        st.info(f"💡 Filtro Activo: Mostrando los registros de la opción seleccionada arriba para {u_responsable}.")
+        st.info(f"💡 Filtro Activo: Mostrando TODOS los traslados internos (Ingresos, Salidas y entre sucursales) que involucran a {u_responsable}.")
 
         archivo_nexus = st.file_uploader("Reporte Nexus (A:Tipo, I:Cod, K:Cant, N:Monto, AA:Cat, AC:Salida, AD:Ingreso)", type=["xlsx"], key="atf_reg")
 
@@ -797,35 +791,33 @@ def mostrar_modulo_costos():
                 df_raw_t['Monto'] = pd.to_numeric(df_raw_t['Monto'], errors='coerce').fillna(0.0)
                 df_raw_t['Cantidad'] = pd.to_numeric(df_raw_t['Cantidad'], errors='coerce').fillna(0.0)
 
-                # 2. Validaciones de unidad (usando las nuevas funciones)
+                # 2. Función para validar que la bodega sea estrictamente una de nuestras sucursales internas
                 def es_valida_interna(b):
                     b = str(b).strip().upper()
                     bodegas_validas = ["CAFETERIA", "TERRAZA", "CENTRO SOHO", "DESPENSA"]
                     return any(val in b for val in bodegas_validas) and not any(ign in b for ign in destinos_ignorados)
 
+                # 3. Lógica Universal: Involucra a la unidad seleccionada (origen o destino)
                 if u_responsable == "CAFETERIA":
-                    mask_dest_mi_unidad = df_raw_t['Destino'].apply(es_cafeteria)
-                    mask_orig_mi_unidad = df_raw_t['Origen'].apply(es_cafeteria)
+                    mask_involucra_unidad = df_raw_t['Origen'].apply(es_cafeteria) | df_raw_t['Destino'].apply(es_cafeteria)
                 else:
-                    mask_dest_mi_unidad = df_raw_t['Destino'].apply(es_despensa)
-                    mask_orig_mi_unidad = df_raw_t['Origen'].apply(es_despensa)
+                    mask_involucra_unidad = df_raw_t['Origen'].apply(es_despensa) | df_raw_t['Destino'].apply(es_despensa)
                 
-                mask_dest_es_interna = df_raw_t['Destino'].apply(es_valida_interna)
-                mask_orig_es_interna = df_raw_t['Origen'].apply(es_valida_interna)
+                # Ambas bodegas (origen y destino) deben ser internas permitidas
+                mask_orig_interna = df_raw_t['Origen'].apply(es_valida_interna)
+                mask_dest_interna = df_raw_t['Destino'].apply(es_valida_interna)
+                
+                # Evitar basura donde el origen y destino son la misma celda de texto
+                mask_diferente = df_raw_t['Origen'].str.strip().str.upper() != df_raw_t['Destino'].str.strip().str.upper()
 
-                # 3. Lógica cruzada: Validar Origen vs Destino excluyendo traspasos a la misma unidad
-                if "ingreso" in tipo_movimiento.lower():
-                    # Entra a MI unidad (Destino), proviniendo de OTRA unidad interna (Origen)
-                    filtro_direccion = mask_dest_mi_unidad & mask_orig_es_interna & ~mask_orig_mi_unidad
-                else:
-                    # Sale de MI unidad (Origen), hacia OTRA unidad interna (Destino)
-                    filtro_direccion = mask_orig_mi_unidad & mask_dest_es_interna & ~mask_dest_mi_unidad
+                filtro_direccion = mask_orig_interna & mask_dest_interna & mask_involucra_unidad & mask_diferente
 
                 # Excluir servicios y montos en cero
                 mask_base_tecnica = (df_raw_t['Monto'] > 0) & (df_raw_t['Categoria'] != 'SERVICIO')
 
                 df_tras_filtrados = df_raw_t[filtro_direccion & mask_base_tecnica]
 
+                
                 if df_tras_filtrados.empty:
                     st.warning("⚠️ No se encontraron movimientos que coincidan con tu filtro en este archivo.")
                 else:
