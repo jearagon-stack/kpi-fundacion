@@ -972,7 +972,7 @@ def mostrar_modulo_costos():
                     total_h = sum(dict_c_h.values())
 
                     if f_partida == "Cierre Estándar":
-                        con_h = f"RECONOCIMIENTO DE COSTO DE VENTA DE CAFETERIA, {m_cons}/{a_cons}."
+                        con_h = f"RECONOCIMIENTO DE COSTO DE VENTA DE {f_res['Unidad']}, {m_cons}/{a_cons}."
                         p_v_h = [["410104", "", con_h, round(total_h, 2), 0.00, ""]]
                         
                         for ct_h, mt_h in dict_c_h.items():
@@ -982,6 +982,57 @@ def mostrar_modulo_costos():
                                     p_v_h.append([cl_h, "", con_h, 0.00, round(mt_h, 2), ""])
                         
                         st.download_button(f"⬇️ Descargar Partida ({m_cons}/{a_cons})", generar_excel_bytes(p_v_h), f"H_P1_{m_cons}_{a_cons}.xlsx", key="btn_h_descarga")
+
+                    elif f_partida == "Cierre Consolidado":
+                        num_meses_h = st.number_input("¿En cuántos meses se dividió el cierre?", min_value=2, max_value=12, value=3, key="num_m_h")
+                        
+                        pesos_h = []
+                        nombres_meses_h = []
+                        
+                        st.write("Distribución de porcentajes para recrear partidas:")
+                        cols_h = st.columns(num_meses_h)
+                        for i in range(num_meses_h):
+                            with cols_h[i]:
+                                nom_m = st.text_input(f"Nombre Mes {i+1}:", value=f"Mes {i+1}", key=f"nm_h_{i}")
+                                peso_m = st.number_input(f"% Mes {i+1}:", min_value=0.0, max_value=100.0, value=100.0/num_meses_h, key=f"pm_h_{i}")
+                                nombres_meses_h.append(nom_m)
+                                pesos_h.append(peso_m / 100.0)
+                        
+                        if sum(pesos_h) > 0:
+                            # El diferido inicial (P2) del primer mes es el Arrastre guardado en la Base de Datos
+                            diferido_para_liquidar = v_a 
+                            
+                            for i in range(num_meses_h):
+                                peso_actual = pesos_h[i]
+                                mes_label = nombres_meses_h[i]
+                                
+                                c_op_mes = total_h * peso_actual
+                                nuevo_diferido_mes = v_d * peso_actual # v_d es el Diferido total del periodo
+                                
+                                st.markdown(f"##### 📥 Partidas: **{mes_label}**")
+                                conc_v = f"RECONOCIMIENTO DE COSTO DE VENTA DE {f_res['Unidad']}, {mes_label} {a_cons}."
+                                f_v = [["410104", "", conc_v, round(c_op_mes, 2), 0.00, ""]]
+                                
+                                for ct_h, mt_h in dict_c_h.items():
+                                    cl_h = str(ct_h).replace(".0","").strip()
+                                    if cl_h != "" and cl_h.lower() not in ["nan", "nat", "no aplica"]:
+                                        m_perc = mt_h * peso_actual
+                                        if abs(m_perc) > 0.01:
+                                            f_v.append([cl_h, "", conc_v, 0.00, round(m_perc, 2), ""])
+                                
+                                conc_p = f"RECONOCIMIENTO DE COSTO DE LO VENDIDO EN PROCESO {f_res['Unidad']} {mes_label} {a_cons}"
+                                f_p = [["410104", "", conc_p, round(diferido_para_liquidar, 2), 0.00, ""], ["110602", "", conc_p, 0.00, round(diferido_para_liquidar, 2), ""]]
+                                
+                                conc_d = f"DIFERIMIENTO DE COSTO EN PROCESO {f_res['Unidad']} {mes_label} {a_cons}"
+                                f_d = [["110602", "", conc_d, round(nuevo_diferido_mes, 2), 0.00, ""], ["410104", "", conc_d, 0.00, round(nuevo_diferido_mes, 2), ""]]
+
+                                p1, p2, p3 = st.columns(3)
+                                with p1: st.download_button(f"⬇️ P1 {mes_label}", generar_excel_bytes(f_v), f"H_1_Costo_{mes_label}.xlsx", key=f"dl_p1_h_{i}", use_container_width=True)
+                                with p2: st.download_button(f"⬇️ P2 {mes_label}", generar_excel_bytes(f_p), f"H_2_Ant_{mes_label}.xlsx", key=f"dl_p2_h_{i}", use_container_width=True)
+                                with p3: st.download_button(f"⬇️ P3 {mes_label}", generar_excel_bytes(f_d), f"H_3_Dif_{mes_label}.xlsx", key=f"dl_p3_h_{i}", use_container_width=True)
+
+                                # El diferido pospuesto se convierte en el arrastre a liquidar del siguiente mes
+                                diferido_para_liquidar = nuevo_diferido_mes
         else:
             st.info("No hay cierres previos registrados en el historial.")
 
