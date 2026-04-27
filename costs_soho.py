@@ -414,9 +414,9 @@ def mostrar_modulo_soho():
                                         gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion, "CENTRO SOHO")
                                     ])
 
-                                    # 2. PESTAÑAS DE TRASLADO POR UNIDAD (Doble Partida cruzada)
-                                    c_origen_v = next((c for c in df_consignacion_ventas.columns if 'BODEGASALIDA' in c.upper().replace(' ', '')), None)
-                                    if not c_origen_v: c_origen_v = next((c for c in df_consignacion_ventas.columns if 'PROVEEDOR' in c.upper()), None)
+                                    # 2. PESTAÑAS DE TRASLADO POR UNIDAD (Doble Partida cruzada 110603)
+                                    c_origen_v = next((c for c in df_consignacion_ventas.columns if 'PROVEEDOR' in c.upper()), None)
+                                    if not c_origen_v: c_origen_v = next((c for c in df_consignacion_ventas.columns if 'BODEGASALIDA' in c.upper().replace(' ', '')), None)
                                     
                                     for _, row_v in df_consignacion_ventas.iterrows():
                                         tot_v = float(row_v[c_costo_v])
@@ -432,25 +432,16 @@ def mostrar_modulo_soho():
                                             partidas_dict["VENTAS_CONSIGNACION"][tab_name_v] = []
                                             
                                         desc_traslado_v = f"RECONOCIMIENTO DE TRASLADO POR COSTO DE VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO HACIA {origen_v}, MES {mes_proceso} DE {anio_proceso}."
+                                        # Espacio invisible para obligar a Excel a mostrar las 4 filas separadas
+                                        desc_traslado_v2 = desc_traslado_v + " "
                                         
                                         partidas_dict["VENTAS_CONSIGNACION"][tab_name_v].extend([
                                             # Salida de la unidad origen (Puente vs 110603)
                                             gen_nexus_spec(CTA_PROVISION_PUENTE, desc_traslado_v, tot_v, 0, origen_v),
                                             gen_nexus_spec(CTA_BASE_PT, desc_traslado_v, 0, tot_v, origen_v),
                                             # Entrada a Soho (110603 vs Puente)
-                                            gen_nexus_spec(CTA_BASE_PT, desc_traslado_v, tot_v, 0, "CENTRO SOHO"),
-                                            gen_nexus_spec(CTA_PROVISION_PUENTE, desc_traslado_v, 0, tot_v, "CENTRO SOHO")
-                                        ])
-                                            
-                                        desc_traslado_v = f"RECONOCIMIENTO DE TRASLADO POR COSTO DE VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO HACIA {origen_v}, MES {mes_proceso} DE {anio_proceso}."
-                                        
-                                        partidas_dict["VENTAS_CONSIGNACION"][tab_name_v].extend([
-                                            # Salida de la unidad origen (Puente vs Inventario)
-                                            gen_nexus_spec(CTA_PROVISION_PUENTE, desc_traslado_v, tot_v, 0, origen_v),
-                                            gen_nexus_spec(CTA_BASE_PT, desc_traslado_v, 0, tot_v, origen_v),
-                                            # Entrada directa al gasto de Soho (Costo vs Puente)
-                                            gen_nexus_spec(CTA_BASE_GASTO, desc_traslado_v, tot_v, 0, "CENTRO SOHO"),
-                                            gen_nexus_spec(CTA_PROVISION_PUENTE, desc_traslado_v, 0, tot_v, "CENTRO SOHO")
+                                            gen_nexus_spec(CTA_BASE_PT, desc_traslado_v2, tot_v, 0, "CENTRO SOHO"),
+                                            gen_nexus_spec(CTA_PROVISION_PUENTE, desc_traslado_v2, 0, tot_v, "CENTRO SOHO")
                                         ])
 
                     if arch_mov_inv or arch_ventas:
