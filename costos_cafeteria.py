@@ -778,7 +778,7 @@ def mostrar_modulo_costos():
             u_responsable = st.selectbox("Módulo Responsable:", ["CAFETERIA", "DESPENSA"], key="uni_reg")
 
         st.divider()
-        st.info(f"💡 Filtro Activo: Mostrando TODOS los traslados internos (Ingresos, Salidas y entre sucursales) que involucran a {u_responsable}.")
+        st.info(f"💡 Filtro Activo: Mostrando TODOS los traslados donde '{u_responsable}' participa directamente (origen o destino) frente a otras sucursales.")
 
         archivo_nexus = st.file_uploader("Reporte Nexus (A:Tipo, I:Cod, K:Cant, N:Monto, AA:Cat, AC:Salida, AD:Ingreso)", type=["xlsx"], key="atf_reg")
 
@@ -791,21 +791,27 @@ def mostrar_modulo_costos():
                 df_raw_t['Monto'] = pd.to_numeric(df_raw_t['Monto'], errors='coerce').fillna(0.0)
                 df_raw_t['Cantidad'] = pd.to_numeric(df_raw_t['Cantidad'], errors='coerce').fillna(0.0)
 
-                # 2. Función para validar que la bodega sea estrictamente una de nuestras sucursales internas
-                def es_valida_interna(b):
+                # 2. Funciones de validación ESTRICTAS
+                def es_estrictamente_cafeteria(b):
+                    return "CAFETERIA" in str(b).strip().upper()
+
+                def es_estrictamente_despensa(b):
+                    return "DESPENSA" in str(b).strip().upper()
+
+                def es_sucursal_permitida(b):
                     b = str(b).strip().upper()
                     bodegas_validas = ["CAFETERIA", "TERRAZA", "CENTRO SOHO", "DESPENSA"]
                     return any(val in b for val in bodegas_validas) and not any(ign in b for ign in destinos_ignorados)
 
-                # 3. Lógica Universal: Involucra a la unidad seleccionada (origen o destino)
+                # 3. Lógica Estricta: Al menos un lado DEBE decir literalmente la unidad responsable
                 if u_responsable == "CAFETERIA":
-                    mask_involucra_unidad = df_raw_t['Origen'].apply(es_cafeteria) | df_raw_t['Destino'].apply(es_cafeteria)
+                    mask_involucra_unidad = df_raw_t['Origen'].apply(es_estrictamente_cafeteria) | df_raw_t['Destino'].apply(es_estrictamente_cafeteria)
                 else:
-                    mask_involucra_unidad = df_raw_t['Origen'].apply(es_despensa) | df_raw_t['Destino'].apply(es_despensa)
+                    mask_involucra_unidad = df_raw_t['Origen'].apply(es_estrictamente_despensa) | df_raw_t['Destino'].apply(es_estrictamente_despensa)
                 
-                # Ambas bodegas (origen y destino) deben ser internas permitidas
-                mask_orig_interna = df_raw_t['Origen'].apply(es_valida_interna)
-                mask_dest_interna = df_raw_t['Destino'].apply(es_valida_interna)
+                # Ambas bodegas (origen y destino) deben estar en nuestra red de interés
+                mask_orig_interna = df_raw_t['Origen'].apply(es_sucursal_permitida)
+                mask_dest_interna = df_raw_t['Destino'].apply(es_sucursal_permitida)
                 
                 # Evitar basura donde el origen y destino son la misma celda de texto
                 mask_diferente = df_raw_t['Origen'].str.strip().str.upper() != df_raw_t['Destino'].str.strip().str.upper()
