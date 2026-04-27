@@ -745,8 +745,28 @@ def mostrar_modulo_costos():
                 if not mem['es_consolidado']:
                     mostrar_descargas_logic(mem['costo_operativo'], mem['costo_dif_mes'], mem['costo_diferido_anterior'], meses_texto[mem['mes_cierre']], mem['consumo_por_cuenta'], mem['costo_operativo'], "std")
                 else:
+                    # LÓGICA DE CADENA CONTABLE TRIMESTRAL
+                    # El diferido inicial (P2) del primer mes es el Arrastre Manual de la cuenta 110602
+                    diferido_para_liquidar = mem['costo_diferido_anterior'] 
+                    
                     for i in range(len(mem['pesos'])):
-                        mostrar_descargas_logic(mem['costo_operativo']*mem['pesos'][i], mem['costo_dif_mes']*mem['pesos'][i], mem['costo_diferido_anterior']*mem['pesos'][i], mem['nombres_meses'][i], mem['consumo_por_cuenta'], mem['costo_operativo'], f"cons_{i}")
+                        # Dividimos el consumo y el nuevo diferido según el peso del mes (ej. 1/3)
+                        consumo_mes = mem['costo_operativo'] * mem['pesos'][i]
+                        nuevo_diferido_mes = mem['costo_dif_mes'] * mem['pesos'][i]
+                        
+                        mostrar_descargas_logic(
+                            consumo_mes, 
+                            nuevo_diferido_mes, 
+                            diferido_para_liquidar, 
+                            mem['nombres_meses'][i], 
+                            mem['consumo_por_cuenta'], 
+                            mem['costo_operativo'], 
+                            f"cons_{i}"
+                        )
+                        
+                        # IMPORTANTE: El diferido 'pospuesto' de este mes 
+                        # se convierte en el arrastre a 'liquidar' del mes siguiente
+                        diferido_para_liquidar = nuevo_diferido_mes
 
                 if st.button("💾 Cerrar Periodo y Guardar Base", type="primary", use_container_width=True):
                     with st.spinner("Guardando en la nube..."):
