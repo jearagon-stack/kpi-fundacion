@@ -329,11 +329,14 @@ def mostrar_modulo_soho():
                                             safe_rec = str(receiver_desc).replace('/', '-').replace('\\', '-')[:15]
                                             tab_traslado = f"Traslado_{safe_rec}"
                                             if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
-                                            desc_traslado = f"RECONOCIMIENTO POR TRASLADO DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                            desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
                                             
                                             partidas_dict["CONSIGNACION"][tab_traslado].extend([
                                                 gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc_traslado, total, 0, raw_receiver),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc_traslado, 0, total, raw_receiver)
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc_traslado, 0, total, raw_receiver),
+                                                # LAS DOS LÍNEAS QUE FALTABAN PARA SOHO (8101 y 7101 invertidas)
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0, raw_sender),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
                                             ])
 
                                         if 'AJUS' in tipo or not es_traslado:
@@ -427,6 +430,17 @@ def mostrar_modulo_soho():
                                         
                                         if tab_name_v not in partidas_dict["VENTAS_CONSIGNACION"]: 
                                             partidas_dict["VENTAS_CONSIGNACION"][tab_name_v] = []
+                                            
+                                        desc_traslado_v = f"RECONOCIMIENTO DE TRASLADO POR COSTO DE VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO HACIA {origen_v}, MES {mes_proceso} DE {anio_proceso}."
+                                        
+                                        partidas_dict["VENTAS_CONSIGNACION"][tab_name_v].extend([
+                                            # Salida de la unidad origen (Puente vs 110603)
+                                            gen_nexus_spec(CTA_PROVISION_PUENTE, desc_traslado_v, tot_v, 0, origen_v),
+                                            gen_nexus_spec(CTA_BASE_PT, desc_traslado_v, 0, tot_v, origen_v),
+                                            # Entrada a Soho (110603 vs Puente)
+                                            gen_nexus_spec(CTA_BASE_PT, desc_traslado_v, tot_v, 0, "CENTRO SOHO"),
+                                            gen_nexus_spec(CTA_PROVISION_PUENTE, desc_traslado_v, 0, tot_v, "CENTRO SOHO")
+                                        ])
                                             
                                         desc_traslado_v = f"RECONOCIMIENTO DE TRASLADO POR COSTO DE VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO HACIA {origen_v}, MES {mes_proceso} DE {anio_proceso}."
                                         
