@@ -322,6 +322,7 @@ def mostrar_modulo_soho():
                         if not df.empty:
                             c_tipo = next((c for c in df.columns if 'TIPO' in c.upper() or 'CONCEPT' in c.upper()), None)
                             
+                            # Fallback para Salidas y Entradas
                             c_sender = next((c for c in df.columns if 'BODEGASALIDA' in c.upper().replace(' ', '')), None)
                             if not c_sender: c_sender = next((c for c in df.columns if 'SALIDA' in c.upper().replace(' ', '') and 'BODEGA' in c.upper()), None)
                             
@@ -362,7 +363,7 @@ def mostrar_modulo_soho():
                                 es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
                                 es_ajuste = 'AJUS' in tipo or not es_traslado
 
-                                # BLOQUE CONSIGNACIÓN
+                                # BLOQUE CONSIGNACIÓN (INVENTARIOS)
                                 if 'CONSIGNACION' in category:
                                     if is_receiver_unidad and not is_sender_unidad:
                                         if raw_sender in OTRAS_UNIDADES_INTERNAS or es_traslado:
@@ -375,27 +376,32 @@ def mostrar_modulo_soho():
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
                                             ])
                                     elif is_sender_unidad:
+                                        # 1. Salida Global (Inventarito)
+                                        tab_salida = "Salida_Consig_Global"
+                                        if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
+                                        desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
+                                        partidas_dict["CONSIGNACION"][tab_salida].extend([
+                                            gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
+                                            gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total, raw_sender)
+                                        ])
+                                        
+                                        # 2. Traslados hacia otra unidad (Pestaña por unidad)
                                         if es_traslado and receiver_desc != "DESTINO":
-                                            # TRASLADOS DE CONSIGNACIÓN: Pestaña por unidad y partida doble invertida
-                                            tab_name = receiver_desc
-                                            if tab_name not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_name] = []
+                                            safe_rec = str(receiver_desc).replace('/', '-').replace('\\', '-')[:15]
+                                            tab_traslado = f"Traslado_{safe_rec}"
+                                            if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
+                                            desc_traslado = f"RECONOCIMIENTO POR TRASLADO DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
                                             
-                                            d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTOS EN CONSIGNACION DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
-                                            d_r = f"RECONOCIMIENTO DE ENTRADA POR TRASLADO DE PRODUCTOS EN CONSIGNACION DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
-                                            
-                                            partidas_dict["CONSIGNACION"][tab_name].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, d_s, total, 0, raw_sender),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, d_s, 0, total, raw_sender),
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, d_r, total, 0, raw_receiver),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, d_r, 0, total, raw_receiver)
+                                            partidas_dict["CONSIGNACION"][tab_traslado].extend([
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc_traslado, total, 0, raw_receiver),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc_traslado, 0, total, raw_receiver)
                                             ])
-                                        else:
-                                            # SALIDAS REGULARES DE CONSIGNACIÓN
-                                            tab_name = "Salidas_por_Inventario"
-                                            desc = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["CONSIGNACION"][tab_name].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc, total, 0, raw_sender),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc, 0, total, raw_sender)
+
+                                        if 'AJUS' in tipo or not es_traslado:
+                                            desc_ajuste_costo = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
+                                            partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([
+                                                gen_nexus_spec(CTA_BASE_GASTO, desc_ajuste_costo, total, 0), 
+                                                gen_nexus_spec(inv_acc, desc_ajuste_costo, 0, total)
                                             ])
 
                                 # BLOQUE AJUSTES REGULARES
@@ -409,11 +415,9 @@ def mostrar_modulo_soho():
 
                                 # BLOQUE TRASLADOS ESTÁNDAR
                                 elif is_sender_unidad and es_traslado:
-                                    # TRASLADOS NORMALES: Pestaña por unidad y partida doble con cuenta puente
-                                    if receiver_desc not in partidas_dict["TRASLADOS"]: partidas_dict["TRASLADOS"][receiver_desc] = []
                                     d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTO DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
                                     d_r = d_s.replace("SALIDA", "ENTRADA")
-                                    partidas_dict["TRASLADOS"][receiver_desc].extend([
+                                    partidas_dict["TRASLADOS"]["Traslados_Consolidados"].extend([
                                         gen_nexus_spec(CTA_PROVISION_PUENTE, d_s, total, 0), gen_nexus_spec(inv_acc, d_s, 0, total),
                                         gen_nexus_spec(INV_ACCOUNT_MAP.get('DEFAULT'), d_r, total, 0), gen_nexus_spec(CTA_PROVISION_PUENTE, d_r, 0, total)
                                     ])
@@ -446,18 +450,45 @@ def mostrar_modulo_soho():
                                 df_v[c_costo_v] = pd.to_numeric(df_v[c_costo_v], errors='coerce').fillna(0)
                                 
                                 df_consignacion_ventas = df_v[df_v[c_cat_v].astype(str).str.upper().str.strip() == 'CONSIGNACION']
-                                total_ventas_consignacion = df_consignacion_ventas[c_costo_v].sum()
                                 
-                                if total_ventas_consignacion > 0:
-                                    desc_venta_consig = f"RECONOCIMIENTO POR VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                    desc_costo_consig = f"RECONOCIMIENTO DE COSTO POR VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
+                                if not df_consignacion_ventas.empty:
                                     
-                                    partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consig"] = [
+                                    # 1. PESTAÑA GLOBAL (Salida por inventarito de Ventas)
+                                    total_ventas_consignacion = df_consignacion_ventas[c_costo_v].sum()
+                                    desc_venta_consig = f"RECONOCIMIENTO POR VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
+                                    
+                                    partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consig_Global"] = [
                                         gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0, "CENTRO SOHO"),
-                                        gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion, "CENTRO SOHO"),
-                                        gen_nexus_spec(CTA_BASE_GASTO, desc_costo_consig, total_ventas_consignacion, 0, "CENTRO SOHO"),
-                                        gen_nexus_spec(CTA_BASE_PT, desc_costo_consig, 0, total_ventas_consignacion, "CENTRO SOHO")
+                                        gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion, "CENTRO SOHO")
                                     ]
+
+                                    # 2. PESTAÑAS DE TRASLADO POR UNIDAD (Doble Partida cruzada)
+                                    c_origen_v = next((c for c in df_consignacion_ventas.columns if 'BODEGASALIDA' in c.upper().replace(' ', '')), None)
+                                    if not c_origen_v: c_origen_v = next((c for c in df_consignacion_ventas.columns if 'PROVEEDOR' in c.upper()), None)
+                                    
+                                    for _, row_v in df_consignacion_ventas.iterrows():
+                                        tot_v = float(row_v[c_costo_v])
+                                        if tot_v == 0: continue
+                                        
+                                        origen_v = clean_value(row_v[c_origen_v]) if c_origen_v else "LIBRERIA CENTRAL"
+                                        if origen_v == "": origen_v = "LIBRERIA CENTRAL"
+                                        
+                                        safe_origen = str(origen_v).replace('/', '-').replace('\\', '-')[:15]
+                                        tab_name_v = f"Traslado_{safe_origen}"
+                                        
+                                        if tab_name_v not in partidas_dict["VENTAS_CONSIGNACION"]: 
+                                            partidas_dict["VENTAS_CONSIGNACION"][tab_name_v] = []
+                                            
+                                        desc_traslado_v = f"RECONOCIMIENTO DE TRASLADO POR COSTO DE VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO HACIA {origen_v}, MES {mes_proceso} DE {anio_proceso}."
+                                        
+                                        partidas_dict["VENTAS_CONSIGNACION"][tab_name_v].extend([
+                                            # Salida de la unidad origen (Puente vs Inventario)
+                                            gen_nexus_spec(CTA_PROVISION_PUENTE, desc_traslado_v, tot_v, 0, origen_v),
+                                            gen_nexus_spec(CTA_BASE_PT, desc_traslado_v, 0, tot_v, origen_v),
+                                            # Entrada directa al gasto de Soho (Costo vs Puente)
+                                            gen_nexus_spec(CTA_BASE_GASTO, desc_traslado_v, tot_v, 0, "CENTRO SOHO"),
+                                            gen_nexus_spec(CTA_PROVISION_PUENTE, desc_traslado_v, 0, tot_v, "CENTRO SOHO")
+                                        ])
 
                     if arch_mov_inv or arch_ventas:
                         st.success("✅ Procesamiento contable finalizado con éxito.")
