@@ -283,6 +283,59 @@ def mostrar_modulo_soho():
                             
                             df[c_total] = pd.to_numeric(df[c_total], errors='coerce').fillna(0)
 
+                            partidas_dict = {
+                        "TRASLADOS": {},
+                        "AJUSTES": {"Ajustes_Globales": []},
+                        "CONSIGNACION": {"Salidas_por_Inventario": []},
+                        "VENTAS_CONSIGNACION": {"Ventas_Consig": []}
+                    }
+                    
+                    nombres_meses = {1:"Enero", 2:"Febrero", 3:"Marzo", 4:"Abril", 5:"Mayo", 6:"Junio", 7:"Julio", 8:"Agosto", 9:"Septiembre", 10:"Octubre", 11:"Noviembre", 12:"Diciembre"}
+
+                    def extraer_fechas_seguras(df_temp, col_name):
+                        s_dt = pd.to_datetime(df_temp[col_name], errors='coerce')
+                        m1 = s_dt.isna()
+                        if m1.any():
+                            s_dt.loc[m1] = pd.to_datetime(df_temp.loc[m1, col_name], format='%d/%m/%Y', errors='coerce')
+                        m2 = s_dt.isna()
+                        if m2.any():
+                            nums = pd.to_numeric(df_temp.loc[m2, col_name], errors='coerce')
+                            s_dt.loc[m2] = pd.to_datetime(nums, origin='1899-12-30', unit='D', errors='coerce')
+                        return s_dt
+
+                    if arch_mov_inv:
+                        df = pd.read_excel(arch_mov_inv, dtype=str)
+                        df.columns = df.columns.str.strip()
+                        
+                        c_fecha = next((c for c in df.columns if str(c).upper().strip() == 'FECHA'), None)
+                        if not c_fecha and len(df.columns) >= 6: c_fecha = df.columns[5]
+                            
+                        if c_fecha:
+                            df['Fecha_DT'] = extraer_fechas_seguras(df, c_fecha)
+                            mask_fecha = (df['Fecha_DT'].dt.month == mes_proceso) & (df['Fecha_DT'].dt.year == anio_proceso)
+                            
+                            total_antes = len(df)
+                            df = df[mask_fecha]
+                            total_despues = len(df)
+                            st.info(f"📅 **Movimientos:** Se conservaron {total_despues} registros de {nombres_meses.get(mes_proceso, mes_proceso)} (Total en Excel: {total_antes}).")
+
+                        if not df.empty:
+                            c_tipo = next((c for c in df.columns if 'TIPO' in c.upper() or 'CONCEPT' in c.upper()), None)
+                            
+                            c_sender = next((c for c in df.columns if 'BODEGASALIDA' in c.upper().replace(' ', '')), None)
+                            if not c_sender: c_sender = next((c for c in df.columns if 'SALIDA' in c.upper().replace(' ', '') and 'BODEGA' in c.upper()), None)
+                            
+                            c_receiver = next((c for c in df.columns if 'BODEGAINGRESO' in c.upper().replace(' ', '')), None)
+                            if not c_receiver: c_receiver = next((c for c in df.columns if 'INGRESO' in c.upper().replace(' ', '') and 'BODEGA' in c.upper()), None)
+
+                            c_bodega = next((c for c in df.columns if c.upper().strip() == 'BODEGA'), None)
+                            c_category = next((c for c in df.columns if 'CATEGOR' in c.upper()), 'Categoria')
+                            
+                            c_total = next((c for c in df.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '')), None)
+                            if not c_total: c_total = next((c for c in df.columns if 'COSTO' in c.upper()), 'PrecioTotal')
+                            
+                            df[c_total] = pd.to_numeric(df[c_total], errors='coerce').fillna(0)
+
                             for _, row in df.iterrows():
                                 tipo = clean_value(row[c_tipo]) if c_tipo else ""
                                 total = float(row[c_total])
@@ -292,7 +345,6 @@ def mostrar_modulo_soho():
                                 raw_receiver = clean_value(row[c_receiver]) if c_receiver else ""
                                 bod_principal = clean_value(row[c_bodega]) if c_bodega else ""
                                 
-                                # Si las columnas están vacías, usamos la bodega principal según el tipo de movimiento
                                 if raw_sender == "" and "SALIDA" in tipo: raw_sender = bod_principal
                                 if raw_receiver == "" and "ENTRADA" in tipo: raw_receiver = bod_principal
 
@@ -317,28 +369,33 @@ def mostrar_modulo_soho():
                                             pass 
                                         else:
                                             desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["CONSIGNACION"]["Movimientos_Consig"].extend([
+                                            if "Entradas_Consignacion" not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"]["Entradas_Consignacion"] = []
+                                            partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
                                                 gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
                                             ])
                                     elif is_sender_unidad:
                                         if es_traslado and receiver_desc != "DESTINO":
-                                            desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                            # TRASLADOS DE CONSIGNACIÓN: Pestaña por unidad y partida doble invertida
+                                            tab_name = receiver_desc
+                                            if tab_name not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_name] = []
+                                            
+                                            d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTOS EN CONSIGNACION DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                            d_r = f"RECONOCIMIENTO DE ENTRADA POR TRASLADO DE PRODUCTOS EN CONSIGNACION DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                            
+                                            partidas_dict["CONSIGNACION"][tab_name].extend([
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, d_s, total, 0, raw_sender),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, d_s, 0, total, raw_sender),
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, d_r, total, 0, raw_receiver),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, d_r, 0, total, raw_receiver)
+                                            ])
                                         else:
-                                            desc = f"RECONOCIMIENTO POR {tipo} DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                        
-                                        partidas_dict["CONSIGNACION"]["Movimientos_Consig"].extend([
-                                            gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_sender),
-                                            gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_sender),
-                                            gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc + " ", total, 0, raw_sender),
-                                            gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc + " ", 0, total, raw_sender)
-                                        ])
-
-                                        if 'AJUS' in tipo or not es_traslado:
-                                            desc_ajuste_costo = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([
-                                                gen_nexus_spec(CTA_BASE_GASTO, desc_ajuste_costo, total, 0), 
-                                                gen_nexus_spec(inv_acc, desc_ajuste_costo, 0, total)
+                                            # SALIDAS REGULARES DE CONSIGNACIÓN
+                                            tab_name = "Salidas_por_Inventario"
+                                            desc = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
+                                            partidas_dict["CONSIGNACION"][tab_name].extend([
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc, total, 0, raw_sender),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc, 0, total, raw_sender)
                                             ])
 
                                 # BLOQUE AJUSTES REGULARES
@@ -352,9 +409,11 @@ def mostrar_modulo_soho():
 
                                 # BLOQUE TRASLADOS ESTÁNDAR
                                 elif is_sender_unidad and es_traslado:
+                                    # TRASLADOS NORMALES: Pestaña por unidad y partida doble con cuenta puente
+                                    if receiver_desc not in partidas_dict["TRASLADOS"]: partidas_dict["TRASLADOS"][receiver_desc] = []
                                     d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTO DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
                                     d_r = d_s.replace("SALIDA", "ENTRADA")
-                                    partidas_dict["TRASLADOS"]["Traslados_Consolidados"].extend([
+                                    partidas_dict["TRASLADOS"][receiver_desc].extend([
                                         gen_nexus_spec(CTA_PROVISION_PUENTE, d_s, total, 0), gen_nexus_spec(inv_acc, d_s, 0, total),
                                         gen_nexus_spec(INV_ACCOUNT_MAP.get('DEFAULT'), d_r, total, 0), gen_nexus_spec(CTA_PROVISION_PUENTE, d_r, 0, total)
                                     ])
