@@ -294,8 +294,6 @@ def mostrar_modulo_libreria():
                                 receiver_desc = raw_receiver if raw_receiver else "DESTINO"
                                 
                                 es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
-                                
-                                # BLINDAJE: Ajustes y Devoluciones a proveedor
                                 es_ajuste = 'AJUS' in tipo
                                 es_spc = 'SPC' in row_str_upper
 
@@ -312,7 +310,6 @@ def mostrar_modulo_libreria():
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
                                             ])
                                     elif is_sender_lib:
-                                        # Traslados de consignación
                                         if es_traslado and receiver_desc != "DESTINO":
                                             safe_rec = str(receiver_desc).replace('/', '-').replace('\\', '-')[:15]
                                             tab_traslado = f"Traslado_{safe_rec}"
@@ -325,7 +322,6 @@ def mostrar_modulo_libreria():
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
                                             ])
                                         
-                                        # Ajustes o Devoluciones (SPC)
                                         elif es_ajuste or es_spc:
                                             tab_salida = "Salidas_y_Ajustes_Consig"
                                             if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
