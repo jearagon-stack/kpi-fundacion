@@ -294,8 +294,11 @@ def mostrar_modulo_libreria():
                                 receiver_desc = raw_receiver if raw_receiver else "DESTINO"
                                 
                                 es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
-                                es_ajuste = 'AJUS' in tipo
+                                
+                                # BLINDAJE: Diferenciar Ajustes Reales vs Consumos Normales
+                                es_ajuste_puro = 'AJUS' in tipo
                                 es_spc = 'SPC' in row_str_upper
+                                es_consumo_regular = not es_traslado
 
                                 # BLOQUE 1: CONSIGNACIÓN (INVENTARIO)
                                 if 'CONSIGNACION' in category:
@@ -322,7 +325,8 @@ def mostrar_modulo_libreria():
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
                                             ])
                                         
-                                        elif es_ajuste or es_spc:
+                                        # Devoluciones o Ajustes Reales (Ignora las salidas por venta)
+                                        elif es_ajuste_puro or es_spc:
                                             tab_salida = "Salidas_y_Ajustes_Consig"
                                             if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
                                             texto_razon = "DEVOLUCION (SPC)" if es_spc else "AJUSTE"
@@ -334,7 +338,7 @@ def mostrar_modulo_libreria():
 
                                 # BLOQUE 2: INVENTARIO REGULAR (NO CONSIGNACIÓN)
                                 else:
-                                    if es_ajuste:
+                                    if es_consumo_regular:
                                         if is_receiver_lib:
                                             desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                             partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
