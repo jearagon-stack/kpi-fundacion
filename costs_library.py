@@ -169,8 +169,40 @@ def mostrar_modulo_libreria():
                                     lambda x: x[c_ent_v].sum() / x[c_ent_u].sum() if x[c_ent_u].sum() > 0 else None
                                 ).dropna().reset_index(name='Costo_Ref')
 
-                            # --- CASCADA DE COSTO BASE (INCLUYE FCOM Y FSE) ---
-                            # Aquí agregamos los prefijos de factura comercial para que no te tire alertas falsas
+                            # Bases principales ampliadas
+                            ref_cfe = get_weighted(df_k[df_k['Prefijo_Upper'].isin(['CFE', 'FCOM', 'FSE', 'FAC', 'CCF'])]).rename(columns={'Costo_Ref': 'C_CFE'})
+                            ref_trd = get_weighted(df_k[df_k['Prefijo_Upper'].isin(['TRD', 'TIN'])]).rename(columns={'Costo_Ref': 'C_TRD'})
+                            ref_pro = get_weighted(df_k[df_k['Prefijo_Upper'] == 'PRO']).rename(columns={'Costo_Ref': 'C_PRO'})
+                            ref_eaj = get_weighted(df_k[df_k['Prefijo_Upper'].isin(['EAJ', 'AJU', 'ENT', 'REC'])]).rename(columns={'Costo_Ref': 'C_EAJ'})
+
+                            # Saldo Anterior / Inicial
+                            df_ini = df_k[(df_k['Prefijo_Upper'].isin(['INI', 'NAN', ''])) | (df_k['Doc_Upper'].str.contains('SALDO ANTERIOR'))]
+                            ref_ini = df_ini[df_ini[c_costo] > 0].groupby(c_cod)[c_costo].first().reset_index(name='C_INI')
+
+                            # ESCUDOS ANTI-CEROS (CATCH-ALL)
+                            # 1. Busca cualquier otra entrada genérica de inventario que no tenga los prefijos anteriores
+                            ref_any_in = get_weighted(df_k).rename(columns={'Costo_Ref': 'C_ANY_IN'})
+                            
+                            # 2. Si el producto de plano no tiene entradas, busca su costo promedio histórico máximo registrado en el documento
+                            ref_max_hist = df_k[df_k[c_costo] > 0].groupby(c_cod)[c_costo].max().reset_index(name='C_MAX_HIST')
+
+                            ref_base = pd.DataFrame({c_cod: df_k[c_cod].unique()})
+                            for df_ref, col in zip([ref_cfe, ref_ini, ref_trd, ref_pro, ref_eaj, ref_any_in, ref_max_hist], 
+                                                   ['C_CFE', 'C_INI', 'C_TRD', 'C_PRO', 'C_EAJ', 'C_ANY_IN', 'C_MAX_HIST']):
+                                if not df_ref.empty:
+                                    ref_base = pd.merge(ref_base, df_ref, on=c_cod, how='left')
+                                else:
+                                    ref_base[col] = pd.NA
+                            
+                            # Cascada blindada extrema
+                            ref_base['COSTO_BASE'] = ref_base['C_CFE'] \
+                                .fillna(ref_base['C_INI']) \
+                                .fillna(ref_base['C_TRD']) \
+                                .fillna(ref_base['C_PRO']) \
+                                .fillna(ref_base['C_EAJ']) \
+                                .fillna(ref_base['C_ANY_IN']) \
+                                .fillna(ref_base['C_MAX_HIST']) \
+                                .fillna(0)
                             ref_cfe = get_weighted(df_k[df_k['Prefijo_Upper'].isin(['CFE', 'FCOM', 'FSE'])]).rename(columns={'Costo_Ref': 'C_CFE'})
                             
                             ref_trd = get_weighted(df_k[df_k['Prefijo_Upper'] == 'TRD']).rename(columns={'Costo_Ref': 'C_TRD'})
