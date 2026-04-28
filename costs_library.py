@@ -261,19 +261,18 @@ def mostrar_modulo_libreria():
 
                         if not df.empty:
                             c_tipo = next((c for c in df.columns if 'TIPO' in c.upper() or 'CONCEPT' in c.upper()), None)
-                            
                             c_sender = next((c for c in df.columns if 'BODEGASALIDA' in c.upper().replace(' ', '')), None)
                             if not c_sender: c_sender = next((c for c in df.columns if 'SALIDA' in c.upper().replace(' ', '') and 'BODEGA' in c.upper()), None)
-                            
                             c_receiver = next((c for c in df.columns if 'BODEGAINGRESO' in c.upper().replace(' ', '')), None)
                             if not c_receiver: c_receiver = next((c for c in df.columns if 'INGRESO' in c.upper().replace(' ', '') and 'BODEGA' in c.upper()), None)
-
                             c_bodega = next((c for c in df.columns if c.upper().strip() == 'BODEGA'), None)
                             c_category = next((c for c in df.columns if 'CATEGOR' in c.upper()), 'Categoria')
-                            
                             c_total = next((c for c in df.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '')), None)
                             if not c_total: c_total = next((c for c in df.columns if 'COSTO' in c.upper()), 'PrecioTotal')
                             
+                            # NUEVO: Detector de Documento para encontrar las devoluciones "SPC"
+                            c_doc = next((c for c in df.columns if 'NUMERO' in c.upper() or 'DOC' in c.upper()), None)
+
                             df[c_total] = pd.to_numeric(df[c_total], errors='coerce').fillna(0)
 
                             for _, row in df.iterrows():
@@ -284,6 +283,7 @@ def mostrar_modulo_libreria():
                                 raw_sender = clean_value(row[c_sender]) if c_sender else ""
                                 raw_receiver = clean_value(row[c_receiver]) if c_receiver else ""
                                 bod_principal = clean_value(row[c_bodega]) if c_bodega else ""
+                                doc_val = clean_value(row[c_doc]) if c_doc else ""
                                 
                                 if raw_sender == "" and "SALIDA" in tipo: raw_sender = bod_principal
                                 if raw_receiver == "" and "ENTRADA" in tipo: raw_receiver = bod_principal
@@ -300,9 +300,12 @@ def mostrar_modulo_libreria():
                                 receiver_desc = raw_receiver if raw_receiver else "DESTINO"
                                 
                                 es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
-                                es_ajuste = 'AJUS' in tipo or not es_traslado
+                                
+                                # LÓGICA BLINDADA: Distinguir Ajustes reales y Devoluciones (SPC)
+                                es_ajuste = 'AJUS' in tipo
+                                es_spc = 'SPC' in doc_val or 'SPC' in tipo
 
-                                # BLOQUE CONSIGNACIÓN (INVENTARIO)
+                                # BLOQUE 1: CONSIGNACIÓN (INVENTARIO)
                                 if 'CONSIGNACION' in category:
                                     if is_receiver_lib and not is_sender_lib:
                                         if raw_sender in OTRAS_UNIDADES_INTERNAS or es_traslado:
@@ -315,60 +318,55 @@ def mostrar_modulo_libreria():
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
                                             ])
                                     elif is_sender_lib:
-                                        # 1. Salida Global (Inventario)
-                                        tab_salida = "Salida_Consig_Global"
-                                        if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
-                                        desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                        partidas_dict["CONSIGNACION"][tab_salida].extend([
-                                            gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
-                                            gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total, raw_sender)
-                                        ])
-                                        
-                                        # 2. Traslados hacia otra unidad (Pestaña por unidad)
+                                        # Traslados hacia otra unidad
                                         if es_traslado and receiver_desc != "DESTINO":
                                             safe_rec = str(receiver_desc).replace('/', '-').replace('\\', '-')[:15]
                                             tab_traslado = f"Traslado_{safe_rec}"
                                             if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
                                             desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
-                                            
                                             partidas_dict["CONSIGNACION"][tab_traslado].extend([
                                                 gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc_traslado, total, 0, raw_receiver),
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc_traslado, 0, total, raw_receiver),
                                                 gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0, raw_sender),
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
                                             ])
-
-                                        if 'AJUS' in tipo or not es_traslado:
-                                            desc_ajuste_costo = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([
-                                                gen_nexus_spec(CTA_BASE_GASTO, desc_ajuste_costo, total, 0), 
-                                                gen_nexus_spec(inv_acc, desc_ajuste_costo, 0, total)
+                                            
+                                        # Ajustes o Devoluciones a Proveedor (SPC)
+                                        elif es_ajuste or es_spc:
+                                            tab_salida = "Salidas_y_Ajustes_Consig"
+                                            if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
+                                            texto_razon = "AJUSTE" if es_ajuste else "DEVOLUCION (SPC)"
+                                            desc_salida = f"RECONOCIMIENTO POR {texto_razon} DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                            partidas_dict["CONSIGNACION"][tab_salida].extend([
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total, raw_sender)
                                             ])
+                                        # NOTA: Las salidas por ventas normales se ignoran aquí, porque el archivo de Ventas hace su propia reversión.
 
-                                # BLOQUE AJUSTES REGULARES
-                                elif es_ajuste:
-                                    if is_receiver_lib:
-                                        desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                        partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
-                                    else:
-                                        desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                        partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
+                                # BLOQUE 2: INVENTARIO REGULAR (NO CONSIGNACIÓN)
+                                else:
+                                    if es_ajuste:
+                                        if is_receiver_lib:
+                                            desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                            partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
+                                        else:
+                                            desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                            partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
 
-                                # BLOQUE TRASLADOS ESTÁNDAR
-                                elif is_sender_lib and es_traslado:
-                                    safe_rec_t = str(receiver_desc).replace('/', '-').replace('\\', '-')[:25]
-                                    if safe_rec_t not in partidas_dict["TRASLADOS"]: 
-                                        partidas_dict["TRASLADOS"][safe_rec_t] = []
+                                    elif is_sender_lib and es_traslado:
+                                        safe_rec_t = str(receiver_desc).replace('/', '-').replace('\\', '-')[:25]
+                                        if safe_rec_t not in partidas_dict["TRASLADOS"]: 
+                                            partidas_dict["TRASLADOS"][safe_rec_t] = []
+                                            
+                                        d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTO DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                        d_r = d_s.replace("SALIDA", "ENTRADA")
                                         
-                                    d_s = f"RECONOCIMIENTO DE SALIDA POR TRASLADO DE PRODUCTO DE {sender_desc} HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
-                                    d_r = d_s.replace("SALIDA", "ENTRADA")
-                                    
-                                    partidas_dict["TRASLADOS"][safe_rec_t].extend([
-                                        gen_nexus_spec(CTA_PROVISION_PUENTE, d_s, total, 0), 
-                                        gen_nexus_spec(inv_acc, d_s, 0, total),
-                                        gen_nexus_spec(INV_ACCOUNT_MAP.get('DEFAULT'), d_r, total, 0), 
-                                        gen_nexus_spec(CTA_PROVISION_PUENTE, d_r, 0, total)
-                                    ])
+                                        partidas_dict["TRASLADOS"][safe_rec_t].extend([
+                                            gen_nexus_spec(CTA_PROVISION_PUENTE, d_s, total, 0), 
+                                            gen_nexus_spec(inv_acc, d_s, 0, total),
+                                            gen_nexus_spec(INV_ACCOUNT_MAP.get('DEFAULT'), d_r, total, 0), 
+                                            gen_nexus_spec(CTA_PROVISION_PUENTE, d_r, 0, total)
+                                        ])
 
                     # ====================================================
                     # PROCESAMIENTO 2: ARCHIVO DE VENTAS (NUEVO REQUERIMIENTO SÓLO LIBRERÍA)
