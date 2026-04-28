@@ -123,7 +123,7 @@ def mostrar_modulo_libreria():
 
             with st.spinner("Analizando información y cruzando datos de Kardex..."):
                 
-                spc_ids = set() # Almacenará los IdComprobante que son SPC
+                spc_ids = set() # Memoria para los ID de las devoluciones SPC
                 
                 # ====================================================
                 # BLOQUE: AUDITORÍA DE KARDEX Y EXTRACCIÓN SPC
@@ -225,8 +225,8 @@ def mostrar_modulo_libreria():
                 try:
                     partidas_dict = {
                         "TRASLADOS": {},
-                        "AJUSTES": {"Ajustes_Globales": []},
-                        "CONSIGNACION": {"Entradas_Consignacion": [], "Ajustes_Consignacion": [], "Salidas_Consignacion": []},
+                        "AJUSTES": {"Entradas_por_Ajuste": [], "Salidas_por_Ajuste": [], "Salidas_por_Consumo": []},
+                        "CONSIGNACION": {},
                         "VENTAS_CONSIGNACION": {}
                     }
                     
@@ -265,9 +265,11 @@ def mostrar_modulo_libreria():
                             if not c_receiver: c_receiver = next((c for c in df.columns if 'INGRESO' in c.upper().replace(' ', '') and 'BODEGA' in c.upper()), None)
                             c_bodega = next((c for c in df.columns if c.upper().strip() == 'BODEGA'), None)
                             c_category = next((c for c in df.columns if 'CATEGOR' in c.upper()), 'Categoria')
-                            c_total = next((c for c in df.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '')), None)
-                            if not c_total: c_total = next((c for c in df.columns if 'COSTO' in c.upper()), 'PrecioTotal')
                             c_idcomp_m = next((c for c in df.columns if 'IDCOMP' in c.upper()), None)
+                            
+                            # === FIX CLAVE: LECTURA ULTRA BLINDADA DEL PRECIOTOT ===
+                            c_total = next((c for c in df.columns if 'PRECIOTOT' in c.upper().replace(' ', '') or 'COSTO' in c.upper()), None)
+                            if not c_total: c_total = next((c for c in df.columns if 'TOTAL' in c.upper()), None)
                             
                             df[c_total] = pd.to_numeric(df[c_total], errors='coerce').fillna(0)
 
@@ -302,18 +304,21 @@ def mostrar_modulo_libreria():
                                 
                                 es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
                                 es_ajuste = 'AJUS' in tipo
-                                es_salida_inventario = 'SALIDA' in tipo and not es_traslado and not es_ajuste
+                                es_salida_inventario = 'SALIDA DE INVENTARIO' in tipo
 
-                                # BLOQUE 1: CONSIGNACIÓN (INVENTARIO)
+                                # --- BLOQUE 1: CONSIGNACIÓN (INVENTARIO) ---
                                 if 'CONSIGNACION' in category:
                                     if is_receiver_lib and not is_sender_lib:
-                                        if raw_sender in OTRAS_UNIDADES_INTERNAS or es_traslado: pass 
-                                        else:
-                                            desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
-                                            ])
+                                        tab_name = "Entradas_Ajuste_Consig" if es_ajuste else "Entradas_Consignacion"
+                                        texto_razon = "AJUSTE DE ENTRADA" if es_ajuste else "ENTRADA"
+                                        desc = f"RECONOCIMIENTO POR {texto_razon} DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                        
+                                        if tab_name not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_name] = []
+                                        partidas_dict["CONSIGNACION"][tab_name].extend([
+                                            gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
+                                            gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
+                                        ])
+                                            
                                     elif is_sender_lib:
                                         if es_traslado and receiver_desc != "DESTINO":
                                             safe_rec = str(receiver_desc).replace('/', '-').replace('\\', '-')[:15]
@@ -327,27 +332,31 @@ def mostrar_modulo_libreria():
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
                                             ])
                                         elif es_ajuste:
-                                            desc_ajuste = f"RECONOCIMIENTO POR AJUSTE DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["CONSIGNACION"]["Ajustes_Consignacion"].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_ajuste, total, 0, raw_sender),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_ajuste, 0, total, raw_sender)
+                                            tab_salida = "Salidas_Ajuste_Consig"
+                                            if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
+                                            desc_salida = f"RECONOCIMIENTO POR AJUSTE DE SALIDA EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
+                                            partidas_dict["CONSIGNACION"][tab_salida].extend([
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total, raw_sender)
                                             ])
                                         elif es_salida_inventario or es_spc:
+                                            tab_salida = "Salidas_Consignacion"
+                                            if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
                                             desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["CONSIGNACION"]["Salidas_Consignacion"].extend([
+                                            partidas_dict["CONSIGNACION"][tab_salida].extend([
                                                 gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total, raw_sender)
                                             ])
 
-                                # BLOQUE 2: INVENTARIO REGULAR (NO CONSIGNACIÓN)
+                                # --- BLOQUE 2: INVENTARIO REGULAR (NO CONSIGNACIÓN) ---
                                 else:
                                     if es_ajuste:
                                         if is_receiver_lib:
                                             desc = f"RECONOCIMIENTO DE ENTRADA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
+                                            partidas_dict["AJUSTES"]["Entradas_por_Ajuste"].extend([gen_nexus_spec(inv_acc, desc, total, 0), gen_nexus_spec(CTA_BASE_GASTO, desc, 0, total)])
                                         else:
                                             desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
+                                            partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
 
                                     elif is_sender_lib and es_traslado:
                                         safe_rec_t = str(receiver_desc).replace('/', '-').replace('\\', '-')[:25]
@@ -361,10 +370,11 @@ def mostrar_modulo_libreria():
 
                                     elif is_sender_lib and es_salida_inventario:
                                         if es_spc:
-                                            pass # SI ES SPC (Devolución) SE OMITE COMO COSTO SEGÚN REGLA
+                                            pass # SI ES SPC SE OMITE COMO COSTO SEGÚN REGLA
                                         else:
+                                            # Se suma al costo
                                             desc = f"RECONOCIMIENTO DE SALIDA POR CONSUMO DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                            partidas_dict["AJUSTES"]["Ajustes_Globales"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
+                                            partidas_dict["AJUSTES"]["Salidas_por_Consumo"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
 
                     # ====================================================
                     # PROCESAMIENTO 2: ARCHIVO DE VENTAS (SÓLO LIBRERÍA)
@@ -395,8 +405,6 @@ def mostrar_modulo_libreria():
                                 
                                 if total_ventas_consignacion > 0:
                                     desc_venta_consig = f"RECONOCIMIENTO POR VENTA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
-                                    
-                                    # Para Librería, OMITIMOS el traslado doble de costos. Solo reversamos el inventario en consignación.
                                     partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consig_Global"] = [
                                         gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0, "LIBRERÍA CENTRAL"),
                                         gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion, "LIBRERÍA CENTRAL")
