@@ -169,45 +169,10 @@ def mostrar_modulo_libreria():
                                     lambda x: x[c_ent_v].sum() / x[c_ent_u].sum() if x[c_ent_u].sum() > 0 else None
                                 ).dropna().reset_index(name='Costo_Ref')
 
-                            # Bases principales ampliadas
                             ref_cfe = get_weighted(df_k[df_k['Prefijo_Upper'].isin(['CFE', 'FCOM', 'FSE', 'FAC', 'CCF'])]).rename(columns={'Costo_Ref': 'C_CFE'})
                             ref_trd = get_weighted(df_k[df_k['Prefijo_Upper'].isin(['TRD', 'TIN'])]).rename(columns={'Costo_Ref': 'C_TRD'})
                             ref_pro = get_weighted(df_k[df_k['Prefijo_Upper'] == 'PRO']).rename(columns={'Costo_Ref': 'C_PRO'})
                             ref_eaj = get_weighted(df_k[df_k['Prefijo_Upper'].isin(['EAJ', 'AJU', 'ENT', 'REC'])]).rename(columns={'Costo_Ref': 'C_EAJ'})
-
-                            # Saldo Anterior / Inicial
-                            df_ini = df_k[(df_k['Prefijo_Upper'].isin(['INI', 'NAN', ''])) | (df_k['Doc_Upper'].str.contains('SALDO ANTERIOR'))]
-                            ref_ini = df_ini[df_ini[c_costo] > 0].groupby(c_cod)[c_costo].first().reset_index(name='C_INI')
-
-                            # ESCUDOS ANTI-CEROS (CATCH-ALL)
-                            # 1. Busca cualquier otra entrada genérica de inventario que no tenga los prefijos anteriores
-                            ref_any_in = get_weighted(df_k).rename(columns={'Costo_Ref': 'C_ANY_IN'})
-                            
-                            # 2. Si el producto de plano no tiene entradas, busca su costo promedio histórico máximo registrado en el documento
-                            ref_max_hist = df_k[df_k[c_costo] > 0].groupby(c_cod)[c_costo].max().reset_index(name='C_MAX_HIST')
-
-                            ref_base = pd.DataFrame({c_cod: df_k[c_cod].unique()})
-                            for df_ref, col in zip([ref_cfe, ref_ini, ref_trd, ref_pro, ref_eaj, ref_any_in, ref_max_hist], 
-                                                   ['C_CFE', 'C_INI', 'C_TRD', 'C_PRO', 'C_EAJ', 'C_ANY_IN', 'C_MAX_HIST']):
-                                if not df_ref.empty:
-                                    ref_base = pd.merge(ref_base, df_ref, on=c_cod, how='left')
-                                else:
-                                    ref_base[col] = pd.NA
-                            
-                            # Cascada blindada extrema
-                            ref_base['COSTO_BASE'] = ref_base['C_CFE'] \
-                                .fillna(ref_base['C_INI']) \
-                                .fillna(ref_base['C_TRD']) \
-                                .fillna(ref_base['C_PRO']) \
-                                .fillna(ref_base['C_EAJ']) \
-                                .fillna(ref_base['C_ANY_IN']) \
-                                .fillna(ref_base['C_MAX_HIST']) \
-                                .fillna(0)
-                            ref_cfe = get_weighted(df_k[df_k['Prefijo_Upper'].isin(['CFE', 'FCOM', 'FSE'])]).rename(columns={'Costo_Ref': 'C_CFE'})
-                            
-                            ref_trd = get_weighted(df_k[df_k['Prefijo_Upper'] == 'TRD']).rename(columns={'Costo_Ref': 'C_TRD'})
-                            ref_pro = get_weighted(df_k[df_k['Prefijo_Upper'] == 'PRO']).rename(columns={'Costo_Ref': 'C_PRO'})
-                            ref_eaj = get_weighted(df_k[df_k['Prefijo_Upper'] == 'EAJ']).rename(columns={'Costo_Ref': 'C_EAJ'})
 
                             df_ini = df_k[(df_k['Prefijo_Upper'].isin(['INI', 'NAN', ''])) | (df_k['Doc_Upper'].str.contains('SALDO ANTERIOR'))]
                             ref_ini = df_ini[df_ini[c_costo] > 0].groupby(c_cod)[c_costo].first().reset_index(name='C_INI')
@@ -224,6 +189,13 @@ def mostrar_modulo_libreria():
                             df_ventas = df_k[df_k['Prefijo_Upper'].isin(['FCF', 'CCF'])].copy()
                             df_ventas = df_ventas.merge(ref_base[[c_cod, 'COSTO_BASE']], on=c_cod, how='left')
                             
+                            # --- EL ESCUDO DEFINITIVO ---
+                            # Si no hay costo base (es 0 o nulo) porque el producto no tiene historial de compras,
+                            # igualamos el Costo Base al Costo de Venta para que la diferencia sea $0.00 y no genere alerta.
+                            df_ventas['COSTO_BASE'] = pd.to_numeric(df_ventas['COSTO_BASE'], errors='coerce').fillna(0)
+                            mask_zero_base = df_ventas['COSTO_BASE'] == 0
+                            df_ventas.loc[mask_zero_base, 'COSTO_BASE'] = df_ventas.loc[mask_zero_base, c_costo]
+
                             df_ventas = df_ventas[(df_ventas['COSTO_BASE'] > 0) | (df_ventas[c_costo] > 0)]
                             df_ventas['COSTO_BASE_SAFE'] = df_ventas['COSTO_BASE'].replace(0, 1) 
                             df_ventas['VARIACION_%'] = (df_ventas[c_costo] / df_ventas['COSTO_BASE_SAFE']) - 1
@@ -231,7 +203,6 @@ def mostrar_modulo_libreria():
 
                             condicion_porcentaje = df_ventas['VARIACION_%'].abs() > 0.01
                             condicion_moneda = df_ventas['DIFERENCIA_$'].abs() >= 0.019
-
                             anomalias = df_ventas[condicion_porcentaje & condicion_moneda].copy()
 
                             if not anomalias.empty:
