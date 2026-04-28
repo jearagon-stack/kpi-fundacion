@@ -69,7 +69,6 @@ def gen_excels_memory(partidas_dict, mes_proceso):
                 if not partidas_list: continue
                 df_nexus = pd.DataFrame(partidas_list)
                 
-                # Agrupación por cuenta y concepto para Nexus
                 df_grouped = df_nexus.groupby(["CUENTA", "VACIO", "CONCEPTO", "AUXILIAR"], as_index=False)[["DEBE", "HABER"]].sum()
                 df_grouped = df_grouped[(df_grouped["DEBE"] > 0) | (df_grouped["HABER"] > 0)]
                 df_grouped = df_grouped.sort_values(by=["CONCEPTO", "HABER", "DEBE"], ascending=[True, True, False])
@@ -118,10 +117,10 @@ def mostrar_modulo_libreria():
                 st.warning("⚠️ Debes subir al menos un archivo para procesar.")
                 return
 
-            with st.spinner("Analizando información y filtrando por fecha..."):
+            with st.spinner("Analizando información y aplicando filtros contables..."):
                 
                 # ====================================================
-                # BLOQUE: AUDITORÍA DE KARDEX CON FILTRO DOBLE
+                # BLOQUE: AUDITORÍA DE KARDEX CON ESCUDO ANTI-CEROS
                 # ====================================================
                 if arch_kardex:
                     try:
@@ -189,9 +188,7 @@ def mostrar_modulo_libreria():
                             df_ventas = df_k[df_k['Prefijo_Upper'].isin(['FCF', 'CCF'])].copy()
                             df_ventas = df_ventas.merge(ref_base[[c_cod, 'COSTO_BASE']], on=c_cod, how='left')
                             
-                            # --- EL ESCUDO DEFINITIVO ---
-                            # Si no hay costo base (es 0 o nulo) porque el producto no tiene historial de compras,
-                            # igualamos el Costo Base al Costo de Venta para que la diferencia sea $0.00 y no genere alerta.
+                            # ESCUDO DEFINITIVO: Si no hay historial base, asume el costo de la venta para no tirar alerta falsa
                             df_ventas['COSTO_BASE'] = pd.to_numeric(df_ventas['COSTO_BASE'], errors='coerce').fillna(0)
                             mask_zero_base = df_ventas['COSTO_BASE'] == 0
                             df_ventas.loc[mask_zero_base, 'COSTO_BASE'] = df_ventas.loc[mask_zero_base, c_costo]
@@ -220,7 +217,7 @@ def mostrar_modulo_libreria():
                         st.error(f"Error procesando el Kardex: {e_k}")
 
                 # ====================================================
-                # PROCESAMIENTO 1: ARCHIVO DE INVENTARIOS (FECHAS BLINDADAS)
+                # PROCESAMIENTO 1: ARCHIVO DE INVENTARIOS
                 # ====================================================
                 try:
                     partidas_dict = {
@@ -270,9 +267,6 @@ def mostrar_modulo_libreria():
                             c_total = next((c for c in df.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '')), None)
                             if not c_total: c_total = next((c for c in df.columns if 'COSTO' in c.upper()), 'PrecioTotal')
                             
-                            # NUEVO: Detector de Documento para encontrar las devoluciones "SPC"
-                            c_doc = next((c for c in df.columns if 'NUMERO' in c.upper() or 'DOC' in c.upper()), None)
-
                             df[c_total] = pd.to_numeric(df[c_total], errors='coerce').fillna(0)
 
                             for _, row in df.iterrows():
@@ -283,12 +277,12 @@ def mostrar_modulo_libreria():
                                 raw_sender = clean_value(row[c_sender]) if c_sender else ""
                                 raw_receiver = clean_value(row[c_receiver]) if c_receiver else ""
                                 bod_principal = clean_value(row[c_bodega]) if c_bodega else ""
-                                doc_val = clean_value(row[c_doc]) if c_doc else ""
                                 
                                 if raw_sender == "" and "SALIDA" in tipo: raw_sender = bod_principal
                                 if raw_receiver == "" and "ENTRADA" in tipo: raw_receiver = bod_principal
 
                                 category = clean_value(row[c_category]) if c_category else ""
+                                row_str_upper = ' '.join(row.fillna('').astype(str)).upper()
 
                                 is_sender_lib = raw_sender in UNIDADES_LIBRERIA_SET
                                 is_receiver_lib = raw_receiver in UNIDADES_LIBRERIA_SET
@@ -301,9 +295,9 @@ def mostrar_modulo_libreria():
                                 
                                 es_traslado = 'TRASLAD' in tipo or (raw_sender and raw_receiver)
                                 
-                                # LÓGICA BLINDADA: Distinguir Ajustes reales y Devoluciones (SPC)
+                                # BLINDAJE: Ajustes y Devoluciones a proveedor
                                 es_ajuste = 'AJUS' in tipo
-                                es_spc = 'SPC' in doc_val or 'SPC' in tipo
+                                es_spc = 'SPC' in row_str_upper
 
                                 # BLOQUE 1: CONSIGNACIÓN (INVENTARIO)
                                 if 'CONSIGNACION' in category:
@@ -318,7 +312,7 @@ def mostrar_modulo_libreria():
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
                                             ])
                                     elif is_sender_lib:
-                                        # Traslados hacia otra unidad
+                                        # Traslados de consignación
                                         if es_traslado and receiver_desc != "DESTINO":
                                             safe_rec = str(receiver_desc).replace('/', '-').replace('\\', '-')[:15]
                                             tab_traslado = f"Traslado_{safe_rec}"
@@ -330,18 +324,17 @@ def mostrar_modulo_libreria():
                                                 gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0, raw_sender),
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
                                             ])
-                                            
-                                        # Ajustes o Devoluciones a Proveedor (SPC)
+                                        
+                                        # Ajustes o Devoluciones (SPC)
                                         elif es_ajuste or es_spc:
                                             tab_salida = "Salidas_y_Ajustes_Consig"
                                             if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
-                                            texto_razon = "AJUSTE" if es_ajuste else "DEVOLUCION (SPC)"
+                                            texto_razon = "DEVOLUCION (SPC)" if es_spc else "AJUSTE"
                                             desc_salida = f"RECONOCIMIENTO POR {texto_razon} DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                             partidas_dict["CONSIGNACION"][tab_salida].extend([
                                                 gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total, raw_sender)
                                             ])
-                                        # NOTA: Las salidas por ventas normales se ignoran aquí, porque el archivo de Ventas hace su propia reversión.
 
                                 # BLOQUE 2: INVENTARIO REGULAR (NO CONSIGNACIÓN)
                                 else:
@@ -369,7 +362,7 @@ def mostrar_modulo_libreria():
                                         ])
 
                     # ====================================================
-                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS (NUEVO REQUERIMIENTO SÓLO LIBRERÍA)
+                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS (SÓLO LIBRERÍA)
                     # ====================================================
                     if arch_ventas:
                         df_v = pd.read_excel(arch_ventas, dtype=str)
