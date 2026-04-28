@@ -169,7 +169,10 @@ def mostrar_modulo_libreria():
                                     lambda x: x[c_ent_v].sum() / x[c_ent_u].sum() if x[c_ent_u].sum() > 0 else None
                                 ).dropna().reset_index(name='Costo_Ref')
 
-                            ref_cfe = get_weighted(df_k[df_k['Prefijo_Upper'] == 'CFE']).rename(columns={'Costo_Ref': 'C_CFE'})
+                            # --- CASCADA DE COSTO BASE (INCLUYE FCOM Y FSE) ---
+                            # Aquí agregamos los prefijos de factura comercial para que no te tire alertas falsas
+                            ref_cfe = get_weighted(df_k[df_k['Prefijo_Upper'].isin(['CFE', 'FCOM', 'FSE'])]).rename(columns={'Costo_Ref': 'C_CFE'})
+                            
                             ref_trd = get_weighted(df_k[df_k['Prefijo_Upper'] == 'TRD']).rename(columns={'Costo_Ref': 'C_TRD'})
                             ref_pro = get_weighted(df_k[df_k['Prefijo_Upper'] == 'PRO']).rename(columns={'Costo_Ref': 'C_PRO'})
                             ref_eaj = get_weighted(df_k[df_k['Prefijo_Upper'] == 'EAJ']).rename(columns={'Costo_Ref': 'C_EAJ'})
