@@ -43,39 +43,27 @@ CUENTAS_MANO_OBRA = [
 # FUNCIONES AUXILIARES TALLERES
 # ==========================================
 def obtener_datos_inventario(categoria):
-    """Devuelve la cuenta y el concepto exacto según el machote Nexus"""
     cat = str(categoria).upper()
-    if "LIMPIEZA" in cat: 
-        return "110616", "Inventario de articulos e insumos de limpieza"
-    if "EMPAQUE" in cat: 
-        return "110617", "Inventario de empaques"
-    if "REPUESTO" in cat: 
-        return "110620", "Inventario de repuestos"
-    if "PRODUCTO TERMINADO" in cat: 
-        return "110603", "Inventario de producto terminado"
-    
+    if "LIMPIEZA" in cat: return "110616", "Inventario de articulos e insumos de limpieza"
+    if "EMPAQUE" in cat: return "110617", "Inventario de empaques"
+    if "REPUESTO" in cat: return "110620", "Inventario de repuestos"
+    if "PRODUCTO TERMINADO" in cat: return "110603", "Inventario de producto terminado"
     return "110601", "Inventario de Materia Prima" 
 
 def limpiar_orden(o):
-    """Limpia espacios en blanco alrededor y dentro del código de la orden"""
     return str(o).strip().replace(" ", "").upper()
 
 def extraer_ordenes(texto):
-    """Busca patrones de órdenes incluso si tienen espacios en medio"""
-    if pd.isna(texto): 
-        return []
+    if pd.isna(texto): return []
     ordenes = re.findall(r'\b\d{3,4}\s*-\s*\d{3,4}\b', str(texto))
     return [limpiar_orden(o) for o in ordenes]
 
 def tiene_orden_valida(ordenes_extraidas, ordenes_sgt):
-    """Verifica si alguna de las órdenes extraídas existe en el maestro SGT"""
     for o in ordenes_extraidas:
-        if o in ordenes_sgt: 
-            return True
+        if o in ordenes_sgt: return True
     return False
 
 def buscar_valor_columna(row, df_cols, palabra_clave):
-    """Busca valores en columnas que contengan una palabra clave específica"""
     valores = []
     for col in df_cols:
         if palabra_clave.upper() in str(col).upper():
@@ -83,30 +71,18 @@ def buscar_valor_columna(row, df_cols, palabra_clave):
     return " ".join(valores).upper()
 
 def procesar_costos_por_orden(df, col_valor, ordenes_liquidadas_historicas, es_horas=False):
-    """Divide el costo o las horas, pero BLOQUEA si la orden ya fue liquidada en el pasado"""
     distribucion = {}
     ordenes_bloqueadas = set()
-    
     for _, row in df.iterrows():
-        try: 
-            valor = float(row[col_valor])
-        except: 
-            valor = 0.0
-            
-        if pd.isna(valor) or valor == 0.0: 
-            continue
-            
-        clasif = row.get('Clasificacion', '')
-        if clasif != "Orden Lista": 
-            continue
-            
-        ordenes_raw = row.get('Ordenes_Detectadas', [])
-        # BLINDAJE CONTRA EL BUG: Si por alguna razón es texto, lo convertimos de vuelta a lista
-        if isinstance(ordenes_raw, str):
-            ordenes_raw = [x.strip() for x in ordenes_raw.split(',') if x.strip()]
-        ordenes = ordenes_raw
+        try: valor = float(row[col_valor])
+        except: valor = 0.0
         
+        if pd.isna(valor) or valor == 0.0: continue
+        if row.get('Clasificacion', '') != "Orden Lista": continue
+        
+        ordenes = row.get('Ordenes_Detectadas', [])
         orden_sgt_val = str(row.get('Orden_SGT', '')).strip().upper()
+        
         if orden_sgt_val not in ["", "NAN", "NONE", "NAT"]:
             ordenes = [limpiar_orden(row['Orden_SGT'])]
             
@@ -114,19 +90,15 @@ def procesar_costos_por_orden(df, col_valor, ordenes_liquidadas_historicas, es_h
             valor_dividido = valor / len(ordenes)
             for o in ordenes:
                 o_str = str(o).strip().replace(" ", "").upper()
-                if o_str == 'NAN' or o_str == '' or o_str == 'NONE': 
-                    continue
-                
+                if o_str in ['NAN', '', 'NONE']: continue
                 if o_str in ordenes_liquidadas_historicas:
                     ordenes_bloqueadas.add(o_str)
                     continue
-                    
                 distribucion[o_str] = distribucion.get(o_str, 0.0) + valor_dividido
                 
     return distribucion, ordenes_bloqueadas
 
 def generar_nexus_bytes(df_or_dict):
-    """Soporta un DataFrame simple o un Diccionario para múltiples pestañas en Nexus"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         if isinstance(df_or_dict, dict):
@@ -137,11 +109,9 @@ def generar_nexus_bytes(df_or_dict):
         else:
             df_nexus = df_or_dict[["CUENTA", "VACIO", "CONCEPTO", "DEBE", "HABER"]]
             df_nexus.to_excel(writer, index=False, header=False, sheet_name="Partida_Nexus")
-            
     return output.getvalue()
 
 def generar_excel_filtrado(df, nombre_hoja):
-    """Genera un archivo Excel estándar con encabezados para reportes"""
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df.to_excel(writer, index=False, sheet_name=nombre_hoja)
@@ -173,10 +143,8 @@ def mostrar_modulo_costos():
         st.subheader("Paso 1: Periodo, Costos y Archivos")
         
         col_m1, col_m2 = st.columns(2)
-        with col_m1: 
-            mes_proceso = st.selectbox("Mes:", range(1, 13), index=date.today().month - 1)
-        with col_m2: 
-            anio_proceso = st.number_input("Año:", min_value=2024, max_value=2030, value=date.today().year)
+        with col_m1: mes_proceso = st.selectbox("Mes:", range(1, 13), index=date.today().month - 1)
+        with col_m2: anio_proceso = st.number_input("Año:", min_value=2024, max_value=2030, value=date.today().year)
 
         st.markdown("---")
         st.markdown("**Desglose de Mano de Obra (Planilla)**")
@@ -235,8 +203,7 @@ def mostrar_modulo_costos():
                                             ordenes_validas_set.add(o)
                                             if col_est and "LIQUIDADO" in str(row[col_est]).upper():
                                                 ordenes_liquidadas_historicas.add(o)
-                            except: 
-                                pass
+                            except: pass
 
                         # 1. LECTURA MAESTRO SGT
                         df_sgt = pd.read_excel(arch_sgt, dtype=str)
@@ -315,25 +282,30 @@ def mostrar_modulo_costos():
                             if c_est_mp:
                                 df_mp = df_mp[~df_mp[c_est_mp].astype(str).str.upper().str.contains('ANULAD')]
 
-                            df_mp['Texto_Para_Orden'] = df_mp.apply(lambda r: " ".join(r.dropna().astype(str)), axis=1)
+                            # --- VOLVEMOS A LA EXTRACCION SEGURA (Evita atrapar ordenes falsas) ---
+                            df_mp['Texto_Para_Orden'] = df_mp.apply(lambda r: buscar_valor_columna(r, df_mp.columns, "CONCEPT") + " " + buscar_valor_columna(r, df_mp.columns, "DESCRIP"), axis=1)
                             df_mp['Ordenes_Detectadas'] = df_mp['Texto_Para_Orden'].apply(extraer_ordenes)
                             
                             def clasificar_traslado(row):
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                # PRIORIDAD 1: Asignación a Órdenes (Tiene precedencia sobre palabras clave)
+                                # PRIORIDAD 0: Producto Terminado NUNCA va a proceso, siempre es traslado
+                                if "PRODUCTO TERMINADO" in cat:
+                                    return "Traslado Especial"
+                                
+                                # PRIORIDAD 1: Asignación a Órdenes (Atrapa los $316 porque son Materia Prima con orden)
                                 if len(row['Ordenes_Detectadas']) > 0:
                                     ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
                                     if ord_detectada in ordenes_liquidadas_historicas: return "Cerrada Anteriormente (Bloqueada)"
                                     if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
                                     else: return "Huérfana (Revisar)"
                                 
-                                # PRIORIDAD 2: Traslados (Sin orden detectada)
+                                # PRIORIDAD 2: Traslados (Sólo si NO tiene orden detectada)
                                 is_traslado = False
-                                if "PRODUCTO TERMINADO" in cat: is_traslado = True
                                 if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI"]): is_traslado = True
                                 if re.search(r'\bUCA\b', concepto): is_traslado = True
+                                if "TRASLAD" in concepto: is_traslado = True
                                 
                                 if is_traslado:
                                     return "Traslado Especial"
@@ -347,19 +319,13 @@ def mostrar_modulo_costos():
                             df_mp['Clasificacion'] = df_mp.apply(clasificar_traslado, axis=1)
 
                         # GUARDADO EN MEMORIA
-                        st.session_state['tg_fact'] = df_fact
-                        st.session_state['tg_tiempos'] = df_tiempos
-                        st.session_state['tg_mp'] = df_mp
-                        st.session_state['tg_wip_ant'] = df_wip_ant
-                        st.session_state['tg_ordenes_validas'] = ordenes_validas
-                        st.session_state['tg_ordenes_historicas'] = ordenes_liquidadas_historicas
-                        st.session_state['tg_costo_planilla'] = costo_planilla
-                        st.session_state['tg_df_cuentas'] = df_cuentas_mo 
-                        
-                        st.session_state['tg_datos_cargados'] = True
-                        st.session_state['fase2_aprobada'] = False
-                        st.session_state['liquidacion_lista'] = False
-                        
+                        st.session_state.update({
+                            'tg_fact': df_fact, 'tg_tiempos': df_tiempos, 'tg_mp': df_mp, 
+                            'tg_wip_ant': df_wip_ant, 'tg_ordenes_validas': ordenes_validas, 
+                            'tg_ordenes_historicas': ordenes_liquidadas_historicas, 
+                            'tg_costo_planilla': costo_planilla, 'tg_df_cuentas': df_cuentas_mo,
+                            'tg_datos_cargados': True, 'fase2_aprobada': False, 'liquidacion_lista': False
+                        })
                         st.success("✅ Datos cruzados correctamente. Avanza a Auditoría (Panel de Revisión).")
                         
                     except Exception as e:
@@ -390,7 +356,7 @@ def mostrar_modulo_costos():
             total_huerfanas = h_fact + h_tiempos + h_mp
 
             if total_huerfanas > 0:
-                st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
+                st.error(f"🚨 Tienes {total_huerfanas} registros pendientes. Ahora puedes forzarles orden o mandarlos a traslados.")
                 
                 opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Es Traslado", "Omitir"]
                 config_col = {
@@ -418,7 +384,7 @@ def mostrar_modulo_costos():
                         ed_tiempos = st.data_editor(prellenar_orden(df_tiempos, df_tiempos[df_tiempos['Clasificacion'] == "Huérfana (Revisar)"][cols_t].copy()), column_config=config_col, hide_index=True, key="ed_t", use_container_width=True)
 
                 if h_mp > 0:
-                    with st.expander(f"📦 Traslados MP/PT Pendientes ({h_mp})", expanded=True):
+                    with st.expander(f"📦 Materiales sin Orden (Asignar a Proceso o Enviar a Traslado) ({h_mp})", expanded=True):
                         c_con = next((c for c in df_mp.columns if 'CONCEPT' in c.upper()), 'Numero')
                         c_des = next((c for c in df_mp.columns if 'DESCRIP' in c.upper()), 'Numero')
                         c_cat = next((c for c in df_mp.columns if 'CATEGOR' in c.upper()), 'Categoria')
@@ -510,10 +476,9 @@ def mostrar_modulo_costos():
                     col_cat = next((c for c in df_mp.columns if 'CATEGOR' in c.upper()), 'Categoria')
                     col_texto_mp = next((c for c in df_mp.columns if 'CONCEPT' in c.upper()), 'Descripcion')
 
-                    if col_costo_mp: 
-                        df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
+                    if col_costo_mp: df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
 
-                    # ALMACENAR DETALLES PARA AUDITORIA (P2 y P3) - SEPARADO PARA NO DAÑAR LA MEMORIA
+                    # ALMACENAR DETALLES PARA AUDITORIA EXCEL (Sin corromper dataframe base)
                     c_num = next((c for c in df_mp.columns if 'NUME' in c.upper() or 'COMPROB' in c.upper()), df_mp.columns[0])
                     c_fec = next((c for c in df_mp.columns if 'FECHA' in c.upper()), df_mp.columns[1])
                     cols_ordenadas = [c_num, c_fec, col_cat, col_texto_mp, col_costo_mp, 'Clasificacion', 'Ordenes_Detectadas']
@@ -577,7 +542,7 @@ def mostrar_modulo_costos():
                                 agregar_linea(p3, cta, nom, 0, monto)
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
-                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES
+                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES (PROVISIÓN CON PARTIDA DOBLE PERFECTA)
                     p4_dict = {}
                     df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
                     if not df_tras_esp.empty:
@@ -603,10 +568,12 @@ def mostrar_modulo_costos():
                             if total_unidad > 0:
                                 p4_unidad = []
                                 for (cta, nom), monto in resumen_u_dict.items():
+                                    # 1. SALIDA DE TALLERES (Cargo a Puente, Abono a Inventario)
                                     desc_salida = f"RECONOCIMIENTO DE SALIDA POR TRASLADO HACIA {unidad}"
                                     agregar_linea(p4_unidad, CUENTA_PROVISION_TRASLADOS, desc_salida, monto, 0)
                                     agregar_linea(p4_unidad, cta, nom, 0, monto)
                                     
+                                    # 2. ENTRADA AL DESTINO (Cargo a Inventario, Abono a Puente)
                                     desc_entrada = f"RECONOCIMIENTO DE ENTRADA POR TRASLADO DESDE TALLERES GRAFICOS"
                                     agregar_linea(p4_unidad, cta, nom, monto, 0)
                                     agregar_linea(p4_unidad, CUENTA_PROVISION_TRASLADOS, desc_entrada, 0, monto)
