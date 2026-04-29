@@ -571,6 +571,10 @@ def mostrar_modulo_costos():
                     if col_costo_mp: 
                         df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
 
+                    # ALMACENAR DETALLES PARA AUDITORIA EN PANTALLA
+                    col_num = next((c for c in df_mp.columns if 'NUME' in c.upper()), 'Numero')
+                    cols_detalle = [c for c in [col_num, col_cat, col_texto_mp, col_costo_mp, 'Clasificacion', 'Texto_Para_Orden'] if c in df_mp.columns]
+
                     # PARTIDA 1: NÓMINA
                     p1 = []
                     agregar_linea(p1, "110602", "INYECCION MANO DE OBRA A PRODUCCION", costo_total_mo, 0)
@@ -583,6 +587,8 @@ def mostrar_modulo_costos():
                     # PARTIDA 2: MP A PROCESO
                     p2 = []
                     df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista']
+                    st.session_state['tg_detalle_p2'] = df_wip_mp[cols_detalle] if not df_wip_mp.empty else pd.DataFrame()
+                    
                     if not df_wip_mp.empty:
                         resumen_wip_dict = {}
                         for _, r in df_wip_mp.iterrows():
@@ -602,6 +608,8 @@ def mostrar_modulo_costos():
                     # PARTIDA 3: CIF
                     p3 = []
                     df_cif_mp = df_mp[df_mp['Clasificacion'] == 'Costo Indirecto (Automático)']
+                    st.session_state['tg_detalle_p3'] = df_cif_mp[cols_detalle] if not df_cif_mp.empty else pd.DataFrame()
+                    
                     if not df_cif_mp.empty:
                         resumen_cif_dict = {}
                         for _, r in df_cif_mp.iterrows():
@@ -788,6 +796,24 @@ def mostrar_modulo_costos():
                     st.empty()
 
                 st.divider()
+                
+                st.markdown("### 🔍 Detalle de Sumas (Auditoría de Partidas 2 y 3)")
+                st.write("A continuación se desglosan los registros exactos que componen las partidas 2 (Materia Prima) y 3 (CIF).")
+                
+                st.markdown("#### Detalle Partida 2 (Materia Prima a Proceso)")
+                if not st.session_state.get('tg_detalle_p2', pd.DataFrame()).empty:
+                    st.dataframe(st.session_state['tg_detalle_p2'], use_container_width=True)
+                else:
+                    st.info("Sin registros para Partida 2.")
+                    
+                st.markdown("#### Detalle Partida 3 (CIF)")
+                if not st.session_state.get('tg_detalle_p3', pd.DataFrame()).empty:
+                    st.dataframe(st.session_state['tg_detalle_p3'], use_container_width=True)
+                else:
+                    st.info("Sin registros para Partida 3.")
+
+                st.divider()
+
                 st.markdown("### 📊 Reportes de Control de Bodega")
                 col_f1, _ = st.columns(2)
                 f_ord = col_f1.text_input("🔍 Filtrar por Orden:")
