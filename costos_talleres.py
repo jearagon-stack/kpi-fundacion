@@ -100,7 +100,11 @@ def procesar_costos_por_orden(df, col_valor, ordenes_liquidadas_historicas, es_h
         if clasif != "Orden Lista": 
             continue
             
-        ordenes = row.get('Ordenes_Detectadas', [])
+        ordenes_raw = row.get('Ordenes_Detectadas', [])
+        # BLINDAJE CONTRA EL BUG: Si por alguna razón es texto, lo convertimos de vuelta a lista
+        if isinstance(ordenes_raw, str):
+            ordenes_raw = [x.strip() for x in ordenes_raw.split(',') if x.strip()]
+        ordenes = ordenes_raw
         
         orden_sgt_val = str(row.get('Orden_SGT', '')).strip().upper()
         if orden_sgt_val not in ["", "NAN", "NONE", "NAT"]:
@@ -311,7 +315,6 @@ def mostrar_modulo_costos():
                             if c_est_mp:
                                 df_mp = df_mp[~df_mp[c_est_mp].astype(str).str.upper().str.contains('ANULAD')]
 
-                            # --- MAGIA APLICADA: Lectura de fila completa para no perder ordenes ---
                             df_mp['Texto_Para_Orden'] = df_mp.apply(lambda r: " ".join(r.dropna().astype(str)), axis=1)
                             df_mp['Ordenes_Detectadas'] = df_mp['Texto_Para_Orden'].apply(extraer_ordenes)
                             
@@ -389,7 +392,6 @@ def mostrar_modulo_costos():
             if total_huerfanas > 0:
                 st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
                 
-                # --- NUEVA OPCIÓN EN AUDITORÍA ---
                 opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Es Traslado", "Omitir"]
                 config_col = {
                     "Accion": st.column_config.SelectboxColumn("Acción", options=opciones_accion, required=True),
@@ -511,7 +513,7 @@ def mostrar_modulo_costos():
                     if col_costo_mp: 
                         df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
 
-                    # ALMACENAR DETALLES PARA AUDITORIA (P2 y P3)
+                    # ALMACENAR DETALLES PARA AUDITORIA (P2 y P3) - SEPARADO PARA NO DAÑAR LA MEMORIA
                     c_num = next((c for c in df_mp.columns if 'NUME' in c.upper() or 'COMPROB' in c.upper()), df_mp.columns[0])
                     c_fec = next((c for c in df_mp.columns if 'FECHA' in c.upper()), df_mp.columns[1])
                     cols_ordenadas = [c_num, c_fec, col_cat, col_texto_mp, col_costo_mp, 'Clasificacion', 'Ordenes_Detectadas']
@@ -519,13 +521,16 @@ def mostrar_modulo_costos():
                     df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista'].copy()
                     df_cif_mp = df_mp[df_mp['Clasificacion'] == 'Costo Indirecto (Automático)'].copy()
 
-                    if not df_wip_mp.empty:
-                        df_wip_mp['Ordenes_Detectadas'] = df_wip_mp['Ordenes_Detectadas'].apply(lambda x: ", ".join(x) if isinstance(x, list) else x)
-                    if not df_cif_mp.empty:
-                        df_cif_mp['Ordenes_Detectadas'] = df_cif_mp['Ordenes_Detectadas'].apply(lambda x: ", ".join(x) if isinstance(x, list) else x)
+                    df_wip_mp_display = df_wip_mp[cols_ordenadas].copy() if not df_wip_mp.empty else pd.DataFrame()
+                    df_cif_mp_display = df_cif_mp[cols_ordenadas].copy() if not df_cif_mp.empty else pd.DataFrame()
 
-                    st.session_state['tg_detalle_p2'] = df_wip_mp[cols_ordenadas] if not df_wip_mp.empty else pd.DataFrame()
-                    st.session_state['tg_detalle_p3'] = df_cif_mp[cols_ordenadas] if not df_cif_mp.empty else pd.DataFrame()
+                    if not df_wip_mp_display.empty:
+                        df_wip_mp_display['Ordenes_Detectadas'] = df_wip_mp_display['Ordenes_Detectadas'].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+                    if not df_cif_mp_display.empty:
+                        df_cif_mp_display['Ordenes_Detectadas'] = df_cif_mp_display['Ordenes_Detectadas'].apply(lambda x: ", ".join(x) if isinstance(x, list) else str(x))
+
+                    st.session_state['tg_detalle_p2'] = df_wip_mp_display
+                    st.session_state['tg_detalle_p3'] = df_cif_mp_display
 
                     # PARTIDA 1: NÓMINA
                     p1 = []
@@ -572,7 +577,7 @@ def mostrar_modulo_costos():
                                 agregar_linea(p3, cta, nom, 0, monto)
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
-                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES (PARTIDA DOBLE)
+                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES
                     p4_dict = {}
                     df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
                     if not df_tras_esp.empty:
