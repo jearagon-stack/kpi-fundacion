@@ -318,15 +318,23 @@ def mostrar_modulo_costos():
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                if "PRODUCTO TERMINADO" in cat or any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]):
-                                    return "Traslado Especial"
-                                
+                                # PRIORIDAD 1: Asignación a Órdenes (Tiene precedencia sobre cualquier otra regla)
                                 if len(row['Ordenes_Detectadas']) > 0:
                                     ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
                                     if ord_detectada in ordenes_liquidadas_historicas: return "Cerrada Anteriormente (Bloqueada)"
                                     if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
                                     else: return "Huérfana (Revisar)"
+                                
+                                # PRIORIDAD 2: Traslados (Sin orden detectada)
+                                is_traslado = False
+                                if "PRODUCTO TERMINADO" in cat: is_traslado = True
+                                if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI"]): is_traslado = True
+                                if re.search(r'\bUCA\b', concepto): is_traslado = True
+                                
+                                if is_traslado:
+                                    return "Traslado Especial"
                                         
+                                # PRIORIDAD 3: Costos Indirectos (CIF)
                                 if any(k in cat for k in ["EMPAQUE", "LIMPIEZA", "REPUESTO", "REPUESTOS"]): 
                                     return "Costo Indirecto (Automático)"
                                     
@@ -500,7 +508,7 @@ def mostrar_modulo_costos():
                     if col_costo_mp: 
                         df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
 
-                    # ALMACENAR DETALLES PARA AUDITORIA (P2 y P3) - CONVERTIR LISTAS A STRING PARA EXCEL
+                    # ALMACENAR DETALLES PARA AUDITORIA (P2 y P3)
                     c_num = next((c for c in df_mp.columns if 'NUME' in c.upper() or 'COMPROB' in c.upper()), df_mp.columns[0])
                     c_fec = next((c for c in df_mp.columns if 'FECHA' in c.upper()), df_mp.columns[1])
                     cols_ordenadas = [c_num, c_fec, col_cat, col_texto_mp, col_costo_mp, 'Clasificacion', 'Ordenes_Detectadas']
@@ -508,7 +516,6 @@ def mostrar_modulo_costos():
                     df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista'].copy()
                     df_cif_mp = df_mp[df_mp['Clasificacion'] == 'Costo Indirecto (Automático)'].copy()
 
-                    # Convertir 'Ordenes_Detectadas' de Lista a String separado por comas para que no reviente Excel
                     if not df_wip_mp.empty:
                         df_wip_mp['Ordenes_Detectadas'] = df_wip_mp['Ordenes_Detectadas'].apply(lambda x: ", ".join(x) if isinstance(x, list) else x)
                     if not df_cif_mp.empty:
@@ -562,7 +569,7 @@ def mostrar_modulo_costos():
                                 agregar_linea(p3, cta, nom, 0, monto)
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
-                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES (PROVISIÓN CON PARTIDA DOBLE PERFECTA)
+                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES
                     p4_dict = {}
                     df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
                     if not df_tras_esp.empty:
@@ -588,12 +595,10 @@ def mostrar_modulo_costos():
                             if total_unidad > 0:
                                 p4_unidad = []
                                 for (cta, nom), monto in resumen_u_dict.items():
-                                    # 1. SALIDA DE TALLERES (Cargo a Puente, Abono a Inventario)
                                     desc_salida = f"RECONOCIMIENTO DE SALIDA POR TRASLADO HACIA {unidad}"
                                     agregar_linea(p4_unidad, CUENTA_PROVISION_TRASLADOS, desc_salida, monto, 0)
                                     agregar_linea(p4_unidad, cta, nom, 0, monto)
                                     
-                                    # 2. ENTRADA AL DESTINO (Cargo a Inventario, Abono a Puente)
                                     desc_entrada = f"RECONOCIMIENTO DE ENTRADA POR TRASLADO DESDE TALLERES GRAFICOS"
                                     agregar_linea(p4_unidad, cta, nom, monto, 0)
                                     agregar_linea(p4_unidad, CUENTA_PROVISION_TRASLADOS, desc_entrada, 0, monto)
@@ -685,7 +690,6 @@ def mostrar_modulo_costos():
             # =========================================================
             if st.session_state.get('liquidacion_lista', False):
                 
-                # --- NUEVA SECCIÓN DE AUDITORÍA DETALLADA ---
                 st.divider()
                 st.subheader("🔍 Auditoría de Sumas (Descarga en Excel)")
                 st.write("A continuación se desglosan los registros exactos que componen las partidas 2 (Materia Prima) y 3 (CIF).")
@@ -707,7 +711,6 @@ def mostrar_modulo_costos():
                     else:
                         st.info("Sin registros para Partida 3.")
 
-                # --- DESCARGA DE PARTIDAS NEXUS ---
                 st.divider()
                 st.markdown("### 📥 Descarga de Partidas (Nexus)")
                 c1, c2, c3 = st.columns(3)
@@ -743,7 +746,6 @@ def mostrar_modulo_costos():
                 with c6: 
                     st.empty()
 
-                # --- REPORTES BODEGA ---
                 st.divider()
                 st.markdown("### 📊 Reportes de Control de Bodega")
                 col_f1, _ = st.columns(2)
