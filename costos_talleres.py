@@ -54,7 +54,6 @@ def obtener_datos_inventario(categoria):
     if "PRODUCTO TERMINADO" in cat: 
         return "110603", "Inventario de producto terminado"
     
-    # Default para Materia Prima
     return "110601", "Inventario de Materia Prima" 
 
 def limpiar_orden(o):
@@ -103,7 +102,6 @@ def procesar_costos_por_orden(df, col_valor, ordenes_liquidadas_historicas, es_h
             
         ordenes = row.get('Ordenes_Detectadas', [])
         
-        # LA VACUNA CONTRA EL BUG FANTASMA (NaN)
         orden_sgt_val = str(row.get('Orden_SGT', '')).strip().upper()
         if orden_sgt_val not in ["", "NAN", "NONE", "NAT"]:
             ordenes = [limpiar_orden(row['Orden_SGT'])]
@@ -115,7 +113,6 @@ def procesar_costos_por_orden(df, col_valor, ordenes_liquidadas_historicas, es_h
                 if o_str == 'NAN' or o_str == '' or o_str == 'NONE': 
                     continue
                 
-                # EL CANDADO HISTÓRICO
                 if o_str in ordenes_liquidadas_historicas:
                     ordenes_bloqueadas.add(o_str)
                     continue
@@ -147,9 +144,7 @@ def generar_excel_filtrado(df, nombre_hoja):
     return output.getvalue()
 
 def guardar_en_google_sheets(df_kardex, df_wip):
-    """Espacio reservado para la conexión a la base de datos"""
     try:
-        # AQUI DEBES METER TU CODIGO DE CONEXION DE GOOGLE SHEETS
         st.success("💾 ¡Datos guardados exitosamente en Google Sheets (Kardex y Saldos)!")
     except Exception as e:
         st.error(f"Error al intentar guardar en Google Sheets: {e}")
@@ -219,9 +214,7 @@ def mostrar_modulo_costos():
                         ordenes_validas_set = set()
                         ordenes_liquidadas_historicas = set()
 
-                        # -----------------------------
                         # 0. LECTURA HISTÓRICO WIP Y CANDADO
-                        # -----------------------------
                         df_wip_ant = pd.DataFrame()
                         if arch_wip_ant:
                             try:
@@ -236,15 +229,12 @@ def mostrar_modulo_costos():
                                         o = limpiar_orden(row[col_ord])
                                         if o != "" and o != "NAN": 
                                             ordenes_validas_set.add(o)
-                                            # Memoria del Candado
                                             if col_est and "LIQUIDADO" in str(row[col_est]).upper():
                                                 ordenes_liquidadas_historicas.add(o)
                             except: 
                                 pass
 
-                        # -----------------------------
                         # 1. LECTURA MAESTRO SGT
-                        # -----------------------------
                         df_sgt = pd.read_excel(arch_sgt, dtype=str)
                         df_sgt.columns = df_sgt.columns.str.strip()
                         
@@ -257,13 +247,10 @@ def mostrar_modulo_costos():
 
                         ordenes_validas = list(ordenes_validas_set)
 
-                        # -----------------------------
                         # 2. LECTURA FACTURACIÓN
-                        # -----------------------------
                         df_fact = pd.read_excel(arch_fact, dtype=str)
                         df_fact.columns = df_fact.columns.str.strip()
                         
-                        # FILTRO CAZA-ANULADOS
                         col_est_f = next((c for c in df_fact.columns if 'ESTADO' in c.upper()), None)
                         if col_est_f:
                             df_fact = df_fact[~df_fact[col_est_f].astype(str).str.upper().str.contains('ANULAD')]
@@ -282,9 +269,7 @@ def mostrar_modulo_costos():
                             
                         df_fact['Clasificacion'] = df_fact.apply(clasificar_factura, axis=1)
 
-                        # -----------------------------
                         # 3. LECTURA TIEMPOS (NÓMINA)
-                        # -----------------------------
                         df_tiempos = pd.read_excel(arch_tiempos, dtype=str)
                         df_tiempos.columns = df_tiempos.columns.str.strip()
                         
@@ -304,9 +289,7 @@ def mostrar_modulo_costos():
                                 
                             df_tiempos['Clasificacion'] = df_tiempos.apply(clasificar_tiempos, axis=1)
 
-                        # -----------------------------
                         # 4. LECTURA TRASLADOS MP y PT
-                        # -----------------------------
                         dfs_mp = []
                         if arch_tras_mp:
                             for f in arch_tras_mp:
@@ -324,7 +307,6 @@ def mostrar_modulo_costos():
                         if not df_mp.empty:
                             df_mp = df_mp.loc[:, ~df_mp.columns.duplicated()] 
                             
-                            # FILTRO CAZA-ANULADOS
                             c_est_mp = next((c for c in df_mp.columns if 'ESTADO' in c.upper()), None)
                             if c_est_mp:
                                 df_mp = df_mp[~df_mp[c_est_mp].astype(str).str.upper().str.contains('ANULAD')]
@@ -336,18 +318,15 @@ def mostrar_modulo_costos():
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                # PRIORIDAD 1: PT y Sucursales SIEMPRE son Traslado Especial
                                 if "PRODUCTO TERMINADO" in cat or any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI", "UCA"]):
                                     return "Traslado Especial"
                                 
-                                # PRIORIDAD 2: Asignación a Órdenes
                                 if len(row['Ordenes_Detectadas']) > 0:
                                     ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
                                     if ord_detectada in ordenes_liquidadas_historicas: return "Cerrada Anteriormente (Bloqueada)"
                                     if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
                                     else: return "Huérfana (Revisar)"
                                         
-                                # PRIORIDAD 3: Costos Indirectos (CIF)
                                 if any(k in cat for k in ["EMPAQUE", "LIMPIEZA", "REPUESTO", "REPUESTOS"]): 
                                     return "Costo Indirecto (Automático)"
                                     
@@ -390,7 +369,6 @@ def mostrar_modulo_costos():
             h_tiempos = len(df_tiempos[df_tiempos['Clasificacion'] == "Huérfana (Revisar)"])
             h_mp = len(df_mp[df_mp['Clasificacion'] == "Huérfana (Revisar)"]) if not df_mp.empty else 0
             
-            # MOSTRAR ADVERTENCIA DE CANDADO SI EXISTE
             bloqueadas_tiempos = len(df_tiempos[df_tiempos['Clasificacion'] == "Cerrada Anteriormente (Bloqueada)"])
             bloqueadas_mp = len(df_mp[df_mp['Clasificacion'] == "Cerrada Anteriormente (Bloqueada)"]) if not df_mp.empty else 0
             
@@ -444,7 +422,7 @@ def mostrar_modulo_costos():
                             elif acc in ["Asignar Orden", "Forzar Orden"]:
                                 orden = limpiar_orden(row['Orden_SGT'])
                                 if orden == "": errores.append(f"En {nom}, dejaste el código en blanco.")
-                                elif acc == "Asignar Orden" and orden not in ordenes_validas: errores.append(f"En {nom}, la orden '{orden}' NO existe en SGT. Usa 'Forzar Orden' si estás seguro.")
+                                elif acc == "Asignar Orden" and orden not in ordenes_validas: errores.append(f"En {nom}, la orden '{orden}' NO existe en SGT.")
                                 else: 
                                     df_orig.at[i, 'Clasificacion'] = "Orden Lista"
                                     df_orig.at[i, 'Orden_SGT'] = orden
@@ -522,13 +500,19 @@ def mostrar_modulo_costos():
                     if col_costo_mp: 
                         df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
 
-                    # ALMACENAR DETALLES PARA AUDITORIA (P2 y P3)
+                    # ALMACENAR DETALLES PARA AUDITORIA (P2 y P3) - CONVERTIR LISTAS A STRING PARA EXCEL
                     c_num = next((c for c in df_mp.columns if 'NUME' in c.upper() or 'COMPROB' in c.upper()), df_mp.columns[0])
                     c_fec = next((c for c in df_mp.columns if 'FECHA' in c.upper()), df_mp.columns[1])
                     cols_ordenadas = [c_num, c_fec, col_cat, col_texto_mp, col_costo_mp, 'Clasificacion', 'Ordenes_Detectadas']
 
                     df_wip_mp = df_mp[df_mp['Clasificacion'] == 'Orden Lista'].copy()
                     df_cif_mp = df_mp[df_mp['Clasificacion'] == 'Costo Indirecto (Automático)'].copy()
+
+                    # Convertir 'Ordenes_Detectadas' de Lista a String separado por comas para que no reviente Excel
+                    if not df_wip_mp.empty:
+                        df_wip_mp['Ordenes_Detectadas'] = df_wip_mp['Ordenes_Detectadas'].apply(lambda x: ", ".join(x) if isinstance(x, list) else x)
+                    if not df_cif_mp.empty:
+                        df_cif_mp['Ordenes_Detectadas'] = df_cif_mp['Ordenes_Detectadas'].apply(lambda x: ", ".join(x) if isinstance(x, list) else x)
 
                     st.session_state['tg_detalle_p2'] = df_wip_mp[cols_ordenadas] if not df_wip_mp.empty else pd.DataFrame()
                     st.session_state['tg_detalle_p3'] = df_cif_mp[cols_ordenadas] if not df_cif_mp.empty else pd.DataFrame()
