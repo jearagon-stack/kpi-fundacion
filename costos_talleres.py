@@ -311,14 +311,15 @@ def mostrar_modulo_costos():
                             if c_est_mp:
                                 df_mp = df_mp[~df_mp[c_est_mp].astype(str).str.upper().str.contains('ANULAD')]
 
-                            df_mp['Texto_Para_Orden'] = df_mp.apply(lambda r: buscar_valor_columna(r, df_mp.columns, "CONCEPT") + " " + buscar_valor_columna(r, df_mp.columns, "DESCRIP"), axis=1)
+                            # --- MAGIA APLICADA: Lectura de fila completa para no perder ordenes ---
+                            df_mp['Texto_Para_Orden'] = df_mp.apply(lambda r: " ".join(r.dropna().astype(str)), axis=1)
                             df_mp['Ordenes_Detectadas'] = df_mp['Texto_Para_Orden'].apply(extraer_ordenes)
                             
                             def clasificar_traslado(row):
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                # PRIORIDAD 1: Asignación a Órdenes (Tiene precedencia sobre cualquier otra regla)
+                                # PRIORIDAD 1: Asignación a Órdenes (Tiene precedencia sobre palabras clave)
                                 if len(row['Ordenes_Detectadas']) > 0:
                                     ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
                                     if ord_detectada in ordenes_liquidadas_historicas: return "Cerrada Anteriormente (Bloqueada)"
@@ -388,7 +389,8 @@ def mostrar_modulo_costos():
             if total_huerfanas > 0:
                 st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
                 
-                opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Omitir"]
+                # --- NUEVA OPCIÓN EN AUDITORÍA ---
+                opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Es Traslado", "Omitir"]
                 config_col = {
                     "Accion": st.column_config.SelectboxColumn("Acción", options=opciones_accion, required=True),
                     "Orden_SGT": st.column_config.TextColumn("Código Orden")
@@ -435,6 +437,7 @@ def mostrar_modulo_costos():
                                     df_orig.at[i, 'Clasificacion'] = "Orden Lista"
                                     df_orig.at[i, 'Orden_SGT'] = orden
                             elif acc == "Costo Indirecto": df_orig.at[i, 'Clasificacion'] = "Costo Indirecto (Automático)"
+                            elif acc == "Es Traslado": df_orig.at[i, 'Clasificacion'] = "Traslado Especial"
                             elif acc == "Omitir": df_orig.at[i, 'Clasificacion'] = "Omitido Automático"
 
                     if not ed_fact.empty: revisar_tabla(ed_fact, df_fact, "Facturas")
@@ -569,7 +572,7 @@ def mostrar_modulo_costos():
                                 agregar_linea(p3, cta, nom, 0, monto)
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
-                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES
+                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES (PARTIDA DOBLE)
                     p4_dict = {}
                     df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
                     if not df_tras_esp.empty:
