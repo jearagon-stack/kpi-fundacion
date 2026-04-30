@@ -93,10 +93,7 @@ def procesar_costos_por_orden(df, col_valor, ordenes_liquidadas_historicas, es_h
                 o_str = str(o).strip().replace(" ", "").upper()
                 if o_str in ['NAN', '', 'NONE']: continue
                 
-                if o_str in ordenes_liquidadas_historicas:
-                    ordenes_bloqueadas.add(o_str)
-                    continue
-                    
+                # SE ELIMINÓ EL CANDADO HISTÓRICO AQUÍ PARA PERMITIR COSTOS REZAGADOS
                 distribucion[o_str] = distribucion.get(o_str, 0.0) + valor_dividido
                 
     return distribucion, ordenes_bloqueadas
@@ -192,7 +189,7 @@ def mostrar_modulo_costos():
                         historial_wip = {}
                         historial_total = {}
 
-                        # 0. LECTURA HISTÓRICO WIP
+                        # 0. LECTURA HISTÓRICO WIP Y CANDADO
                         df_wip_ant = pd.DataFrame()
                         if arch_wip_ant:
                             try:
@@ -209,7 +206,7 @@ def mostrar_modulo_costos():
                                         o = limpiar_orden(row[col_ord])
                                         if o != "" and o != "NAN": 
                                             ordenes_validas_set.add(o)
-                                            # Candado eliminado para que acepte costos nuevos
+                                            # Se guarda el saldo histórico pero no se bloquea
                                             if c_wip and not pd.isna(row[c_wip]):
                                                 try: historial_wip[o] = float(row[c_wip])
                                                 except: pass
@@ -246,7 +243,7 @@ def mostrar_modulo_costos():
                             desc = str(row.get('Descripcion', '')).upper()
                             cat = str(row.get('Categoria', '')).upper()
                             
-                            # Filtro SGT de seguridad
+                            # FILTRO SGT DE SEGURIDAD EN VENTAS
                             if len(row['Ordenes_Detectadas']) > 0:
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas):
                                     return "Orden Lista"
@@ -273,7 +270,6 @@ def mostrar_modulo_costos():
                                     return "Omitido Automático"
                                 if len(row['Ordenes_Detectadas']) > 0:
                                     ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
-                                    if ord_detectada in ordenes_liquidadas_historicas: return "Cerrada Anteriormente (Bloqueada)"
                                     if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
                                     else: return "Huérfana (Revisar)"
                                 return "Huérfana (Revisar)"
@@ -318,7 +314,6 @@ def mostrar_modulo_costos():
                                 # PRIORIDAD 1: Asignación a Órdenes 
                                 if len(row['Ordenes_Detectadas']) > 0:
                                     ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
-                                    if ord_detectada in ordenes_liquidadas_historicas: return "Cerrada Anteriormente (Bloqueada)"
                                     if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
                                     else: return "Huérfana (Revisar)"
                                 
@@ -369,17 +364,12 @@ def mostrar_modulo_costos():
             h_tiempos = len(df_tiempos[df_tiempos['Clasificacion'] == "Huérfana (Revisar)"])
             h_mp = len(df_mp[df_mp['Clasificacion'] == "Huérfana (Revisar)"]) if not df_mp.empty else 0
             
-            bloqueadas_tiempos = len(df_tiempos[df_tiempos['Clasificacion'] == "Cerrada Anteriormente (Bloqueada)"])
-            bloqueadas_mp = len(df_mp[df_mp['Clasificacion'] == "Cerrada Anteriormente (Bloqueada)"]) if not df_mp.empty else 0
-            
-            if bloqueadas_tiempos > 0 or bloqueadas_mp > 0:
-                st.warning(f"🔒 El sistema detectó y bloqueó {bloqueadas_tiempos + bloqueadas_mp} registros de costos para órdenes liquidadas en el mes anterior.")
-
             total_huerfanas = h_fact + h_tiempos + h_mp
 
             if total_huerfanas > 0:
                 st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
                 
+                # SE AGREGÓ LA OPCIÓN DE LIQUIDAR (CIERRE DE COSTOS)
                 opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Es Traslado", "Liquidar (Cierre de Costos)", "Omitir"]
                 config_col = {
                     "Accion": st.column_config.SelectboxColumn("Acción", options=opciones_accion, required=True),
@@ -415,7 +405,7 @@ def mostrar_modulo_costos():
 
                 if st.button("💾 Guardar Decisiones y Validar", type="primary"):
                     errores = []
-                    manuales = set()
+                    manuales = set(st.session_state.get('tg_ordenes_manuales', []))
                     def revisar_tabla(df_edit, df_orig, nom):
                         for i, row in df_edit.iterrows():
                             acc = row['Accion']
@@ -443,7 +433,7 @@ def mostrar_modulo_costos():
                         st.session_state['tg_fact'] = df_fact
                         st.session_state['tg_tiempos'] = df_tiempos
                         st.session_state['tg_mp'] = df_mp
-                        st.session_state['tg_ordenes_manuales'] = manuales
+                        st.session_state['tg_ordenes_manuales'] = list(manuales)
                         st.success("✅ ¡Auditoría validada! Procede a la Liquidación.")
                         st.session_state['fase2_aprobada'] = True
             else:
@@ -542,16 +532,14 @@ def mostrar_modulo_costos():
                                 agregar_linea(p3, cta, nom, 0, monto)
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
-                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES (PROVISIÓN CON PARTIDA DOBLE PERFECTA)
+                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES (ELIMINADO PRODUCTO TERMINADO)
                     p4_dict = {}
                     df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
                     if not df_tras_esp.empty:
                         def asignar_unidad(row):
                             concepto = str(row.get(col_texto_mp, '')).upper()
-                            cat = str(row.get(col_cat, '')).upper()
                             if "SOHO" in concepto: return "SOHO"
                             if "LIBRERI" in concepto or "LBRERI" in concepto or "UCA" in concepto: return "LIBRERIA"
-                            if "PRODUCTO TERMINADO" in cat: return "PRODUCTO TERMINADO"
                             return "OTRAS UNIDADES"
 
                         df_tras_esp['Unidad_Destino'] = df_tras_esp.apply(asignar_unidad, axis=1)
@@ -584,7 +572,7 @@ def mostrar_modulo_costos():
                     
                     ordenes_facturadas = []
                     mapa_facturas = {} 
-                    ordenes_manuales = st.session_state.get('tg_ordenes_manuales', set())
+                    ordenes_manuales = set(st.session_state.get('tg_ordenes_manuales', []))
                     
                     col_num_fact = next((c for c in df_fact.columns if 'NUME' in c.upper() or 'FACT' in c.upper()), 'Numero')
                     
@@ -661,9 +649,6 @@ def mostrar_modulo_costos():
                     st.session_state['total_liquidad_display'] = total_liq_cv
                     st.session_state['liquidacion_lista'] = True
                     
-                    if len(bloqueadas_mo) > 0 or len(bloqueadas_mp2) > 0:
-                        st.warning(f"⚠️ Nota de Auditoría Final: Se omitieron costos automáticos de {len(bloqueadas_mo) + len(bloqueadas_mp2)} órdenes porque ya estaban liquidadas.")
-                        
                     st.success(f"✅ Cálculos completados. Total a liquidar en Partida 5: ${total_liq_cv:,.2f}")
 
             # =========================================================
