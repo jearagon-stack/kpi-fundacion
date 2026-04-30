@@ -7,11 +7,11 @@ from datetime import date
 # ==========================================
 # CONSTANTES CONTABLES TALLERES
 # ==========================================
-CUENTA_WIP_MO = "110602"       # Proceso Nómina
-CUENTA_WIP_MP = "110402"       # Proceso Materia Prima 
-CUENTA_CIF = "410104"          # Costos Indirectos de Fabricación
-CUENTA_COSTO_VENTAS = "410101" # Costo de Ventas
-CUENTA_PROVISION_TRASLADOS = "21020302" # Puente para traslados a otras unidades
+CUENTA_WIP_MO = "110602"
+CUENTA_WIP_MP = "110402"
+CUENTA_CIF = "410104"
+CUENTA_COSTO_VENTAS = "410101"
+CUENTA_PROVISION_TRASLADOS = "21020302"
 
 CUENTAS_MANO_OBRA = [
     "41010201 Sueldo de personal de produccion",
@@ -93,7 +93,7 @@ def procesar_costos_por_orden(df, col_valor, ordenes_liquidadas_historicas, es_h
                 o_str = str(o).strip().replace(" ", "").upper()
                 if o_str in ['NAN', '', 'NONE']: continue
                 
-                # SE ELIMINÓ EL CANDADO HISTÓRICO AQUÍ PARA PERMITIR COSTOS REZAGADOS
+                # Se eliminó el bloqueo para permitir sumar costos nuevos a órdenes del pasado
                 distribucion[o_str] = distribucion.get(o_str, 0.0) + valor_dividido
                 
     return distribucion, ordenes_bloqueadas
@@ -180,7 +180,8 @@ def mostrar_modulo_costos():
             arch_tras_pt = st.file_uploader("5. Traslados Internos PT", type=["xlsx"], accept_multiple_files=True)
             arch_wip_ant = st.file_uploader("6. Saldos WIP Mes Anterior (Opcional)", type=["xlsx"])
 
-        if arch_sgt and arch_fact and arch_tras_mp and arch_tiempos:
+        # Validación robusta para garantizar la aparición del botón
+        if arch_sgt is not None and arch_fact is not None and arch_tras_mp is not None and len(arch_tras_mp) > 0 and arch_tiempos is not None:
             if st.button("🔍 Escanear Archivos y Aplicar Filtros", type="primary", use_container_width=True):
                 with st.spinner("Leyendo y cruzando datos..."):
                     try:
@@ -206,7 +207,6 @@ def mostrar_modulo_costos():
                                         o = limpiar_orden(row[col_ord])
                                         if o != "" and o != "NAN": 
                                             ordenes_validas_set.add(o)
-                                            # Se guarda el saldo histórico pero no se bloquea
                                             if c_wip and not pd.isna(row[c_wip]):
                                                 try: historial_wip[o] = float(row[c_wip])
                                                 except: pass
@@ -243,7 +243,7 @@ def mostrar_modulo_costos():
                             desc = str(row.get('Descripcion', '')).upper()
                             cat = str(row.get('Categoria', '')).upper()
                             
-                            # FILTRO SGT DE SEGURIDAD EN VENTAS
+                            # Filtro SGT de seguridad
                             if len(row['Ordenes_Detectadas']) > 0:
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas):
                                     return "Orden Lista"
@@ -305,7 +305,7 @@ def mostrar_modulo_costos():
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                # PRIORIDAD 0: Producto Terminado. Si es dentro de la bodega, se omite. Si va afuera, es traslado.
+                                # PRIORIDAD 0: Producto Terminado. Si es dentro de la bodega, se omite.
                                 if "PRODUCTO TERMINADO" in cat:
                                     if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI"]): return "Traslado Especial"
                                     if re.search(r'\bUCA\b', concepto): return "Traslado Especial"
@@ -313,7 +313,6 @@ def mostrar_modulo_costos():
                                 
                                 # PRIORIDAD 1: Asignación a Órdenes 
                                 if len(row['Ordenes_Detectadas']) > 0:
-                                    ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
                                     if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
                                     else: return "Huérfana (Revisar)"
                                 
@@ -369,7 +368,6 @@ def mostrar_modulo_costos():
             if total_huerfanas > 0:
                 st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
                 
-                # SE AGREGÓ LA OPCIÓN DE LIQUIDAR (CIERRE DE COSTOS)
                 opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Es Traslado", "Liquidar (Cierre de Costos)", "Omitir"]
                 config_col = {
                     "Accion": st.column_config.SelectboxColumn("Acción", options=opciones_accion, required=True),
@@ -532,7 +530,7 @@ def mostrar_modulo_costos():
                                 agregar_linea(p3, cta, nom, 0, monto)
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
-                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES (ELIMINADO PRODUCTO TERMINADO)
+                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES
                     p4_dict = {}
                     df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
                     if not df_tras_esp.empty:
@@ -660,7 +658,6 @@ def mostrar_modulo_costos():
                 st.subheader("🔍 Auditoría de Sumas (Descarga en Excel)")
                 st.write("A continuación se desglosan los registros exactos que componen las partidas 2 (Materia Prima) y 3 (CIF).")
                 
-                # REPARACIÓN: Extraer de memoria original para evitar alterar dataframes base
                 df_mp_aud = st.session_state['tg_mp']
                 col_costo_mp_a = next((c for c in df_mp_aud.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '') or 'COSTO' in c.upper()), None)
                 col_cat_a = next((c for c in df_mp_aud.columns if 'CATEGOR' in c.upper()), 'Categoria')
@@ -734,15 +731,20 @@ def mostrar_modulo_costos():
 
                 st.divider()
                 st.markdown("### 📊 Reportes de Control de Bodega")
-                col_f1, _ = st.columns(2)
-                f_ord = col_f1.text_input("🔍 Filtrar por Orden:")
-
+                
                 df_k_ex = st.session_state['tg_df_kardex']
                 df_w_ex = st.session_state['tg_df_wip']
+                
+                col_f1, col_f2 = st.columns([2, 1])
+                f_ord = col_f1.text_input("🔍 Filtrar por Orden:")
                 
                 if f_ord.strip() != "":
                     df_k_ex = df_k_ex[df_k_ex['Orden'].str.contains(f_ord, case=False, na=False)]
                     df_w_ex = df_w_ex[df_w_ex['Orden'].str.contains(f_ord, case=False, na=False)]
+
+                with col_f2:
+                    st.markdown("<br>", unsafe_allow_html=True)
+                    st.download_button("📥 Descargar Reporte en Excel (.xlsx)", data=generar_excel_filtrado(df_w_ex, "Saldos_WIP"), file_name=f"Reporte_Saldos_WIP_{mes_proceso}.xlsx", type="primary", use_container_width=True)
 
                 st.dataframe(df_w_ex, use_container_width=True)
 
@@ -753,4 +755,4 @@ def mostrar_modulo_costos():
                 with b2: 
                     st.download_button("📋 Bajar Kardex", data=generar_excel_filtrado(df_k_ex, "Kardex"), file_name=f"Kardex_{mes_proceso}.xlsx")
                 with b3: 
-                    st.download_button("📉 Bajar Saldos WIP", data=generar_excel_filtrado(df_w_ex, "Saldos_WIP"), file_name=f"Saldos_WIP_{mes_proceso}.xlsx")
+                    st.download_button("📉 Bajar Saldos WIP (Usar para próximo mes)", data=generar_excel_filtrado(df_w_ex, "Saldos_WIP"), file_name=f"Saldos_WIP_{mes_proceso}.xlsx")
