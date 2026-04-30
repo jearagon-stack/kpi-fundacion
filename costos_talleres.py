@@ -282,7 +282,6 @@ def mostrar_modulo_costos():
                             if c_est_mp:
                                 df_mp = df_mp[~df_mp[c_est_mp].astype(str).str.upper().str.contains('ANULAD')]
 
-                            # --- VOLVEMOS A LA EXTRACCION SEGURA (Evita atrapar ordenes falsas) ---
                             df_mp['Texto_Para_Orden'] = df_mp.apply(lambda r: buscar_valor_columna(r, df_mp.columns, "CONCEPT") + " " + buscar_valor_columna(r, df_mp.columns, "DESCRIP"), axis=1)
                             df_mp['Ordenes_Detectadas'] = df_mp['Texto_Para_Orden'].apply(extraer_ordenes)
                             
@@ -290,18 +289,20 @@ def mostrar_modulo_costos():
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                # PRIORIDAD 0: Producto Terminado NUNCA va a proceso, siempre es traslado
+                                # PRIORIDAD 0: Producto Terminado. Si es dentro de la bodega, se omite. Si va afuera, es traslado.
                                 if "PRODUCTO TERMINADO" in cat:
-                                    return "Traslado Especial"
+                                    if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI"]): return "Traslado Especial"
+                                    if re.search(r'\bUCA\b', concepto): return "Traslado Especial"
+                                    return "Omitido Automático"
                                 
-                                # PRIORIDAD 1: Asignación a Órdenes (Atrapa los $316 porque son Materia Prima con orden)
+                                # PRIORIDAD 1: Asignación a Órdenes 
                                 if len(row['Ordenes_Detectadas']) > 0:
                                     ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
                                     if ord_detectada in ordenes_liquidadas_historicas: return "Cerrada Anteriormente (Bloqueada)"
                                     if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
                                     else: return "Huérfana (Revisar)"
                                 
-                                # PRIORIDAD 2: Traslados (Sólo si NO tiene orden detectada)
+                                # PRIORIDAD 2: Traslados (Sin orden detectada)
                                 is_traslado = False
                                 if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI"]): is_traslado = True
                                 if re.search(r'\bUCA\b', concepto): is_traslado = True
@@ -356,7 +357,7 @@ def mostrar_modulo_costos():
             total_huerfanas = h_fact + h_tiempos + h_mp
 
             if total_huerfanas > 0:
-                st.error(f"🚨 Tienes {total_huerfanas} registros pendientes. Ahora puedes forzarles orden o mandarlos a traslados.")
+                st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
                 
                 opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Es Traslado", "Omitir"]
                 config_col = {
@@ -384,7 +385,7 @@ def mostrar_modulo_costos():
                         ed_tiempos = st.data_editor(prellenar_orden(df_tiempos, df_tiempos[df_tiempos['Clasificacion'] == "Huérfana (Revisar)"][cols_t].copy()), column_config=config_col, hide_index=True, key="ed_t", use_container_width=True)
 
                 if h_mp > 0:
-                    with st.expander(f"📦 Materiales sin Orden (Asignar a Proceso o Enviar a Traslado) ({h_mp})", expanded=True):
+                    with st.expander(f"📦 Traslados MP/PT Pendientes ({h_mp})", expanded=True):
                         c_con = next((c for c in df_mp.columns if 'CONCEPT' in c.upper()), 'Numero')
                         c_des = next((c for c in df_mp.columns if 'DESCRIP' in c.upper()), 'Numero')
                         c_cat = next((c for c in df_mp.columns if 'CATEGOR' in c.upper()), 'Categoria')
@@ -476,9 +477,10 @@ def mostrar_modulo_costos():
                     col_cat = next((c for c in df_mp.columns if 'CATEGOR' in c.upper()), 'Categoria')
                     col_texto_mp = next((c for c in df_mp.columns if 'CONCEPT' in c.upper()), 'Descripcion')
 
-                    if col_costo_mp: df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
+                    if col_costo_mp: 
+                        df_mp[col_costo_mp] = pd.to_numeric(df_mp[col_costo_mp], errors='coerce').fillna(0)
 
-                    # ALMACENAR DETALLES PARA AUDITORIA EXCEL (Sin corromper dataframe base)
+                    # ALMACENAR DETALLES PARA AUDITORIA EXCEL
                     c_num = next((c for c in df_mp.columns if 'NUME' in c.upper() or 'COMPROB' in c.upper()), df_mp.columns[0])
                     c_fec = next((c for c in df_mp.columns if 'FECHA' in c.upper()), df_mp.columns[1])
                     cols_ordenadas = [c_num, c_fec, col_cat, col_texto_mp, col_costo_mp, 'Clasificacion', 'Ordenes_Detectadas']
@@ -542,16 +544,14 @@ def mostrar_modulo_costos():
                                 agregar_linea(p3, cta, nom, 0, monto)
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
-                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES (PROVISIÓN CON PARTIDA DOBLE PERFECTA)
+                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES
                     p4_dict = {}
                     df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
                     if not df_tras_esp.empty:
                         def asignar_unidad(row):
                             concepto = str(row.get(col_texto_mp, '')).upper()
-                            cat = str(row.get(col_cat, '')).upper()
                             if "SOHO" in concepto: return "SOHO"
                             if "LIBRERI" in concepto or "LBRERI" in concepto or "UCA" in concepto: return "LIBRERIA"
-                            if "PRODUCTO TERMINADO" in cat: return "PRODUCTO TERMINADO"
                             return "OTRAS UNIDADES"
 
                         df_tras_esp['Unidad_Destino'] = df_tras_esp.apply(asignar_unidad, axis=1)
@@ -568,12 +568,10 @@ def mostrar_modulo_costos():
                             if total_unidad > 0:
                                 p4_unidad = []
                                 for (cta, nom), monto in resumen_u_dict.items():
-                                    # 1. SALIDA DE TALLERES (Cargo a Puente, Abono a Inventario)
                                     desc_salida = f"RECONOCIMIENTO DE SALIDA POR TRASLADO HACIA {unidad}"
                                     agregar_linea(p4_unidad, CUENTA_PROVISION_TRASLADOS, desc_salida, monto, 0)
                                     agregar_linea(p4_unidad, cta, nom, 0, monto)
                                     
-                                    # 2. ENTRADA AL DESTINO (Cargo a Inventario, Abono a Puente)
                                     desc_entrada = f"RECONOCIMIENTO DE ENTRADA POR TRASLADO DESDE TALLERES GRAFICOS"
                                     agregar_linea(p4_unidad, cta, nom, monto, 0)
                                     agregar_linea(p4_unidad, CUENTA_PROVISION_TRASLADOS, desc_entrada, 0, monto)
