@@ -93,7 +93,10 @@ def procesar_costos_por_orden(df, col_valor, ordenes_liquidadas_historicas, es_h
                 o_str = str(o).strip().replace(" ", "").upper()
                 if o_str in ['NAN', '', 'NONE']: continue
                 
-                # Se eliminó el bloqueo para permitir sumar costos nuevos a órdenes del pasado
+                if o_str in ordenes_liquidadas_historicas:
+                    ordenes_bloqueadas.add(o_str)
+                    continue
+                    
                 distribucion[o_str] = distribucion.get(o_str, 0.0) + valor_dividido
                 
     return distribucion, ordenes_bloqueadas
@@ -180,7 +183,6 @@ def mostrar_modulo_costos():
             arch_tras_pt = st.file_uploader("5. Traslados Internos PT", type=["xlsx"], accept_multiple_files=True)
             arch_wip_ant = st.file_uploader("6. Saldos WIP Mes Anterior (Opcional)", type=["xlsx"])
 
-        # Validación restaurada a la original para evitar fallos de renderizado
         if arch_sgt and arch_fact and arch_tras_mp and arch_tiempos:
             if st.button("🔍 Escanear Archivos y Aplicar Filtros", type="primary", use_container_width=True):
                 with st.spinner("Leyendo y cruzando datos..."):
@@ -189,7 +191,6 @@ def mostrar_modulo_costos():
                         ordenes_liquidadas_historicas = set()
                         historial_wip = {}
                         historial_total = {}
-                        historial_estado = {}
 
                         # 0. LECTURA HISTÓRICO WIP Y CANDADO
                         df_wip_ant = pd.DataFrame()
@@ -201,26 +202,20 @@ def mostrar_modulo_costos():
                                 col_ord = next((c for c in df_wip_ant.columns if 'ORDEN' in c.upper()), None)
                                 col_est = next((c for c in df_wip_ant.columns if 'ESTADO' in c.upper()), None)
                                 c_wip = next((c for c in df_wip_ant.columns if 'SALDO_FINAL_WIP' in c.upper()), None)
-                                
-                                # SEPARACIÓN HISTÓRICA: Obligar a buscar primero Costo Histórico
-                                c_hist = next((c for c in df_wip_ant.columns if 'COSTO_HISTORICO_ACUMULADO' in c.upper()), None)
-                                if not c_hist:
-                                    c_hist = next((c for c in df_wip_ant.columns if 'TOTAL_ACUMULADO' in c.upper()), None)
+                                c_hist = next((c for c in df_wip_ant.columns if 'COSTO_HISTORICO_ACUMULADO' in c.upper() or 'TOTAL_ACUMULADO' in c.upper()), None)
                                 
                                 if col_ord:
                                     for idx, row in df_wip_ant.iterrows():
                                         o = limpiar_orden(row[col_ord])
                                         if o != "" and o != "NAN": 
                                             ordenes_validas_set.add(o)
-                                            # Se guarda el saldo histórico pero no se bloquea
+                                            # Candado eliminado para que acepte costos nuevos
                                             if c_wip and not pd.isna(row[c_wip]):
                                                 try: historial_wip[o] = float(row[c_wip])
                                                 except: pass
                                             if c_hist and not pd.isna(row[c_hist]):
                                                 try: historial_total[o] = float(row[c_hist])
                                                 except: pass
-                                            if col_est and not pd.isna(row[col_est]):
-                                                historial_estado[o] = str(row[col_est])
                             except: pass
 
                         # 1. LECTURA MAESTRO SGT
@@ -251,7 +246,7 @@ def mostrar_modulo_costos():
                             desc = str(row.get('Descripcion', '')).upper()
                             cat = str(row.get('Categoria', '')).upper()
                             
-                            # FILTRO SGT DE SEGURIDAD EN VENTAS
+                            # Filtro SGT de seguridad
                             if len(row['Ordenes_Detectadas']) > 0:
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas):
                                     return "Orden Lista"
@@ -278,6 +273,7 @@ def mostrar_modulo_costos():
                                     return "Omitido Automático"
                                 if len(row['Ordenes_Detectadas']) > 0:
                                     ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
+                                    if ord_detectada in ordenes_liquidadas_historicas: return "Cerrada Anteriormente (Bloqueada)"
                                     if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
                                     else: return "Huérfana (Revisar)"
                                 return "Huérfana (Revisar)"
@@ -313,7 +309,7 @@ def mostrar_modulo_costos():
                                 cat = buscar_valor_columna(row, df_mp.columns, "CATEGOR")
                                 concepto = buscar_valor_columna(row, df_mp.columns, "CONCEPT")
                                 
-                                # PRIORIDAD 0: Producto Terminado. Si es dentro de la bodega, se omite.
+                                # PRIORIDAD 0: Producto Terminado. Si es dentro de la bodega, se omite. Si va afuera, es traslado.
                                 if "PRODUCTO TERMINADO" in cat:
                                     if any(k in concepto for k in ["SOHO", "LIBRERI", "LBRERI"]): return "Traslado Especial"
                                     if re.search(r'\bUCA\b', concepto): return "Traslado Especial"
@@ -321,6 +317,8 @@ def mostrar_modulo_costos():
                                 
                                 # PRIORIDAD 1: Asignación a Órdenes 
                                 if len(row['Ordenes_Detectadas']) > 0:
+                                    ord_detectada = limpiar_orden(row['Ordenes_Detectadas'][0])
+                                    if ord_detectada in ordenes_liquidadas_historicas: return "Cerrada Anteriormente (Bloqueada)"
                                     if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas): return "Orden Lista"
                                     else: return "Huérfana (Revisar)"
                                 
@@ -346,7 +344,6 @@ def mostrar_modulo_costos():
                             'tg_fact': df_fact, 'tg_tiempos': df_tiempos, 'tg_mp': df_mp, 
                             'tg_wip_ant': df_wip_ant, 'tg_ordenes_validas': ordenes_validas, 
                             'tg_wip_ant_dict': historial_wip, 'tg_hist_total': historial_total,
-                            'tg_hist_estado': historial_estado,
                             'tg_ordenes_historicas': ordenes_liquidadas_historicas, 
                             'tg_costo_planilla': costo_planilla, 'tg_df_cuentas': df_cuentas_mo,
                             'tg_datos_cargados': True, 'fase2_aprobada': False, 'liquidacion_lista': False
@@ -372,12 +369,17 @@ def mostrar_modulo_costos():
             h_tiempos = len(df_tiempos[df_tiempos['Clasificacion'] == "Huérfana (Revisar)"])
             h_mp = len(df_mp[df_mp['Clasificacion'] == "Huérfana (Revisar)"]) if not df_mp.empty else 0
             
+            bloqueadas_tiempos = len(df_tiempos[df_tiempos['Clasificacion'] == "Cerrada Anteriormente (Bloqueada)"])
+            bloqueadas_mp = len(df_mp[df_mp['Clasificacion'] == "Cerrada Anteriormente (Bloqueada)"]) if not df_mp.empty else 0
+            
+            if bloqueadas_tiempos > 0 or bloqueadas_mp > 0:
+                st.warning(f"🔒 El sistema detectó y bloqueó {bloqueadas_tiempos + bloqueadas_mp} registros de costos para órdenes liquidadas en el mes anterior.")
+
             total_huerfanas = h_fact + h_tiempos + h_mp
 
             if total_huerfanas > 0:
                 st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
                 
-                # SE AGREGÓ LA OPCIÓN DE LIQUIDAR (CIERRE DE COSTOS)
                 opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Es Traslado", "Liquidar (Cierre de Costos)", "Omitir"]
                 config_col = {
                     "Accion": st.column_config.SelectboxColumn("Acción", options=opciones_accion, required=True),
@@ -476,7 +478,6 @@ def mostrar_modulo_costos():
                     # 1. HISTÓRICO DE SALDOS
                     historial_saldos = st.session_state.get('tg_wip_ant_dict', {})
                     historial_total = st.session_state.get('tg_hist_total', {})
-                    historial_estado = st.session_state.get('tg_hist_estado', {})
 
                     # 2. COSTOS DEL MES
                     col_horas = next((c for c in df_tiempos.columns if 'TOTALHORA' in c.upper().replace(' ', '')), None)
@@ -541,7 +542,7 @@ def mostrar_modulo_costos():
                                 agregar_linea(p3, cta, nom, 0, monto)
                     st.session_state['tg_p3'] = pd.DataFrame(p3)
 
-                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES
+                    # PARTIDA 4: TRASLADOS A OTRAS UNIDADES (ELIMINADO PRODUCTO TERMINADO)
                     p4_dict = {}
                     df_tras_esp = df_mp[df_mp['Clasificacion'] == 'Traslado Especial']
                     if not df_tras_esp.empty:
@@ -623,10 +624,9 @@ def mostrar_modulo_costos():
                         hist_anterior = historial_total.get(ord_cln, 0.0)
                         hist_acu = hist_anterior + nuevo_mo + nuevo_mp
                         
-                        # ESTADO INTELIGENTE: Clasifica si es vieja y no tuvo movimientos
                         if ord_cln in ordenes_facturadas or ord_cln in ordenes_manuales:
                             estado = "Liquidado a Costo de Ventas"
-                        elif nuevo_mo == 0 and nuevo_mp == 0 and saldo_anterior == 0 and "LIQUIDADO" in historial_estado.get(ord_cln, "").upper():
+                        elif saldo_anterior == 0 and nuevo_mo == 0 and nuevo_mp == 0 and hist_anterior > 0:
                             estado = "Liquidado Anteriormente"
                         else:
                             estado = "Pendiente"
@@ -650,8 +650,8 @@ def mostrar_modulo_costos():
                         filas_wip.append({
                             "Orden": ord_cln, 
                             "Factura": factura_asignada, 
-                            "Saldo_Anterior_WIP": saldo_anterior, 
                             "Costo_Historico_Anterior": hist_anterior,
+                            "Saldo_Anterior_WIP": saldo_anterior, 
                             "Costo_MO_Mes": nuevo_mo, 
                             "Costo_MP_Mes": nuevo_mp, 
                             "Total_Acumulado": saldo_anterior + nuevo_mo + nuevo_mp, 
@@ -674,6 +674,9 @@ def mostrar_modulo_costos():
                     st.session_state['total_liquidad_display'] = total_liq_cv
                     st.session_state['liquidacion_lista'] = True
                     
+                    if len(bloqueadas_mo) > 0 or len(bloqueadas_mp2) > 0:
+                        st.warning(f"⚠️ Nota de Auditoría Final: Se omitieron costos automáticos de {len(bloqueadas_mo) + len(bloqueadas_mp2)} órdenes porque ya estaban liquidadas.")
+                        
                     st.success(f"✅ Cálculos completados. Total a liquidar en Partida 5: ${total_liq_cv:,.2f}")
 
             # =========================================================
@@ -685,6 +688,7 @@ def mostrar_modulo_costos():
                 st.subheader("🔍 Auditoría de Sumas (Descarga en Excel)")
                 st.write("A continuación se desglosan los registros exactos que componen las partidas 2 (Materia Prima) y 3 (CIF).")
                 
+                # REPARACIÓN: Extraer de memoria original para evitar alterar dataframes base
                 df_mp_aud = st.session_state['tg_mp']
                 col_costo_mp_a = next((c for c in df_mp_aud.columns if 'PRECIOTOTAL' in c.upper().replace(' ', '') or 'COSTO' in c.upper()), None)
                 col_cat_a = next((c for c in df_mp_aud.columns if 'CATEGOR' in c.upper()), 'Categoria')
