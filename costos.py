@@ -45,8 +45,9 @@ def mostrar_modulo_costos():
             st.warning("⚠️ El archivo 'costs_terraza.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
     elif unidad == "🏫 CID Campus":
         try:
-            from costs_campus import mostrar_modulo_campus
-            mostrar_modulo_campus()
+            # CORRECCIÓN AQUÍ: Se ajustó el nombre para que coincida con el archivo
+            from costs_campus import mostrar_modulo_cid_campus
+            mostrar_modulo_cid_campus()
         except ImportError:
             st.warning("⚠️ El archivo 'costs_campus.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
     elif unidad == "🛒 Despensa":
