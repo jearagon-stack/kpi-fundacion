@@ -7,11 +7,11 @@ from datetime import date
 # ==========================================
 # CONSTANTES CONTABLES TALLERES
 # ==========================================
-CUENTA_WIP_MO = "110602"
-CUENTA_WIP_MP = "110402"
-CUENTA_CIF = "410104"
-CUENTA_COSTO_VENTAS = "410101"
-CUENTA_PROVISION_TRASLADOS = "21020302"
+CUENTA_WIP_MO = "110602"       # Proceso Nómina
+CUENTA_WIP_MP = "110402"       # Proceso Materia Prima 
+CUENTA_CIF = "410104"          # Costos Indirectos de Fabricación
+CUENTA_COSTO_VENTAS = "410101" # Costo de Ventas
+CUENTA_PROVISION_TRASLADOS = "21020302" # Puente para traslados a otras unidades
 
 CUENTAS_MANO_OBRA = [
     "41010201 Sueldo de personal de produccion",
@@ -180,8 +180,8 @@ def mostrar_modulo_costos():
             arch_tras_pt = st.file_uploader("5. Traslados Internos PT", type=["xlsx"], accept_multiple_files=True)
             arch_wip_ant = st.file_uploader("6. Saldos WIP Mes Anterior (Opcional)", type=["xlsx"])
 
-        # Validación robusta para garantizar la aparición del botón
-        if arch_sgt is not None and arch_fact is not None and arch_tras_mp is not None and len(arch_tras_mp) > 0 and arch_tiempos is not None:
+        # Validación restaurada a la original para evitar fallos de renderizado
+        if arch_sgt and arch_fact and arch_tras_mp and arch_tiempos:
             if st.button("🔍 Escanear Archivos y Aplicar Filtros", type="primary", use_container_width=True):
                 with st.spinner("Leyendo y cruzando datos..."):
                     try:
@@ -189,6 +189,7 @@ def mostrar_modulo_costos():
                         ordenes_liquidadas_historicas = set()
                         historial_wip = {}
                         historial_total = {}
+                        historial_estado = {}
 
                         # 0. LECTURA HISTÓRICO WIP Y CANDADO
                         df_wip_ant = pd.DataFrame()
@@ -200,19 +201,26 @@ def mostrar_modulo_costos():
                                 col_ord = next((c for c in df_wip_ant.columns if 'ORDEN' in c.upper()), None)
                                 col_est = next((c for c in df_wip_ant.columns if 'ESTADO' in c.upper()), None)
                                 c_wip = next((c for c in df_wip_ant.columns if 'SALDO_FINAL_WIP' in c.upper()), None)
-                                c_hist = next((c for c in df_wip_ant.columns if 'COSTO_HISTORICO_ACUMULADO' in c.upper() or 'TOTAL_ACUMULADO' in c.upper()), None)
+                                
+                                # SEPARACIÓN HISTÓRICA: Obligar a buscar primero Costo Histórico
+                                c_hist = next((c for c in df_wip_ant.columns if 'COSTO_HISTORICO_ACUMULADO' in c.upper()), None)
+                                if not c_hist:
+                                    c_hist = next((c for c in df_wip_ant.columns if 'TOTAL_ACUMULADO' in c.upper()), None)
                                 
                                 if col_ord:
                                     for idx, row in df_wip_ant.iterrows():
                                         o = limpiar_orden(row[col_ord])
                                         if o != "" and o != "NAN": 
                                             ordenes_validas_set.add(o)
+                                            # Se guarda el saldo histórico pero no se bloquea
                                             if c_wip and not pd.isna(row[c_wip]):
                                                 try: historial_wip[o] = float(row[c_wip])
                                                 except: pass
                                             if c_hist and not pd.isna(row[c_hist]):
                                                 try: historial_total[o] = float(row[c_hist])
                                                 except: pass
+                                            if col_est and not pd.isna(row[col_est]):
+                                                historial_estado[o] = str(row[col_est])
                             except: pass
 
                         # 1. LECTURA MAESTRO SGT
@@ -243,7 +251,7 @@ def mostrar_modulo_costos():
                             desc = str(row.get('Descripcion', '')).upper()
                             cat = str(row.get('Categoria', '')).upper()
                             
-                            # Filtro SGT de seguridad
+                            # FILTRO SGT DE SEGURIDAD EN VENTAS
                             if len(row['Ordenes_Detectadas']) > 0:
                                 if tiene_orden_valida(row['Ordenes_Detectadas'], ordenes_validas):
                                     return "Orden Lista"
@@ -338,6 +346,7 @@ def mostrar_modulo_costos():
                             'tg_fact': df_fact, 'tg_tiempos': df_tiempos, 'tg_mp': df_mp, 
                             'tg_wip_ant': df_wip_ant, 'tg_ordenes_validas': ordenes_validas, 
                             'tg_wip_ant_dict': historial_wip, 'tg_hist_total': historial_total,
+                            'tg_hist_estado': historial_estado,
                             'tg_ordenes_historicas': ordenes_liquidadas_historicas, 
                             'tg_costo_planilla': costo_planilla, 'tg_df_cuentas': df_cuentas_mo,
                             'tg_datos_cargados': True, 'fase2_aprobada': False, 'liquidacion_lista': False
@@ -368,6 +377,7 @@ def mostrar_modulo_costos():
             if total_huerfanas > 0:
                 st.error(f"🚨 Tienes {total_huerfanas} registros que necesitan tu decisión.")
                 
+                # SE AGREGÓ LA OPCIÓN DE LIQUIDAR (CIERRE DE COSTOS)
                 opciones_accion = ["Pendiente", "Asignar Orden", "Forzar Orden", "Costo Indirecto", "Es Traslado", "Liquidar (Cierre de Costos)", "Omitir"]
                 config_col = {
                     "Accion": st.column_config.SelectboxColumn("Acción", options=opciones_accion, required=True),
@@ -466,6 +476,7 @@ def mostrar_modulo_costos():
                     # 1. HISTÓRICO DE SALDOS
                     historial_saldos = st.session_state.get('tg_wip_ant_dict', {})
                     historial_total = st.session_state.get('tg_hist_total', {})
+                    historial_estado = st.session_state.get('tg_hist_estado', {})
 
                     # 2. COSTOS DEL MES
                     col_horas = next((c for c in df_tiempos.columns if 'TOTALHORA' in c.upper().replace(' ', '')), None)
@@ -609,9 +620,16 @@ def mostrar_modulo_costos():
                         saldo_anterior = historial_saldos.get(ord_cln, 0.0)
                         saldo_acumulado = saldo_anterior + nuevo_mo + nuevo_mp
                         
-                        hist_acu = historial_total.get(ord_cln, 0.0) + nuevo_mo + nuevo_mp
+                        hist_anterior = historial_total.get(ord_cln, 0.0)
+                        hist_acu = hist_anterior + nuevo_mo + nuevo_mp
                         
-                        estado = "Liquidado a Costo de Ventas" if (ord_cln in ordenes_facturadas or ord_cln in ordenes_manuales) else "Pendiente"
+                        # ESTADO INTELIGENTE: Clasifica si es vieja y no tuvo movimientos
+                        if ord_cln in ordenes_facturadas or ord_cln in ordenes_manuales:
+                            estado = "Liquidado a Costo de Ventas"
+                        elif nuevo_mo == 0 and nuevo_mp == 0 and saldo_anterior == 0 and "LIQUIDADO" in historial_estado.get(ord_cln, "").upper():
+                            estado = "Liquidado Anteriormente"
+                        else:
+                            estado = "Pendiente"
                         
                         if ord_cln in ordenes_manuales:
                             factura_asignada = mapa_facturas.get(ord_cln, "Cierre Manual")
@@ -626,11 +644,20 @@ def mostrar_modulo_costos():
                         if estado == "Liquidado a Costo de Ventas":
                             total_liq_cv += saldo_acumulado
                             saldo_acumulado = 0.0
+                        elif estado == "Liquidado Anteriormente":
+                            saldo_acumulado = 0.0
                             
                         filas_wip.append({
-                            "Orden": ord_cln, "Factura": factura_asignada, "Saldo_Anterior_WIP": saldo_anterior, 
-                            "Costo_MO_Mes": nuevo_mo, "Costo_MP_Mes": nuevo_mp, "Total_Acumulado": saldo_anterior + nuevo_mo + nuevo_mp, 
-                            "Estado": estado, "Saldo_Final_WIP": saldo_acumulado, "Costo_Historico_Acumulado": hist_acu
+                            "Orden": ord_cln, 
+                            "Factura": factura_asignada, 
+                            "Saldo_Anterior_WIP": saldo_anterior, 
+                            "Costo_Historico_Anterior": hist_anterior,
+                            "Costo_MO_Mes": nuevo_mo, 
+                            "Costo_MP_Mes": nuevo_mp, 
+                            "Total_Acumulado": saldo_anterior + nuevo_mo + nuevo_mp, 
+                            "Estado": estado, 
+                            "Saldo_Final_WIP": saldo_acumulado, 
+                            "Costo_Historico_Acumulado": hist_acu
                         })
                     
                     st.session_state['tg_df_kardex'] = pd.DataFrame(filas_kardex)
