@@ -11,9 +11,12 @@ CTA_BASE_GASTO = "410104"
 CTA_BASE_PT = "110603" 
 CTA_BASE_MP = "110601" 
 
-# Bodegas oficiales de la unidad CID CAMPUS
+# Bodegas oficiales de la unidad (Ampliadas para evitar que se quede en blanco)
 UNIDADES_CID_CAMPUS_SET = {
-    "CID CAMPUS", "BODEGA CID CAMPUS"
+    "CID CAMPUS", "BODEGA CID CAMPUS", 
+    "CID", "BODEGA CID",
+    "LIBRERÍA CAMPUS", "LIBRERIA CAMPUS",
+    "LIBRERIA CID", "LIBRERÍA CID"
 }
 
 # Otras unidades para cruces
@@ -23,7 +26,7 @@ OTRAS_UNIDADES_INTERNAS = {
     "TERRAZA", "BODEGA TERRAZA", 
     "DESPENSA", "CAFETERIA", "CAFETERIA CENTRAL",
     "TALLERES", "LIBRERÍA CENTRAL", "LIBRERÍA BODEGA", 
-    "LIBRERÍA BODEGA TG", "LIBRERÍA CAMPUS", "LIBRERÍA CENTRAL (B001)"
+    "LIBRERÍA BODEGA TG", "LIBRERÍA CENTRAL (B001)"
 }
 
 INV_ACCOUNT_MAP = {
@@ -252,6 +255,9 @@ def mostrar_modulo_cid_campus():
                             
                             df[c_total] = pd.to_numeric(df[c_total], errors='coerce').fillna(0)
 
+                            # DEBUG: Capturar todas las bodegas únicas para ayudar al usuario si no hay coincidencias
+                            bodegas_encontradas = set()
+
                             for _, row in df.iterrows():
                                 tipo = clean_value(row[c_tipo]) if c_tipo else ""
                                 total = float(row[c_total])
@@ -263,6 +269,9 @@ def mostrar_modulo_cid_campus():
                                 
                                 if raw_sender == "" and ("SALIDA" in tipo or "AJUSTE" in tipo): raw_sender = bod_principal
                                 if raw_receiver == "" and ("ENTRADA" in tipo or "INGRESO" in tipo): raw_receiver = bod_principal
+
+                                if raw_sender: bodegas_encontradas.add(raw_sender)
+                                if raw_receiver: bodegas_encontradas.add(raw_receiver)
 
                                 category = clean_value(row[c_category]) if c_category else ""
 
@@ -297,6 +306,8 @@ def mostrar_modulo_cid_campus():
                                         gen_nexus_spec(INV_ACCOUNT_MAP.get('DEFAULT'), d_r, total, 0), gen_nexus_spec(CTA_PROVISION_PUENTE, d_r, 0, total)
                                     ])
 
+                            st.session_state['cid_bodegas_encontradas'] = sorted(list(bodegas_encontradas))
+
                     if arch_mov_inv:
                         st.success("Procesamiento contable finalizado.")
                         st.session_state['nexus_cid_buffers'] = gen_excels_memory(partidas_dict, mes_proceso)
@@ -306,5 +317,16 @@ def mostrar_modulo_cid_campus():
 
     with tab_liquidacion:
         if st.session_state.get('tab_results_cid', False):
-            for f, b in st.session_state['nexus_cid_buffers'].items():
-                st.download_button(label=f"⬇️ Descargar {f}", data=b, file_name=f, key=f"dl_{f}")
+            buffers = st.session_state.get('nexus_cid_buffers', {})
+            
+            if not buffers:
+                st.warning("⚠️ No se generaron partidas. El archivo se leyó correctamente pero no contiene movimientos válidos para la bodega 'CID CAMPUS' o sus variantes en este mes.")
+                
+                # Debugger visual para ayudar a encontrar el nombre exacto de la bodega
+                if 'cid_bodegas_encontradas' in st.session_state:
+                    with st.expander("🛠️ Ver qué nombres de bodegas encontró el sistema en tu archivo (Útil para revisar):"):
+                        st.write(st.session_state['cid_bodegas_encontradas'])
+            else:
+                st.subheader("📥 Descarga de Partidas (Nexus)")
+                for f, b in buffers.items():
+                    st.download_button(label=f"⬇️ Descargar {f}", data=b, file_name=f, key=f"dl_{f}")
