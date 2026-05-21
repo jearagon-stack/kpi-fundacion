@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import io
+import math
 from datetime import date
 
 # ==========================================
@@ -46,43 +47,33 @@ def mostrar_modulo_produccion():
         
         col_f1, col_f2 = st.columns(2)
         with col_f1:
-            arch_stock = st.file_uploader("1. Inventario / Stock Actual Saneado", type=["xlsx", "xls"], key="prod_f_stock")
+            arch_stock = st.file_uploader("1. Inventario / Stock Actual", type=["xlsx", "xls"], key="prod_f_stock")
             arch_salidas = st.file_uploader("2. Historial de Movimientos de Bodega", type=["xlsx", "xls"], key="prod_f_salidas")
         with col_f2:
             arch_compras = st.file_uploader("3. Historial de Compras", type=["xlsx", "xls"], key="prod_f_compras")
 
         if arch_stock and arch_salidas and arch_compras:
             if st.button("🚀 Ejecutar Análisis de Demanda y Variación", type="primary", use_container_width=True):
-                with st.spinner("Procesando archivos con estructura exacta..."):
+                with st.spinner("Procesando archivos y calculando proyecciones..."):
                     try:
-                        # 1. Leer Archivos
                         df_s = pd.read_excel(arch_stock, dtype=str)
                         df_m = pd.read_excel(arch_salidas, dtype=str)
                         df_c = pd.read_excel(arch_compras, dtype=str)
 
-                        # Asegurar nombres de columnas sin espacios extra
                         df_s.columns = df_s.columns.str.strip()
                         df_m.columns = df_m.columns.str.strip()
                         df_c.columns = df_c.columns.str.strip()
 
-                        # 2. Extracción de datos basada en los nombres exactos de tus Excels
                         # --- STOCK ---
                         df_s['Cod_Clean'] = df_s['IdProducto'].apply(limpiar_codigo)
                         df_s['Stock_Num'] = pd.to_numeric(df_s['Existencias'], errors='coerce').fillna(0)
-                        
-                        df_stock_group = df_s.groupby('Cod_Clean').agg({
-                            'Nombre': 'first',
-                            'Stock_Num': 'sum'
-                        }).reset_index().rename(columns={'Nombre': 'Descripción', 'Stock_Num': 'Stock_Actual'})
+                        df_stock_group = df_s.groupby('Cod_Clean').agg({'Nombre': 'first', 'Stock_Num': 'sum'}).reset_index().rename(columns={'Nombre': 'Descripción', 'Stock_Num': 'Stock_Actual'})
 
-                        # --- MOVIMIENTOS (Consumo) ---
+                        # --- MOVIMIENTOS ---
                         df_m['Cod_Clean'] = df_m['IdProducto'].apply(limpiar_codigo)
-                        
-                        # Manejo de "Cantida" vs "Cantidad" por si lo corrigen en el futuro
                         col_cant_mov = 'Cantidad' if 'Cantidad' in df_m.columns else 'Cantida'
                         df_m['Cant_Abs'] = pd.to_numeric(df_m[col_cant_mov], errors='coerce').fillna(0).abs()
 
-                        # Lógica estricta: Si la columna Tipo dice ENTRADA, lo resta. Si es Salida/Traslado, lo suma.
                         def calcular_consumo_neto(row):
                             tipo = str(row['Tipo']).upper()
                             if 'ENTRADA' in tipo:
@@ -95,12 +86,11 @@ def mostrar_modulo_produccion():
                         # --- COMPRAS ---
                         df_c['Cod_Clean'] = df_c['IdProducto'].apply(limpiar_codigo)
                         df_c['Cant_Num'] = pd.to_numeric(df_c['Cantidad'], errors='coerce').fillna(0).abs()
-                        
                         df_compras_group = df_c.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Compras_Historicas'})
                         df_min_lot = df_c[df_c['Cant_Num'] > 0].groupby('Cod_Clean')['Cant_Num'].min().reset_index().rename(columns={'Cant_Num': 'Lot_Min'})
                         df_max_lot = df_c.groupby('Cod_Clean')['Cant_Num'].max().reset_index().rename(columns={'Cant_Num': 'Lot_Max'})
 
-                        # Cálculo de Días Históricos basados en la columna 'Fecha'
+                        # Fechas
                         min_dates, max_dates = [], []
                         if 'Fecha' in df_m.columns:
                             fechas_m = pd.to_datetime(df_m['Fecha'], errors='coerce')
@@ -126,7 +116,7 @@ def mostrar_modulo_produccion():
                         st.session_state['prod_dias_hist'] = dias_historial_calculado
                         st.session_state['prod_rango_fechas'] = rango_fechas_str
 
-                        # 3. Consolidación: Left Join sobre Stock para mantener las filas exactas
+                        # Consolidación
                         df_maestro = df_stock_group.copy()
                         df_maestro = df_maestro.merge(df_salidas_group, on='Cod_Clean', how='left')
                         df_maestro = df_maestro.merge(df_compras_group, on='Cod_Clean', how='left')
@@ -144,21 +134,19 @@ def mostrar_modulo_produccion():
                         st.session_state['prod_ejecutado'] = True
 
                     except Exception as e:
-                        st.error(f"Error procesando la información. Verifica que las columnas IdProducto, Existencias, Tipo y Cantida existan. Error exacto: {e}")
+                        st.error(f"Error procesando la información. Verifica el formato de tus archivos. Error: {e}")
 
-        # Sección del Simulador Interactivo
         if st.session_state.get('prod_ejecutado', False):
             dias_hist_calc = st.session_state.get('prod_dias_hist', 180)
             rango_fechas = st.session_state.get('prod_rango_fechas', '')
             
             st.success(f"✅ Análisis completado. Historial detectado: **{dias_hist_calc} días** ({rango_fechas}).")
             st.markdown("---")
-            st.subheader("🎛️ Panel de Simulación")
+            st.subheader("🎛️ Panel de Simulación y Decisión de Compra")
 
             df_base = st.session_state['prod_df_calculo_base']
             df_calculado = df_base.copy()
 
-            # Cálculos Semanales base
             semanas_historial = dias_hist_calc / 7.0
             semanas_proyectar = dias_proyectar / 7.0
 
@@ -171,8 +159,8 @@ def mostrar_modulo_produccion():
                     "Código": st.column_config.TextColumn("Código", disabled=True),
                     "Descripción": st.column_config.TextColumn("Descripción", disabled=True),
                     "Stock_Actual": st.column_config.NumberColumn("Stock", disabled=True, format="%.2f"),
-                    "Consumo_Semanal": st.column_config.NumberColumn("Consumo/Semana", disabled=True, format="%.2f"),
-                    "Compra_Semanal": st.column_config.NumberColumn("Compra/Semana", disabled=True, format="%.2f"),
+                    "Consumo_Semanal": st.column_config.NumberColumn("Consumo/Sem", disabled=True, format="%.2f"),
+                    "Compra_Semanal": st.column_config.NumberColumn("Compra/Sem", disabled=True, format="%.2f"),
                     "Stock_Seguridad_Pct": st.column_config.NumberColumn("Seguridad (%)", min_value=0.0, max_value=100.0, format="%.1f"),
                     "Lot_Min": st.column_config.NumberColumn("Min Lot", disabled=True, format="%.2f"),
                     "Lot_Max": st.column_config.NumberColumn("Max Lot", disabled=True, format="%.2f")
@@ -182,28 +170,31 @@ def mostrar_modulo_produccion():
                 key="editor_interactivo_prod"
             )
 
-            # CÁLCULOS MATEMÁTICOS FINALES
+            # --- CÁLCULOS FINALES ---
             df_final = df_interactivo.copy()
             
             df_final['Consumo_Proyectado'] = df_final['Consumo_Semanal'] * semanas_proyectar
             df_final['Monto_Seguridad'] = df_final['Consumo_Proyectado'] * (df_final['Stock_Seguridad_Pct'] / 100.0)
             
-            df_final['Proyección 1 (Consumo Real)'] = (df_final['Consumo_Proyectado'] + df_final['Monto_Seguridad']) - df_final['Stock_Actual']
-            df_final['Proyección 1 (Consumo Real)'] = df_final['Proyección 1 (Consumo Real)'].apply(lambda x: max(0.0, round(x, 2)))
+            # Cálculo matemático con decimales
+            df_final['Calculo Exacto'] = (df_final['Consumo_Proyectado'] + df_final['Monto_Seguridad']) - df_final['Stock_Actual']
+            df_final['Calculo Exacto'] = df_final['Calculo Exacto'].apply(lambda x: max(0.0, round(x, 2)))
 
-            df_final['Proyección 2 (Ritmo Compras)'] = (df_final['Compra_Semanal'] * semanas_proyectar).round(2)
+            # --- COLUMNA REINA: A COMPRAR (ENTERO HACIA ARRIBA) ---
+            df_final['🛒 A COMPRAR (Unidades)'] = df_final['Calculo Exacto'].apply(lambda x: math.ceil(x))
+
+            df_final['Ritmo Compras'] = (df_final['Compra_Semanal'] * semanas_proyectar).round(2)
 
             def calcular_var(row):
-                p1 = row['Proyección 1 (Consumo Real)']
-                p2 = row['Proyección 2 (Ritmo Compras)']
-                if p2 == 0:
-                    return 100.0 if p1 > 0 else 0.0
+                p1 = row['Calculo Exacto']
+                p2 = row['Ritmo Compras']
+                if p2 == 0: return 100.0 if p1 > 0 else 0.0
                 return round(((p1 - p2) / p2) * 100.0, 2)
 
             df_final['Variación (%)'] = df_final.apply(calcular_var, axis=1)
 
             def evaluar_semaforo(row):
-                p1 = row['Proyección 1 (Consumo Real)']
+                p1 = row['Calculo Exacto']
                 l_min = pd.to_numeric(row['Lot_Min'], errors='coerce')
                 l_max = pd.to_numeric(row['Lot_Max'], errors='coerce')
                 
@@ -215,18 +206,18 @@ def mostrar_modulo_produccion():
             df_final['Semáforo / Alerta'] = df_final.apply(evaluar_semaforo, axis=1)
 
             columnas_finales = [
-                'Código', 'Descripción', 'Stock_Actual', 'Consumo_Semanal', 'Compra_Semanal',
-                'Proyección 1 (Consumo Real)', 'Proyección 2 (Ritmo Compras)', 'Variación (%)', 'Semáforo / Alerta'
+                'Código', 'Descripción', 'Stock_Actual', 'Consumo_Semanal', 
+                '🛒 A COMPRAR (Unidades)', 'Calculo Exacto', 'Ritmo Compras', 'Variación (%)', 'Semáforo / Alerta'
             ]
             df_vista_final = df_final[columnas_finales]
 
-            st.markdown("##### 📋 Resultados Finales Calculados")
+            st.markdown("##### 📋 Sugerencia de Compra Final")
             st.dataframe(df_vista_final, use_container_width=True, hide_index=True)
 
             st.download_button(
-                label="📥 Descargar Reporte de Proyecciones en Excel (.xlsx)",
+                label="📥 Descargar Reporte en Excel (.xlsx)",
                 data=generar_excel_proyeccion(df_vista_final),
-                file_name=f"Proyeccion_Compras_semana_{date.today().strftime('%d_%m_%Y')}.xlsx",
+                file_name=f"Sugerencia_Compras_{date.today().strftime('%d_%m_%Y')}.xlsx",
                 type="primary",
                 use_container_width=True
             )
