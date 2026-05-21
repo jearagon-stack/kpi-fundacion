@@ -48,7 +48,6 @@ def mostrar_modulo_produccion():
         st.subheader("Simulador y Proyección de Compras de Materia Prima")
         st.write("Carga los archivos base del sistema para calcular las necesidades reales frente al comportamiento de compras.")
         
-        # Bloque de Parámetros de Tiempo Ajustables Manualmente (Se eliminó histórico manual)
         st.markdown("##### ⏱️ Configuración de Horizontes de Tiempo")
         col_t1, col_t2 = st.columns(2)
         with col_t1:
@@ -62,7 +61,7 @@ def mostrar_modulo_produccion():
         col_f1, col_f2 = st.columns(2)
         with col_f1:
             arch_stock = st.file_uploader("1. Inventario / Stock Actual Saneado", type=["xlsx", "xls"], key="prod_f_stock")
-            arch_salidas = st.file_uploader("2. Historial de Salidas de Bodega (Consumos)", type=["xlsx", "xls"], key="prod_f_salidas")
+            arch_salidas = st.file_uploader("2. Historial de Movimientos de Bodega (Consumos y Ajustes)", type=["xlsx", "xls"], key="prod_f_salidas")
         with col_f2:
             arch_compras = st.file_uploader("3. Historial de Compras (Facturas de Proveedores)", type=["xlsx", "xls"], key="prod_f_compras")
 
@@ -87,6 +86,7 @@ def mostrar_modulo_produccion():
                         col_cod_out = detectar_columna(df_out_raw, ['COD', 'ID', 'ARTICULO', 'PRODUCTO', 'ITEM'])
                         col_cant_out = detectar_columna(df_out_raw, ['CANT', 'TOTAL', 'MOV', 'SALIDA', 'VOLUMEN'])
                         col_fec_out = detectar_columna(df_out_raw, ['FECHA', 'DATE', 'DIA', 'CREACION'])
+                        col_tipo_out = detectar_columna(df_out_raw, ['TIPO', 'CONCEPT', 'MOVIMIENTO', 'DOCUMENTO'])
 
                         col_cod_in = detectar_columna(df_in_raw, ['COD', 'ID', 'ARTICULO', 'PRODUCTO', 'ITEM'])
                         col_cant_in = detectar_columna(df_in_raw, ['CANT', 'TOTAL', 'COMPRA', 'VOLUMEN'])
@@ -96,15 +96,29 @@ def mostrar_modulo_produccion():
                         df_s_raw['Cod_Clean'] = df_s_raw[col_cod_s].apply(limpiar_codigo)
                         df_s_raw['Stock_Num'] = pd.to_numeric(df_s_raw[col_stk_s], errors='coerce').fillna(0)
                         
+                        # --- CÁLCULO DE CONSUMO NETO (Manejo de Entradas por Ajuste) ---
                         df_out_raw['Cod_Clean'] = df_out_raw[col_cod_out].apply(limpiar_codigo)
-                        df_out_raw['Cant_Num'] = pd.to_numeric(df_out_raw[col_cant_out], errors='coerce').fillna(0)
+                        df_out_raw['Cant_Abs'] = pd.to_numeric(df_out_raw[col_cant_out], errors='coerce').fillna(0).abs()
+                        
+                        if col_tipo_out:
+                            def calcular_consumo_neto(row):
+                                tipo = str(row[col_tipo_out]).upper()
+                                # Si el movimiento es una entrada/ingreso, se resta del consumo
+                                if 'ENTRADA' in tipo or 'INGRESO' in tipo:
+                                    return -row['Cant_Abs']
+                                return row['Cant_Abs']
+                            df_out_raw['Cant_Num'] = df_out_raw.apply(calcular_consumo_neto, axis=1)
+                        else:
+                            df_out_raw['Cant_Num'] = df_out_raw['Cant_Abs']
+                            
                         if col_fec_out: df_out_raw['Fecha_Clean'] = pd.to_datetime(df_out_raw[col_fec_out], errors='coerce')
                         
+                        # Compras
                         df_in_raw['Cod_Clean'] = df_in_raw[col_cod_in].apply(limpiar_codigo)
-                        df_in_raw['Cant_Num'] = pd.to_numeric(df_in_raw[col_cant_in], errors='coerce').fillna(0)
+                        df_in_raw['Cant_Num'] = pd.to_numeric(df_in_raw[col_cant_in], errors='coerce').fillna(0).abs()
                         if col_fec_in: df_in_raw['Fecha_Clean'] = pd.to_datetime(df_in_raw[col_fec_in], errors='coerce')
 
-                        # Cálculo de Días Históricos basado en los archivos
+                        # Cálculo de Días Históricos
                         min_dates = []
                         max_dates = []
                         
@@ -122,7 +136,7 @@ def mostrar_modulo_produccion():
                             dias_historial_calculado = (fecha_max_global - fecha_min_global).days + 1
                             rango_fechas_str = f"desde {fecha_min_global.strftime('%d/%m/%Y')} hasta {fecha_max_global.strftime('%d/%m/%Y')}"
                         else:
-                            dias_historial_calculado = 30 # Respaldo si no hay fechas válidas
+                            dias_historial_calculado = 30
                             rango_fechas_str = "No detectado (Usando 30 días por defecto)"
 
                         if dias_historial_calculado < 1:
@@ -140,11 +154,11 @@ def mostrar_modulo_produccion():
                         df_salidas_group = df_out_raw.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Consumo_Historico'})
                         df_compras_group = df_in_raw.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Compras_Historicas'})
 
-                        # 5. Cálculo de Lotes Mínimos y Máximos desde el Histórico de Compras
+                        # 5. Cálculo de Lotes Mínimos y Máximos
                         df_min_lot = df_in_raw[df_in_raw['Cant_Num'] > 0].groupby('Cod_Clean')['Cant_Num'].min().reset_index().rename(columns={'Cant_Num': 'Lot_Min'})
                         df_max_lot = df_in_raw.groupby('Cod_Clean')['Cant_Num'].max().reset_index().rename(columns={'Cant_Num': 'Lot_Max'})
 
-                        # 6. Consolidación en un Universo Maestro de Códigos
+                        # 6. Consolidación
                         todos_los_codigos = set(df_stock_group['Cod_Clean']).union(set(df_salidas_group['Cod_Clean'])).union(set(df_compras_group['Cod_Clean']))
                         df_maestro = pd.DataFrame({'Código': list(todos_los_codigos)})
                         df_maestro = df_maestro[df_maestro['Código'] != ""]
@@ -159,7 +173,7 @@ def mostrar_modulo_produccion():
                         df_maestro['Stock_Actual'] = df_maestro['Stock_Actual'].fillna(0.0)
                         df_maestro['Consumo_Historico'] = df_maestro['Consumo_Historico'].fillna(0.0)
                         df_maestro['Compras_Historicas'] = df_maestro['Compras_Historicas'].fillna(0.0)
-                        df_maestro['Stock_Seguridad_Pct'] = 5.0  # Parámetro base por defecto
+                        df_maestro['Stock_Seguridad_Pct'] = 5.0 
 
                         st.session_state['prod_df_calculo_base'] = df_maestro
                         st.session_state['prod_ejecutado'] = True
@@ -185,7 +199,7 @@ def mostrar_modulo_produccion():
                     "Código": st.column_config.TextColumn("Código", disabled=True),
                     "Descripción": st.column_config.TextColumn("Descripción", disabled=True),
                     "Stock_Actual": st.column_config.NumberColumn("Stock Actual", disabled=True, format="%.2f"),
-                    "Consumo_Historico": st.column_config.NumberColumn("Consumo Hist.", disabled=True, format="%.2f"),
+                    "Consumo_Historico": st.column_config.NumberColumn("Consumo Neto Hist.", disabled=True, format="%.2f"),
                     "Compras_Historicas": st.column_config.NumberColumn("Compras Hist.", disabled=True, format="%.2f"),
                     "Stock_Seguridad_Pct": st.column_config.NumberColumn("Seguridad (%)", min_value=0.0, max_value=100.0, format="%.1f"),
                     "Lot_Min": st.column_config.NumberColumn("Min Compra Lot", disabled=True, format="%.2f"),
@@ -196,14 +210,12 @@ def mostrar_modulo_produccion():
                 key="editor_interactivo_prod"
             )
 
-            # CÁLCULOS MATEMÁTICOS DE OPCIONES EN TIEMPO REAL
+            # CÁLCULOS MATEMÁTICOS DE OPCIONES
             df_calculado = df_interactivo.copy()
             
-            # Cálculo de días efectivos
             dias_efectivos_hist = (dias_hist_calc / 7.0) * dias_operativos
             dias_efectivos_proj = (dias_proyectar / 7.0) * dias_operativos
             
-            # Proyección 1: Consumo Real Proyectado
             df_calculado['Consumo_Diario_Efectivo'] = df_calculado['Consumo_Historico'] / dias_efectivos_hist
             df_calculado['Consumo_Proyectado'] = df_calculado['Consumo_Diario_Efectivo'] * dias_efectivos_proj
             df_calculado['Monto_Seguridad'] = df_calculado['Consumo_Proyectado'] * (df_calculado['Stock_Seguridad_Pct'] / 100.0)
@@ -211,11 +223,9 @@ def mostrar_modulo_produccion():
             df_calculado['Proyección 1 (Consumo Real)'] = (df_calculado['Consumo_Proyectado'] + df_calculado['Monto_Seguridad']) - df_calculado['Stock_Actual']
             df_calculado['Proyección 1 (Consumo Real)'] = df_calculado['Proyección 1 (Consumo Real)'].apply(lambda x: max(0.0, round(x, 2)))
 
-            # Proyección 2: Ritmo de Compras Histórico
             df_calculado['Compra_Diaria_Efectiva'] = df_calculado['Compras_Historicas'] / dias_efectivos_hist
             df_calculado['Proyección 2 (Ritmo Compras)'] = (df_calculado['Compra_Diaria_Efectiva'] * dias_efectivos_proj).round(2)
 
-            # Variación Porcentual
             def calcular_var(row):
                 p1 = row['Proyección 1 (Consumo Real)']
                 p2 = row['Proyección 2 (Ritmo Compras)']
@@ -225,7 +235,6 @@ def mostrar_modulo_produccion():
 
             df_calculado['Variación (%)'] = df_calculado.apply(calcular_var, axis=1)
 
-            # Lógica de Semáforo
             def evaluar_semaforo(row):
                 p1 = row['Proyección 1 (Consumo Real)']
                 l_min = pd.to_numeric(row['Lot_Min'], errors='coerce')
