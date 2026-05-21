@@ -4,23 +4,11 @@ import io
 from datetime import date
 
 # ==========================================
-# FUNCIONES AUXILIARES DE INTELIGENCIA DE DATOS
+# FUNCIONES AUXILIARES
 # ==========================================
-def detectar_columna(df, palabras_clave, ignorar=None):
-    """Busca columnas por palabra clave, evitando términos excluidos"""
-    if ignorar is None: ignorar = []
-    
-    # Primera pasada: búsqueda exacta o parcial dando prioridad al orden de palabras clave
-    for p in palabras_clave:
-        for col in df.columns:
-            col_str = str(col).upper().strip()
-            if p in col_str and not any(ig in col_str for ig in ignorar):
-                return col
-    return None
-
 def limpiar_codigo(c):
     """Respeta ceros a la izquierda, solo quita '.0' de los excels"""
-    if pd.isna(c): return ""
+    if pd.isna(c) or str(c).strip() == "": return "SIN_CODIGO"
     val = str(c).strip().upper()
     if val.endswith('.0'):
         return val[:-2]
@@ -69,130 +57,137 @@ def mostrar_modulo_produccion():
             arch_compras = st.file_uploader("3. Historial de Compras (Facturas de Proveedores)", type=["xlsx", "xls"], key="prod_f_compras")
 
         if arch_stock and arch_salidas and arch_compras:
-            if st.button("🚀 Ejecutar Análisis de Demanda y Variación", type="primary", use_container_width=True):
-                with st.spinner("Procesando, cruzando y normalizando información..."):
-                    try:
-                        # 1. Leer Archivos
-                        df_s_raw = pd.read_excel(arch_stock, dtype=str)
-                        df_out_raw = pd.read_excel(arch_salidas, dtype=str)
-                        df_in_raw = pd.read_excel(arch_compras, dtype=str)
-                        
-                        df_s_raw.columns = df_s_raw.columns.str.strip()
-                        df_out_raw.columns = df_out_raw.columns.str.strip()
-                        df_in_raw.columns = df_in_raw.columns.str.strip()
+            # Lectura preliminar rápida para obtener encabezados reales
+            try:
+                df_s_pre = pd.read_excel(arch_stock, nrows=1, dtype=str)
+                df_m_pre = pd.read_excel(arch_salidas, nrows=1, dtype=str)
+                df_c_pre = pd.read_excel(arch_compras, nrows=1, dtype=str)
+                
+                # --- NUEVO: MAPEO DINÁMICO DE COLUMNAS ---
+                st.markdown("### 🔍 Mapeo de Columnas de Origen")
+                st.info("Selecciona la columna exacta para cada dato. Esto garantiza un cruce perfecto y evita la pérdida de filas.")
+                
+                col_sel1, col_sel2, col_sel3 = st.columns(3)
+                
+                with col_sel1:
+                    st.caption("📦 1. Stock Actual")
+                    col_cod_s = st.selectbox("Columna Código:", df_s_pre.columns, index=0)
+                    col_desc_s = st.selectbox("Columna Descripción:", df_s_pre.columns, index=1 if len(df_s_pre.columns) > 1 else 0)
+                    col_cant_s = st.selectbox("Columna Cantidad:", df_s_pre.columns, index=2 if len(df_s_pre.columns) > 2 else 0)
 
-                        # 2. Detección Inteligente de Columnas (Corregida para ignorar IDs al buscar nombres)
-                        col_cod_s = detectar_columna(df_s_raw, ['COD', 'ID', 'ARTICULO', 'ITEM'])
-                        col_stk_s = detectar_columna(df_s_raw, ['STOCK', 'EXIST', 'ACTUAL', 'CANTIDAD', 'DISPO'])
-                        col_nom_s = detectar_columna(df_s_raw, ['DESC', 'NOMBRE', 'DETALLE'], ignorar=['ID', 'COD', 'TIPO'])
+                with col_sel2:
+                    st.caption("🔄 2. Salidas / Ajustes")
+                    col_cod_m = st.selectbox("Columna Código:", df_m_pre.columns, index=0, key='cod_m')
+                    col_cant_m = st.selectbox("Columna Cantidad:", df_m_pre.columns, index=2 if len(df_m_pre.columns) > 2 else 0, key='cant_m')
+                    col_tipo_m = st.selectbox("Columna Tipo Movimiento (Opcional):", ["No utilizar"] + list(df_m_pre.columns), index=0)
+                    col_fec_m = st.selectbox("Columna Fecha (Opcional):", ["No utilizar"] + list(df_m_pre.columns), index=0)
 
-                        col_cod_out = detectar_columna(df_out_raw, ['COD', 'ID', 'ARTICULO', 'ITEM'])
-                        col_cant_out = detectar_columna(df_out_raw, ['CANT', 'TOTAL', 'MOV', 'SALIDA', 'VOLUMEN'])
-                        col_fec_out = detectar_columna(df_out_raw, ['FECHA', 'DATE', 'DIA'])
-                        col_tipo_out = detectar_columna(df_out_raw, ['TIPO', 'CONCEPT', 'MOVIMIENTO'])
-                        col_nom_out = detectar_columna(df_out_raw, ['DESC', 'NOMBRE', 'DETALLE'], ignorar=['ID', 'COD', 'TIPO'])
+                with col_sel3:
+                    st.caption("💰 3. Compras Históricas")
+                    col_cod_c = st.selectbox("Columna Código:", df_c_pre.columns, index=0, key='cod_c')
+                    col_cant_c = st.selectbox("Columna Cantidad:", df_c_pre.columns, index=2 if len(df_c_pre.columns) > 2 else 0, key='cant_c')
+                    col_fec_c = st.selectbox("Columna Fecha (Opcional):", ["No utilizar"] + list(df_c_pre.columns), index=0, key='fec_c')
 
-                        col_cod_in = detectar_columna(df_in_raw, ['COD', 'ID', 'ARTICULO', 'ITEM'])
-                        col_cant_in = detectar_columna(df_in_raw, ['CANT', 'TOTAL', 'COMPRA', 'VOLUMEN'])
-                        col_fec_in = detectar_columna(df_in_raw, ['FECHA', 'DATE', 'DIA'])
-                        col_nom_in = detectar_columna(df_in_raw, ['DESC', 'NOMBRE', 'DETALLE'], ignorar=['ID', 'COD', 'TIPO'])
+                if st.button("🚀 Ejecutar Análisis de Demanda y Variación", type="primary", use_container_width=True):
+                    with st.spinner("Procesando, cruzando y normalizando información basada en su selección..."):
+                        try:
+                            # 1. Leer Archivos completos
+                            df_s_raw = pd.read_excel(arch_stock, dtype=str)
+                            df_out_raw = pd.read_excel(arch_salidas, dtype=str)
+                            df_in_raw = pd.read_excel(arch_compras, dtype=str)
 
-                        # 3. Limpieza de Datos
-                        df_s_raw['Cod_Clean'] = df_s_raw[col_cod_s].apply(limpiar_codigo)
-                        df_s_raw['Stock_Num'] = pd.to_numeric(df_s_raw[col_stk_s], errors='coerce').fillna(0)
-                        
-                        df_out_raw['Cod_Clean'] = df_out_raw[col_cod_out].apply(limpiar_codigo)
-                        df_out_raw['Cant_Abs'] = pd.to_numeric(df_out_raw[col_cant_out], errors='coerce').fillna(0).abs()
-                        
-                        if col_tipo_out:
-                            def calcular_consumo_neto(row):
-                                tipo = str(row[col_tipo_out]).upper()
-                                if 'ENTRADA' in tipo or 'INGRESO' in tipo:
-                                    return -row['Cant_Abs']
-                                return row['Cant_Abs']
-                            df_out_raw['Cant_Num'] = df_out_raw.apply(calcular_consumo_neto, axis=1)
-                        else:
-                            df_out_raw['Cant_Num'] = df_out_raw['Cant_Abs']
+                            # 2. Limpieza de Datos
+                            df_s_raw['Cod_Clean'] = df_s_raw[col_cod_s].apply(limpiar_codigo)
+                            df_s_raw['Stock_Num'] = pd.to_numeric(df_s_raw[col_cant_s], errors='coerce').fillna(0)
                             
-                        # Limpiar fechas ignorando años absurdos (para no arruinar el cálculo de días)
-                        if col_fec_out: 
-                            df_out_raw['Fecha_Clean'] = pd.to_datetime(df_out_raw[col_fec_out], errors='coerce')
-                            df_out_raw.loc[(df_out_raw['Fecha_Clean'].dt.year < 2020) | (df_out_raw['Fecha_Clean'].dt.year > 2030), 'Fecha_Clean'] = pd.NaT
+                            df_out_raw['Cod_Clean'] = df_out_raw[col_cod_m].apply(limpiar_codigo)
+                            df_out_raw['Cant_Abs'] = pd.to_numeric(df_out_raw[col_cant_m], errors='coerce').fillna(0).abs()
+                            
+                            if col_tipo_m != "No utilizar":
+                                def calcular_consumo_neto(row):
+                                    tipo = str(row[col_tipo_m]).upper()
+                                    if 'ENTRADA' in tipo or 'INGRESO' in tipo:
+                                        return -row['Cant_Abs']
+                                    return row['Cant_Abs']
+                                df_out_raw['Cant_Num'] = df_out_raw.apply(calcular_consumo_neto, axis=1)
+                            else:
+                                df_out_raw['Cant_Num'] = df_out_raw['Cant_Abs']
+                                
+                            # Limpiar fechas
+                            if col_fec_m != "No utilizar": 
+                                df_out_raw['Fecha_Clean'] = pd.to_datetime(df_out_raw[col_fec_m], errors='coerce')
+                                df_out_raw.loc[(df_out_raw['Fecha_Clean'].dt.year < 2020) | (df_out_raw['Fecha_Clean'].dt.year > 2030), 'Fecha_Clean'] = pd.NaT
 
-                        df_in_raw['Cod_Clean'] = df_in_raw[col_cod_in].apply(limpiar_codigo)
-                        df_in_raw['Cant_Num'] = pd.to_numeric(df_in_raw[col_cant_in], errors='coerce').fillna(0).abs()
-                        
-                        if col_fec_in: 
-                            df_in_raw['Fecha_Clean'] = pd.to_datetime(df_in_raw[col_fec_in], errors='coerce')
-                            df_in_raw.loc[(df_in_raw['Fecha_Clean'].dt.year < 2020) | (df_in_raw['Fecha_Clean'].dt.year > 2030), 'Fecha_Clean'] = pd.NaT
+                            df_in_raw['Cod_Clean'] = df_in_raw[col_cod_c].apply(limpiar_codigo)
+                            df_in_raw['Cant_Num'] = pd.to_numeric(df_in_raw[col_cant_c], errors='coerce').fillna(0).abs()
+                            
+                            if col_fec_c != "No utilizar": 
+                                df_in_raw['Fecha_Clean'] = pd.to_datetime(df_in_raw[col_fec_c], errors='coerce')
+                                df_in_raw.loc[(df_in_raw['Fecha_Clean'].dt.year < 2020) | (df_in_raw['Fecha_Clean'].dt.year > 2030), 'Fecha_Clean'] = pd.NaT
 
-                        # Cálculo de Días Históricos Saneados
-                        min_dates = []
-                        max_dates = []
-                        
-                        if col_fec_out and not df_out_raw['Fecha_Clean'].isna().all():
-                            min_dates.append(df_out_raw['Fecha_Clean'].min())
-                            max_dates.append(df_out_raw['Fecha_Clean'].max())
-                        
-                        if col_fec_in and not df_in_raw['Fecha_Clean'].isna().all():
-                            min_dates.append(df_in_raw['Fecha_Clean'].min())
-                            max_dates.append(df_in_raw['Fecha_Clean'].max())
+                            # Cálculo de Días Históricos
+                            min_dates = []
+                            max_dates = []
+                            
+                            if col_fec_m != "No utilizar" and 'Fecha_Clean' in df_out_raw.columns and not df_out_raw['Fecha_Clean'].isna().all():
+                                min_dates.append(df_out_raw['Fecha_Clean'].min())
+                                max_dates.append(df_out_raw['Fecha_Clean'].max())
+                            
+                            if col_fec_c != "No utilizar" and 'Fecha_Clean' in df_in_raw.columns and not df_in_raw['Fecha_Clean'].isna().all():
+                                min_dates.append(df_in_raw['Fecha_Clean'].min())
+                                max_dates.append(df_in_raw['Fecha_Clean'].max())
 
-                        if min_dates and max_dates:
-                            fecha_min_global = min(min_dates)
-                            fecha_max_global = max(max_dates)
-                            dias_historial_calculado = (fecha_max_global - fecha_min_global).days + 1
-                            rango_fechas_str = f"desde {fecha_min_global.strftime('%d/%m/%Y')} hasta {fecha_max_global.strftime('%d/%m/%Y')}"
-                        else:
-                            dias_historial_calculado = 30
-                            rango_fechas_str = "No detectado (Usando 30 días por defecto)"
+                            if min_dates and max_dates:
+                                fecha_min_global = min(min_dates)
+                                fecha_max_global = max(max_dates)
+                                dias_historial_calculado = (fecha_max_global - fecha_min_global).days + 1
+                                rango_fechas_str = f"desde {fecha_min_global.strftime('%d/%m/%Y')} hasta {fecha_max_global.strftime('%d/%m/%Y')}"
+                            else:
+                                dias_historial_calculado = 180 # Valor por defecto seguro
+                                rango_fechas_str = "No detectado (Usando 180 días por defecto)"
 
-                        if dias_historial_calculado < 1: dias_historial_calculado = 1
+                            if dias_historial_calculado < 1: dias_historial_calculado = 1
 
-                        st.session_state['prod_dias_hist'] = dias_historial_calculado
-                        st.session_state['prod_rango_fechas'] = rango_fechas_str
+                            st.session_state['prod_dias_hist'] = dias_historial_calculado
+                            st.session_state['prod_rango_fechas'] = rango_fechas_str
 
-                        # Extraer Descripciones de donde se pueda
-                        dict_desc = {}
-                        for df_temp, col_n in [(df_s_raw, col_nom_s), (df_out_raw, col_nom_out), (df_in_raw, col_nom_in)]:
-                            if col_n:
-                                temp_dict = df_temp[df_temp[col_n].notna()].set_index('Cod_Clean')[col_n].to_dict()
-                                dict_desc.update(temp_dict)
+                            # 4. Agrupaciones seguras (Manteniendo el stock como maestro para no perder filas)
+                            df_stock_group = df_s_raw.groupby('Cod_Clean').agg({
+                                col_desc_s: 'first',
+                                'Stock_Num': 'sum'
+                            }).reset_index().rename(columns={'Stock_Num': 'Stock_Actual', col_desc_s: 'Descripción'})
+                            
+                            df_salidas_group = df_out_raw.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Consumo_Historico'})
+                            df_compras_group = df_in_raw.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Compras_Historicas'})
+                            df_min_lot = df_in_raw[df_in_raw['Cant_Num'] > 0].groupby('Cod_Clean')['Cant_Num'].min().reset_index().rename(columns={'Cant_Num': 'Lot_Min'})
+                            df_max_lot = df_in_raw.groupby('Cod_Clean')['Cant_Num'].max().reset_index().rename(columns={'Cant_Num': 'Lot_Max'})
 
-                        # 4. Agrupaciones
-                        df_stock_group = df_s_raw.groupby('Cod_Clean')['Stock_Num'].sum().reset_index().rename(columns={'Stock_Num': 'Stock_Actual'})
-                        df_salidas_group = df_out_raw.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Consumo_Historico'})
-                        df_compras_group = df_in_raw.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Compras_Historicas'})
-                        df_min_lot = df_in_raw[df_in_raw['Cant_Num'] > 0].groupby('Cod_Clean')['Cant_Num'].min().reset_index().rename(columns={'Cant_Num': 'Lot_Min'})
-                        df_max_lot = df_in_raw.groupby('Cod_Clean')['Cant_Num'].max().reset_index().rename(columns={'Cant_Num': 'Lot_Max'})
+                            # 5. Consolidación: Left Join sobre la base de Stock para conservar los 284 registros intactos
+                            df_maestro = df_stock_group
+                            df_maestro = df_maestro.merge(df_salidas_group, on='Cod_Clean', how='left')
+                            df_maestro = df_maestro.merge(df_compras_group, on='Cod_Clean', how='left')
+                            df_maestro = df_maestro.merge(df_min_lot, on='Cod_Clean', how='left')
+                            df_maestro = df_maestro.merge(df_max_lot, on='Cod_Clean', how='left')
 
-                        # 5. Consolidación
-                        todos_los_codigos = set(df_stock_group['Cod_Clean']).union(set(df_salidas_group['Cod_Clean'])).union(set(df_compras_group['Cod_Clean']))
-                        df_maestro = pd.DataFrame({'Código': list(todos_los_codigos)})
-                        df_maestro = df_maestro[df_maestro['Código'] != ""]
+                            df_maestro = df_maestro.rename(columns={'Cod_Clean': 'Código'})
+                            df_maestro['Descripción'] = df_maestro['Descripción'].fillna('PRODUCTO SIN NOMBRE')
+                            df_maestro['Stock_Actual'] = df_maestro['Stock_Actual'].fillna(0.0)
+                            df_maestro['Consumo_Historico'] = df_maestro['Consumo_Historico'].fillna(0.0)
+                            df_maestro['Compras_Historicas'] = df_maestro['Compras_Historicas'].fillna(0.0)
+                            df_maestro['Stock_Seguridad_Pct'] = 5.0 
 
-                        df_maestro['Descripción'] = df_maestro['Código'].map(dict_desc).fillna('PRODUCTO SIN NOMBRE')
-                        
-                        df_maestro = df_maestro.merge(df_stock_group, left_on='Código', right_on='Cod_Clean', how='left').drop(columns=['Cod_Clean'])
-                        df_maestro = df_maestro.merge(df_salidas_group, left_on='Código', right_on='Cod_Clean', how='left').drop(columns=['Cod_Clean'])
-                        df_maestro = df_maestro.merge(df_compras_group, left_on='Código', right_on='Cod_Clean', how='left').drop(columns=['Cod_Clean'])
-                        df_maestro = df_maestro.merge(df_min_lot, left_on='Código', right_on='Cod_Clean', how='left').drop(columns=['Cod_Clean'])
-                        df_maestro = df_maestro.merge(df_max_lot, left_on='Código', right_on='Cod_Clean', how='left').drop(columns=['Cod_Clean'])
+                            st.session_state['prod_df_calculo_base'] = df_maestro
+                            st.session_state['prod_ejecutado'] = True
 
-                        df_maestro['Stock_Actual'] = df_maestro['Stock_Actual'].fillna(0.0)
-                        df_maestro['Consumo_Historico'] = df_maestro['Consumo_Historico'].fillna(0.0)
-                        df_maestro['Compras_Historicas'] = df_maestro['Compras_Historicas'].fillna(0.0)
-                        df_maestro['Stock_Seguridad_Pct'] = 5.0 
+                        except Exception as e:
+                            st.error(f"Error procesando la información: {e}")
 
-                        st.session_state['prod_df_calculo_base'] = df_maestro
-                        st.session_state['prod_ejecutado'] = True
-
-                    except Exception as e:
-                        st.error(f"Error procesando la información: {e}")
+            except Exception as e:
+                st.warning("Asegúrate de que los archivos tengan el formato correcto de Excel.")
 
         # Sección del Simulador Interactivo
         if st.session_state.get('prod_ejecutado', False):
-            dias_hist_calc = st.session_state.get('prod_dias_hist', 30)
+            dias_hist_calc = st.session_state.get('prod_dias_hist', 180)
             rango_fechas = st.session_state.get('prod_rango_fechas', '')
             
             st.success(f"✅ Análisis completado. Historial detectado: **{dias_hist_calc} días** ({rango_fechas}).")
@@ -202,7 +197,7 @@ def mostrar_modulo_produccion():
             df_base = st.session_state['prod_df_calculo_base']
             df_calculado = df_base.copy()
 
-            # Cálculos Semanales base (Para mostrar al usuario el ratio)
+            # Cálculos Semanales base
             semanas_historial = dias_hist_calc / 7.0
             semanas_proyectar = dias_proyectar / 7.0
 
