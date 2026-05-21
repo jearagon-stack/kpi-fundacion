@@ -51,11 +51,13 @@ def mostrar_modulo_produccion():
         
         # Bloque de Parámetros de Tiempo Ajustables Manualmente
         st.markdown("##### ⏱️ Configuración de Horizontes de Tiempo")
-        col_t1, col_t2 = st.columns(2)
+        col_t1, col_t2, col_t3 = st.columns(3)
         with col_t1:
-            dias_historial = st.number_input("Días cubiertos por el Historial Cargado (Ej: 90 para 3 meses):", min_value=1, value=90, key="zip_dias_hist")
+            dias_historial = st.number_input("Días del Historial (Ej: 90 para 3 meses):", min_value=1, value=90, key="zip_dias_hist")
         with col_t2:
-            dias_proyectar = st.number_input("Días a Proyectar para la Compra (Ej: 30 para 1 mes):", min_value=1, value=30, key="zip_dias_proj")
+            dias_proyectar = st.number_input("Días a Proyectar (Ej: 7 para 1 semana):", min_value=1, value=7, key="zip_dias_proj")
+        with col_t3:
+            dias_operativos = st.number_input("Días laborados por semana:", min_value=1.0, max_value=7.0, value=6.5, step=0.5, key="zip_dias_op")
 
         st.markdown("---")
         st.markdown("##### 📥 Carga de Archivos Maestros")
@@ -110,7 +112,7 @@ def mostrar_modulo_produccion():
                         df_salidas_group = df_out_raw.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Consumo_Historico'})
                         df_compras_group = df_in_raw.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Compras_Historicas'})
 
-                        # 5. Cálculo de Lotes Mínimos y Máximos desde el Histórico de Compras (Dato sólido)
+                        # 5. Cálculo de Lotes Mínimos y Máximos desde el Histórico de Compras
                         df_min_lot = df_in_raw[df_in_raw['Cant_Num'] > 0].groupby('Cod_Clean')['Cant_Num'].min().reset_index().rename(columns={'Cant_Num': 'Lot_Min'})
                         df_max_lot = df_in_raw.groupby('Cod_Clean')['Cant_Num'].max().reset_index().rename(columns={'Cant_Num': 'Lot_Max'})
 
@@ -125,7 +127,7 @@ def mostrar_modulo_produccion():
                         df_maestro = df_maestro.merge(df_min_lot, left_on='Código', right_on='Cod_Clean', how='left').drop(columns=['Cod_Clean'])
                         df_maestro = df_maestro.merge(df_max_lot, left_on='Código', right_on='Cod_Clean', how='left').drop(columns=['Cod_Clean'])
 
-                        df_maestro['Descripción'] = df_maestro['Descripción'].fillna('PRODUCTO NUEVOS SIN NOMBRE')
+                        df_maestro['Descripción'] = df_maestro['Descripción'].fillna('PRODUCTO SIN NOMBRE')
                         df_maestro['Stock_Actual'] = df_maestro['Stock_Actual'].fillna(0.0)
                         df_maestro['Consumo_Historico'] = df_maestro['Consumo_Historico'].fillna(0.0)
                         df_maestro['Compras_Historicas'] = df_maestro['Compras_Historicas'].fillna(0.0)
@@ -166,17 +168,21 @@ def mostrar_modulo_produccion():
             # CÁLCULOS MATEMÁTICOS DE OPCIONES EN TIEMPO REAL
             df_calculado = df_interactivo.copy()
             
+            # Cálculo de días efectivos (restando domingos/sábados según parámetro)
+            dias_efectivos_hist = (dias_historial / 7.0) * dias_operativos
+            dias_efectivos_proj = (dias_proyectar / 7.0) * dias_operativos
+            
             # Proyección 1: Consumo Real Proyectado
-            df_calculado['Consumo_Diario'] = df_calculado['Consumo_Historico'] / dias_historial
-            df_calculado['Consumo_Proyectado'] = df_calculado['Consumo_Diario'] * dias_proyectar
+            df_calculado['Consumo_Diario_Efectivo'] = df_calculado['Consumo_Historico'] / dias_efectivos_hist
+            df_calculado['Consumo_Proyectado'] = df_calculado['Consumo_Diario_Efectivo'] * dias_efectivos_proj
             df_calculado['Monto_Seguridad'] = df_calculado['Consumo_Proyectado'] * (df_calculado['Stock_Seguridad_Pct'] / 100.0)
             
             df_calculado['Proyección 1 (Consumo Real)'] = (df_calculado['Consumo_Proyectado'] + df_calculado['Monto_Seguridad']) - df_calculado['Stock_Actual']
             df_calculado['Proyección 1 (Consumo Real)'] = df_calculado['Proyección 1 (Consumo Real)'].apply(lambda x: max(0.0, round(x, 2)))
 
             # Proyección 2: Ritmo de Compras Histórico
-            df_calculado['Compra_Diaria'] = df_calculado['Compras_Historicas'] / dias_historial
-            df_calculado['Proyección 2 (Ritmo Compras)'] = (df_calculado['Compra_Diaria'] * dias_proyectar).round(2)
+            df_calculado['Compra_Diaria_Efectiva'] = df_calculado['Compras_Historicas'] / dias_efectivos_hist
+            df_calculado['Proyección 2 (Ritmo Compras)'] = (df_calculado['Compra_Diaria_Efectiva'] * dias_efectivos_proj).round(2)
 
             # Variación Porcentual entre opciones
             def calcular_var(row):
@@ -188,7 +194,7 @@ def mostrar_modulo_produccion():
 
             df_calculado['Variación (%)'] = df_calculado.apply(calcular_var, axis=1)
 
-            # Lógica de Semáforo basada en el historial de lotes sólidos de compras
+            # Lógica de Semáforo basada en el historial de lotes
             def evaluar_semaforo(row):
                 p1 = row['Proyección 1 (Consumo Real)']
                 l_min = pd.to_numeric(row['Lot_Min'], errors='coerce')
@@ -202,7 +208,7 @@ def mostrar_modulo_produccion():
                     return f"🟡 Mayor a Máximo Comprado ({l_max:,.1f})"
                 return "🟢 Rango Tradicional"
 
-            df_calculado['Semáforo / Alerta'] = df_calculado.apply(evaluador_semaforo, axis=1)
+            df_calculado['Semáforo / Alerta'] = df_calculado.apply(evaluar_semaforo, axis=1)
 
             # Columnas limpias finales para mostrar y descargar
             columnas_finales = [
@@ -214,11 +220,11 @@ def mostrar_modulo_produccion():
             st.markdown("##### 📋 Resultados Finales Calculados")
             st.dataframe(df_vista_final, use_container_width=True, hide_index=True)
 
-            # Botón de Descarga del Reporte en Excel Nativo (.xlsx) con columnas divididas
+            # Botón de Descarga
             st.download_button(
                 label="📥 Descargar Reporte de Proyecciones en Excel (.xlsx)",
                 data=generar_excel_proyeccion(df_vista_final),
-                file_name=f"Proyeccion_Compras_{date.today().strftime('%d_%m_%Y')}.xlsx",
+                file_name=f"Proyeccion_Compras_semana_{date.today().strftime('%d_%m_%Y')}.xlsx",
                 type="primary",
                 use_container_width=True
             )
