@@ -17,8 +17,7 @@ def mostrar_modulo_costos():
             "🏫 CID Campus", 
             "🛒 Despensa", 
             "💼 Gerencia Comercial",
-            "🏭 Producción"  # <--- NUEVA OPCIÓN AGREGADA
-        ],
+                    ],
         horizontal=True
     )
     
@@ -62,8 +61,6 @@ def mostrar_modulo_costos():
         except ImportError:
             st.warning("⚠️ El archivo 'costs_gerencia.py' aún no ha sido creado...")
             
-    # <--- NUEVO BLOQUE PARA PRODUCCIÓN --->
-    elif unidad == "🏭 Producción":
         try:
             from costs_produccion import mostrar_modulo_produccion
             mostrar_modulo_produccion()

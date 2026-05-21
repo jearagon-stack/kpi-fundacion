@@ -2,7 +2,7 @@ import streamlit as st
 import urllib.parse
 import pandas as pd
 from datetime import datetime, timedelta
-import auth, gastos, ventas, costos, validacion  # <--- Importamos el nuevo módulo
+import auth, gastos, ventas, costos, validacion  
 from utils import conectar_hoja, obtener_dataframe
 
 st.set_page_config(page_title="Auditoría DTE Pro", layout="wide")
@@ -78,8 +78,8 @@ if not st.session_state.logged_in:
 # --- Sidebar y Menú ---
 with st.sidebar:
     st.title("Menú Principal")
-    # Agregamos la opción de VALIDACIÓN DE COSTOS al menú
-    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS"]
+    # Agregamos PRODUCCIÓN al menú
+    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN"]
     
     if st.session_state.rol_actual == "ADMIN":
         opciones_menu.append("CONFIGURACIÓN")
@@ -123,7 +123,13 @@ elif opcion == "KPI DE VENTAS":
 elif opcion == "CONTABILIDAD DE COSTOS":
     costos.mostrar_modulo_costos()
 elif opcion == "VALIDACIÓN DE COSTOS":
-    validacion.mostrar_modulo_validacion()  # <--- Llamada al nuevo módulo independiente
+    validacion.mostrar_modulo_validacion()  
+elif opcion == "PRODUCCIÓN":
+    try:
+        from costs_produccion import mostrar_modulo_produccion
+        mostrar_modulo_produccion()
+    except ImportError:
+        st.warning("⚠️ El archivo 'costs_produccion.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
 elif opcion == "CONFIGURACIÓN":
     st.title("⚙️ Configuración del Sistema")
     st.markdown("Desde aquí puedes administrar los accesos a la plataforma de forma rápida.")
@@ -138,7 +144,7 @@ elif opcion == "CONFIGURACIÓN":
             nueva_pass = st.text_input("Contraseña")
             btn_crear = st.form_submit_button("Guardar Usuario")
             
-    # --- NUEVA SECCIÓN: PARÁMETROS DE AUDITORÍA ---
+    # --- PARÁMETROS DE AUDITORÍA ---
     st.divider()
     st.subheader("⚙️ Configuración de Parámetros de Auditoría")
     
