@@ -132,7 +132,9 @@ def mostrar_modulo_produccion():
                         df_maestro['Stock_Actual'] = df_maestro['Stock_Actual'].fillna(0.0)
                         df_maestro['Consumo_Historico'] = df_maestro['Consumo_Historico'].fillna(0.0)
                         df_maestro['Compras_Historicas'] = df_maestro['Compras_Historicas'].fillna(0.0)
-                        df_maestro['Stock_Seguridad_Pct'] = 5.0 
+                        
+                        # AHORA EL PORCENTAJE ES DECIMAL DIRECTAMENTE (0.05 = 5%)
+                        df_maestro['Stock_Seguridad_Pct'] = 0.05 
 
                         st.session_state['prod_df_calculo_base'] = df_maestro
                         st.session_state['prod_ejecutado'] = True
@@ -147,7 +149,7 @@ def mostrar_modulo_produccion():
             st.success(f"✅ Análisis completado. Historial detectado: **{dias_hist_calc} días** ({rango_fechas}).")
             st.markdown("---")
             st.subheader("🎛️ Panel Maestro de Simulación y Sugerencia de Compra")
-            st.info("💡 **Tip Interactivo:** Puedes editar la columna **Seguridad (%)** y verás cómo el cálculo de compra se actualiza de inmediato.")
+            st.info("💡 **Tip Interactivo:** Puedes editar la columna **Seguridad (0.05)** y verás cómo la proyección y la compra se actualizan de inmediato.")
 
             # --- CAPTURA DE EDICIONES EN TIEMPO REAL ---
             if "editor_interactivo_prod" in st.session_state:
@@ -166,10 +168,15 @@ def mostrar_modulo_produccion():
             df_calculado['Compra_Semanal'] = df_calculado['Compras_Historicas'] / semanas_historial
             
             df_calculado['Consumo_Proyectado'] = df_calculado['Consumo_Semanal'] * semanas_proyectar
-            df_calculado['Monto_Seguridad'] = df_calculado['Consumo_Proyectado'] * (df_calculado['Stock_Seguridad_Pct'] / 100.0)
             
-            df_calculado['Calculo Exacto'] = (df_calculado['Consumo_Proyectado'] + df_calculado['Monto_Seguridad']) - df_calculado['Stock_Actual']
-            df_calculado['Calculo Exacto'] = df_calculado['Calculo Exacto'].apply(lambda x: max(0.0, round(x, 2)))
+            # Cálculo de seguridad usando el decimal directo (sin dividir entre 100)
+            df_calculado['Monto_Seguridad'] = df_calculado['Consumo_Proyectado'] * df_calculado['Stock_Seguridad_Pct']
+            
+            # --- NUEVA COLUMNA REFERENCIAL ---
+            df_calculado['Proy. Consumo (c/ Seg)'] = (df_calculado['Consumo_Proyectado'] + df_calculado['Monto_Seguridad']).round(2)
+            
+            # Cálculo Exacto de lo que falta comprar
+            df_calculado['Calculo Exacto'] = (df_calculado['Proy. Consumo (c/ Seg)'] - df_calculado['Stock_Actual']).clip(lower=0).round(2)
 
             df_calculado['🛒 A COMPRAR (Unidades)'] = df_calculado['Calculo Exacto'].apply(lambda x: math.ceil(x))
 
@@ -182,6 +189,7 @@ def mostrar_modulo_produccion():
 
             df_calculado['Var. Compra vs Consumo (%)'] = df_calculado.apply(calcular_var, axis=1)
 
+            # Semáforo evaluando contra lo que vamos a comprar realmente
             def evaluar_semaforo(row):
                 p1 = row['Calculo Exacto']
                 l_min = pd.to_numeric(row['Lot_Min'], errors='coerce')
@@ -194,16 +202,16 @@ def mostrar_modulo_produccion():
 
             df_calculado['Semáforo / Alerta'] = df_calculado.apply(evaluar_semaforo, axis=1)
 
-            # --- VISTA UNIFICADA ---
+            # --- VISTA UNIFICADA CON EL NUEVO ORDEN ---
             columnas_finales = [
                 'Código', 'Descripción', 'Stock_Actual', 'Consumo_Semanal', 'Compra_Semanal',
-                'Stock_Seguridad_Pct', '🛒 A COMPRAR (Unidades)', 'Calculo Exacto', 
-                'Var. Compra vs Consumo (%)', 'Lot_Min', 'Lot_Max', 'Semáforo / Alerta'
+                'Stock_Seguridad_Pct', 'Proy. Consumo (c/ Seg)', 'Calculo Exacto', 
+                'Var. Compra vs Consumo (%)', 'Lot_Min', 'Lot_Max', 'Semáforo / Alerta', 
+                '🛒 A COMPRAR (Unidades)' # Movida al final
             ]
             
             df_vista_final = df_calculado[columnas_finales]
 
-            # EL EDITOR AHORA MUESTRA TODO Y SOLO PERMITE EDITAR EL %
             df_resultado = st.data_editor(
                 df_vista_final,
                 column_config={
@@ -212,13 +220,14 @@ def mostrar_modulo_produccion():
                     "Stock_Actual": st.column_config.NumberColumn("Stock", disabled=True, format="%.2f"),
                     "Consumo_Semanal": st.column_config.NumberColumn("Consumo/Sem", disabled=True, format="%.2f"),
                     "Compra_Semanal": st.column_config.NumberColumn("Compra/Sem", disabled=True, format="%.2f"),
-                    "Stock_Seguridad_Pct": st.column_config.NumberColumn("Seguridad (%)", min_value=0.0, max_value=100.0, format="%.1f"),
-                    "🛒 A COMPRAR (Unidades)": st.column_config.NumberColumn("🛒 A COMPRAR", disabled=True),
+                    "Stock_Seguridad_Pct": st.column_config.NumberColumn("Seguridad", min_value=0.0, max_value=1.0, format="%.2f"),
+                    "Proy. Consumo (c/ Seg)": st.column_config.NumberColumn("Proy. Total", disabled=True, format="%.2f"),
                     "Calculo Exacto": st.column_config.NumberColumn("Calculo Exacto", disabled=True, format="%.2f"),
                     "Var. Compra vs Consumo (%)": st.column_config.NumberColumn("Var. (%)", disabled=True, format="%.2f"),
                     "Lot_Min": st.column_config.NumberColumn("Min Lot", disabled=True, format="%.2f"),
                     "Lot_Max": st.column_config.NumberColumn("Max Lot", disabled=True, format="%.2f"),
-                    "Semáforo / Alerta": st.column_config.TextColumn("Alerta", disabled=True)
+                    "Semáforo / Alerta": st.column_config.TextColumn("Alerta", disabled=True),
+                    "🛒 A COMPRAR (Unidades)": st.column_config.NumberColumn("🛒 A COMPRAR", disabled=True)
                 },
                 hide_index=True,
                 use_container_width=True,
