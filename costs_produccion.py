@@ -90,23 +90,28 @@ def mostrar_modulo_produccion():
                         df_min_lot = df_c[df_c['Cant_Num'] > 0].groupby('Cod_Clean')['Cant_Num'].min().reset_index().rename(columns={'Cant_Num': 'Lot_Min'})
                         df_max_lot = df_c.groupby('Cod_Clean')['Cant_Num'].max().reset_index().rename(columns={'Cant_Num': 'Lot_Max'})
 
-                        # Fechas
+                        # --- LECTURA DE FECHAS CORREGIDA (Obligando a Día/Mes/Año) ---
                         min_dates, max_dates = [], []
+                        
                         if 'Fecha' in df_m.columns:
-                            fechas_m = pd.to_datetime(df_m['Fecha'], errors='coerce')
-                            if not fechas_m.isna().all():
+                            fechas_m = pd.to_datetime(df_m['Fecha'], dayfirst=True, errors='coerce').dropna()
+                            fechas_m = fechas_m[(fechas_m.dt.year >= 2020) & (fechas_m.dt.year <= 2030)]
+                            if not fechas_m.empty:
                                 min_dates.append(fechas_m.min())
                                 max_dates.append(fechas_m.max())
                         
                         if 'Fecha' in df_c.columns:
-                            fechas_c = pd.to_datetime(df_c['Fecha'], errors='coerce')
-                            if not fechas_c.isna().all():
+                            fechas_c = pd.to_datetime(df_c['Fecha'], dayfirst=True, errors='coerce').dropna()
+                            fechas_c = fechas_c[(fechas_c.dt.year >= 2020) & (fechas_c.dt.year <= 2030)]
+                            if not fechas_c.empty:
                                 min_dates.append(fechas_c.min())
                                 max_dates.append(fechas_c.max())
 
                         if min_dates and max_dates:
-                            dias_historial_calculado = (max(max_dates) - min(min_dates)).days + 1
-                            rango_fechas_str = f"desde {min(min_dates).strftime('%d/%m/%Y')} hasta {max(max_dates).strftime('%d/%m/%Y')}"
+                            fecha_min_global = min(min_dates)
+                            fecha_max_global = max(max_dates)
+                            dias_historial_calculado = (fecha_max_global - fecha_min_global).days + 1
+                            rango_fechas_str = f"desde {fecha_min_global.strftime('%d/%m/%Y')} hasta {fecha_max_global.strftime('%d/%m/%Y')}"
                         else:
                             dias_historial_calculado = 180
                             rango_fechas_str = "No detectado (Usando 180 días por defecto)"
