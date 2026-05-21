@@ -63,13 +63,12 @@ def mostrar_modulo_produccion():
                         df_m.columns = df_m.columns.str.strip()
                         df_c.columns = df_c.columns.str.strip()
 
-                        # --- FILTRO Y VALIDACIÓN DE CATEGORÍAS ---
-                        def procesar_categorias(df, nombre_archivo):
-                            # Buscar la columna que contenga la categoría
-                            col_cat = next((col for col in df.columns if col.upper() in ['CATEGORIA', 'CATEGORÍA', 'GRUPO', 'FAMILIA']), None)
-                            if not col_cat:
-                                return df, None 
+                        # --- FILTRO Y VALIDACIÓN ESTRICTA POR POSICIÓN DE COLUMNA ---
+                        def procesar_categorias_estricto(df, nombre_archivo, col_index, letra_col):
+                            if col_index >= len(df.columns):
+                                return None, f"⚠️ **Error en '{nombre_archivo}':** El archivo no tiene suficientes columnas para leer la columna {letra_col} (Índice {col_index}). Verifica que el formato sea el correcto."
                             
+                            col_cat = df.columns[col_index]
                             df['_Cat_Upper'] = df[col_cat].fillna("VACIO").astype(str).str.upper().str.strip()
                             
                             # 1. Detectar productos sin categoría o "Sin especificar"
@@ -78,21 +77,21 @@ def mostrar_modulo_produccion():
                                 vacios_df = df[mascara_vacia]
                                 col_mostrar = 'Nombre' if 'Nombre' in df.columns else ('IdProducto' if 'IdProducto' in df.columns else df.columns[0])
                                 productos_malos = vacios_df[col_mostrar].dropna().unique().tolist()
-                                msg = f"⚠️ **Control de Calidad en '{nombre_archivo}':** Se encontraron productos sin categoría asignada o marcados como 'Sin especificar'. Asigna la categoría antes de realizar la proyección.\n\n**Productos detectados:** {', '.join(productos_malos[:15])}"
+                                msg = f"⚠️ **Control de Calidad en '{nombre_archivo}':** Se encontraron productos sin categoría asignada o marcados como 'Sin especificar' en la Columna {letra_col}.\n\n**Asigna la categoría correcta en tu sistema antes de proyectar para estos productos:** {', '.join(productos_malos[:15])}"
                                 if len(productos_malos) > 15: msg += "..."
                                 return None, msg
 
-                            # 2. Filtrar dejando solo las categorías permitidas (Materia Prima, Prod. Terminado, Empaque, Limpieza)
-                            # Nota: Cualquier otra como "Servicio" se omitirá automáticamente.
+                            # 2. Filtrar dejando solo las categorías permitidas
                             permitidas = ['MATERIA PRIMA', 'PRODUCTO TERMINADO', 'EMPAQUE', 'LIMPIEZA']
                             mascara_valida = df['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))
                             df_filtrado = df[mascara_valida].drop(columns=['_Cat_Upper'])
                             
                             return df_filtrado, None
 
-                        df_s_filt, err_s = procesar_categorias(df_s, "Inventario / Stock Actual")
-                        df_m_filt, err_m = procesar_categorias(df_m, "Movimientos de Bodega")
-                        df_c_filt, err_c = procesar_categorias(df_c, "Historial de Compras")
+                        # Aplicación de los índices exactos: Col C (2), Col AA (26), Col J (9)
+                        df_s_filt, err_s = procesar_categorias_estricto(df_s, "Inventario / Stock Actual", 2, "C")
+                        df_m_filt, err_m = procesar_categorias_estricto(df_m, "Movimientos de Bodega", 26, "AA")
+                        df_c_filt, err_c = procesar_categorias_estricto(df_c, "Historial de Compras", 9, "J")
 
                         if err_s:
                             st.warning(err_s)
@@ -104,7 +103,7 @@ def mostrar_modulo_produccion():
                             st.warning(err_c)
                             st.session_state['prod_ejecutado'] = False
                         else:
-                            # Reasignamos los dataframes ya filtrados
+                            # Reasignamos los dataframes ya filtrados y validados
                             df_s = df_s_filt
                             df_m = df_m_filt
                             df_c = df_c_filt
