@@ -8,7 +8,6 @@ from datetime import date
 # FUNCIONES AUXILIARES
 # ==========================================
 def limpiar_codigo(c):
-    """Mantiene el código puro y respeta ceros iniciales"""
     if pd.isna(c) or str(c).strip() == "": return "SIN_CODIGO"
     val = str(c).strip()
     if val.endswith('.0'): return val[:-2]
@@ -147,56 +146,41 @@ def mostrar_modulo_produccion():
             
             st.success(f"✅ Análisis completado. Historial detectado: **{dias_hist_calc} días** ({rango_fechas}).")
             st.markdown("---")
-            st.subheader("🎛️ Panel de Simulación y Decisión de Compra")
+            st.subheader("🎛️ Panel Maestro de Simulación y Sugerencia de Compra")
+            st.info("💡 **Tip Interactivo:** Puedes editar la columna **Seguridad (%)** y verás cómo el cálculo de compra se actualiza de inmediato.")
 
-            df_base = st.session_state['prod_df_calculo_base']
-            df_calculado = df_base.copy()
+            # --- CAPTURA DE EDICIONES EN TIEMPO REAL ---
+            if "editor_interactivo_prod" in st.session_state:
+                ediciones = st.session_state["editor_interactivo_prod"].get("edited_rows", {})
+                for fila_idx, cambios in ediciones.items():
+                    if "Stock_Seguridad_Pct" in cambios:
+                        st.session_state['prod_df_calculo_base'].loc[fila_idx, 'Stock_Seguridad_Pct'] = cambios["Stock_Seguridad_Pct"]
 
+            df_calculado = st.session_state['prod_df_calculo_base'].copy()
+
+            # --- CÁLCULOS MATEMÁTICOS ---
             semanas_historial = dias_hist_calc / 7.0
             semanas_proyectar = dias_proyectar / 7.0
 
             df_calculado['Consumo_Semanal'] = df_calculado['Consumo_Historico'] / semanas_historial
             df_calculado['Compra_Semanal'] = df_calculado['Compras_Historicas'] / semanas_historial
-
-            df_interactivo = st.data_editor(
-                df_calculado[['Código', 'Descripción', 'Stock_Actual', 'Consumo_Semanal', 'Compra_Semanal', 'Stock_Seguridad_Pct', 'Lot_Min', 'Lot_Max']],
-                column_config={
-                    "Código": st.column_config.TextColumn("Código", disabled=True),
-                    "Descripción": st.column_config.TextColumn("Descripción", disabled=True),
-                    "Stock_Actual": st.column_config.NumberColumn("Stock", disabled=True, format="%.2f"),
-                    "Consumo_Semanal": st.column_config.NumberColumn("Consumo/Sem", disabled=True, format="%.2f"),
-                    "Compra_Semanal": st.column_config.NumberColumn("Compra/Sem", disabled=True, format="%.2f"),
-                    "Stock_Seguridad_Pct": st.column_config.NumberColumn("Seguridad (%)", min_value=0.0, max_value=100.0, format="%.1f"),
-                    "Lot_Min": st.column_config.NumberColumn("Min Lot", disabled=True, format="%.2f"),
-                    "Lot_Max": st.column_config.NumberColumn("Max Lot", disabled=True, format="%.2f")
-                },
-                hide_index=True,
-                use_container_width=True,
-                key="editor_interactivo_prod"
-            )
-
-            # --- CÁLCULOS FINALES ---
-            df_final = df_interactivo.copy()
             
-            df_final['Consumo_Proyectado'] = df_final['Consumo_Semanal'] * semanas_proyectar
-            df_final['Monto_Seguridad'] = df_final['Consumo_Proyectado'] * (df_final['Stock_Seguridad_Pct'] / 100.0)
+            df_calculado['Consumo_Proyectado'] = df_calculado['Consumo_Semanal'] * semanas_proyectar
+            df_calculado['Monto_Seguridad'] = df_calculado['Consumo_Proyectado'] * (df_calculado['Stock_Seguridad_Pct'] / 100.0)
             
-            df_final['Calculo Exacto'] = (df_final['Consumo_Proyectado'] + df_final['Monto_Seguridad']) - df_final['Stock_Actual']
-            df_final['Calculo Exacto'] = df_final['Calculo Exacto'].apply(lambda x: max(0.0, round(x, 2)))
+            df_calculado['Calculo Exacto'] = (df_calculado['Consumo_Proyectado'] + df_calculado['Monto_Seguridad']) - df_calculado['Stock_Actual']
+            df_calculado['Calculo Exacto'] = df_calculado['Calculo Exacto'].apply(lambda x: max(0.0, round(x, 2)))
 
-            df_final['🛒 A COMPRAR (Unidades)'] = df_final['Calculo Exacto'].apply(lambda x: math.ceil(x))
+            df_calculado['🛒 A COMPRAR (Unidades)'] = df_calculado['Calculo Exacto'].apply(lambda x: math.ceil(x))
 
             def calcular_var(row):
                 c_sem = row['Consumo_Semanal']
                 comp_sem = row['Compra_Semanal']
-                
                 if c_sem == 0:
                     return 100.0 if comp_sem > 0 else 0.0
-                
-                variacion = ((comp_sem - c_sem) / c_sem) * 100.0
-                return round(variacion, 2)
+                return round(((comp_sem - c_sem) / c_sem) * 100.0, 2)
 
-            df_final['Var. Compra vs Consumo (%)'] = df_final.apply(calcular_var, axis=1)
+            df_calculado['Var. Compra vs Consumo (%)'] = df_calculado.apply(calcular_var, axis=1)
 
             def evaluar_semaforo(row):
                 p1 = row['Calculo Exacto']
@@ -208,22 +192,43 @@ def mostrar_modulo_produccion():
                 if pd.notna(l_max) and p1 > l_max: return f"🟡 Mayor a Máx. ({l_max:,.1f})"
                 return "🟢 Rango Tradicional"
 
-            df_final['Semáforo / Alerta'] = df_final.apply(evaluar_semaforo, axis=1)
+            df_calculado['Semáforo / Alerta'] = df_calculado.apply(evaluar_semaforo, axis=1)
 
-            # SE INCLUYÓ LA COLUMNA 'Compra_Semanal' EN LA LISTA DE COLUMNAS FINALES
+            # --- VISTA UNIFICADA ---
             columnas_finales = [
                 'Código', 'Descripción', 'Stock_Actual', 'Consumo_Semanal', 'Compra_Semanal',
-                '🛒 A COMPRAR (Unidades)', 'Calculo Exacto', 'Var. Compra vs Consumo (%)', 'Semáforo / Alerta'
+                'Stock_Seguridad_Pct', '🛒 A COMPRAR (Unidades)', 'Calculo Exacto', 
+                'Var. Compra vs Consumo (%)', 'Lot_Min', 'Lot_Max', 'Semáforo / Alerta'
             ]
-            df_vista_final = df_final[columnas_finales]
+            
+            df_vista_final = df_calculado[columnas_finales]
 
-            st.markdown("##### 📋 Sugerencia de Compra Final")
-            st.dataframe(df_vista_final, use_container_width=True, hide_index=True)
+            # EL EDITOR AHORA MUESTRA TODO Y SOLO PERMITE EDITAR EL %
+            df_resultado = st.data_editor(
+                df_vista_final,
+                column_config={
+                    "Código": st.column_config.TextColumn("Código", disabled=True),
+                    "Descripción": st.column_config.TextColumn("Descripción", disabled=True),
+                    "Stock_Actual": st.column_config.NumberColumn("Stock", disabled=True, format="%.2f"),
+                    "Consumo_Semanal": st.column_config.NumberColumn("Consumo/Sem", disabled=True, format="%.2f"),
+                    "Compra_Semanal": st.column_config.NumberColumn("Compra/Sem", disabled=True, format="%.2f"),
+                    "Stock_Seguridad_Pct": st.column_config.NumberColumn("Seguridad (%)", min_value=0.0, max_value=100.0, format="%.1f"),
+                    "🛒 A COMPRAR (Unidades)": st.column_config.NumberColumn("🛒 A COMPRAR", disabled=True),
+                    "Calculo Exacto": st.column_config.NumberColumn("Calculo Exacto", disabled=True, format="%.2f"),
+                    "Var. Compra vs Consumo (%)": st.column_config.NumberColumn("Var. (%)", disabled=True, format="%.2f"),
+                    "Lot_Min": st.column_config.NumberColumn("Min Lot", disabled=True, format="%.2f"),
+                    "Lot_Max": st.column_config.NumberColumn("Max Lot", disabled=True, format="%.2f"),
+                    "Semáforo / Alerta": st.column_config.TextColumn("Alerta", disabled=True)
+                },
+                hide_index=True,
+                use_container_width=True,
+                key="editor_interactivo_prod"
+            )
 
             st.download_button(
-                label="📥 Descargar Reporte en Excel (.xlsx)",
-                data=generar_excel_proyeccion(df_vista_final),
-                file_name=f"Sugerencia_Compras_{date.today().strftime('%d_%m_%Y')}.xlsx",
+                label="📥 Descargar Reporte Completo en Excel (.xlsx)",
+                data=generar_excel_proyeccion(df_resultado),
+                file_name=f"Sugerencia_Compras_Maestro_{date.today().strftime('%d_%m_%Y')}.xlsx",
                 type="primary",
                 use_container_width=True
             )
