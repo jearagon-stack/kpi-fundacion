@@ -1,6 +1,5 @@
 import streamlit as st
 
-# Solo importamos de manera obligatoria los que ya sabemos que existen al 100%
 from costos_cafeteria import mostrar_modulo_costos as modulo_cafeteria
 from costos_talleres import mostrar_modulo_costos as modulo_talleres
 from costs_library import mostrar_modulo_libreria as modulo_libreria
@@ -17,14 +16,15 @@ def mostrar_modulo_costos():
             "🌅 Terraza", 
             "🏫 CID Campus", 
             "🛒 Despensa", 
-            "💼 Gerencia Comercial"
+            "💼 Gerencia Comercial",
+            "🏭 Producción"  # <--- NUEVA OPCIÓN AGREGADA
         ],
         horizontal=True
     )
     
     st.markdown("---")
 
-    # Lógica de ruteo con protección (Try/Except) para evitar caídas
+    # Lógica de ruteo con protección
     if unidad == "☕ Cafetería":
         modulo_cafeteria()
     elif unidad == "🖨️ Talleres":
@@ -36,29 +36,36 @@ def mostrar_modulo_costos():
             from costs_soho import mostrar_modulo_soho
             mostrar_modulo_soho()
         except ImportError:
-            st.warning("⚠️ El archivo 'costs_soho.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
+            st.warning("⚠️ El archivo 'costs_soho.py' aún no ha sido creado...")
     elif unidad == "🌅 Terraza":
         try:
             from costs_terraza import mostrar_modulo_terraza
             mostrar_modulo_terraza()
         except ImportError:
-            st.warning("⚠️ El archivo 'costs_terraza.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
+            st.warning("⚠️ El archivo 'costs_terraza.py' aún no ha sido creado...")
     elif unidad == "🏫 CID Campus":
         try:
-            # CORRECCIÓN AQUÍ: Se ajustó el nombre para que coincida con el archivo
             from costs_campus import mostrar_modulo_cid_campus
             mostrar_modulo_cid_campus()
         except ImportError:
-            st.warning("⚠️ El archivo 'costs_campus.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
+            st.warning("⚠️ El archivo 'costs_campus.py' aún no ha sido creado...")
     elif unidad == "🛒 Despensa":
         try:
             from costs_despensa import mostrar_modulo_despensa
             mostrar_modulo_despensa()
         except ImportError:
-            st.warning("⚠️ El archivo 'costs_despensa.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
+            st.warning("⚠️ El archivo 'costs_despensa.py' aún no ha sido creado...")
     elif unidad == "💼 Gerencia Comercial":
         try:
             from costs_gerencia import mostrar_modulo_gerencia
             mostrar_modulo_gerencia()
         except ImportError:
-            st.warning("⚠️ El archivo 'costs_gerencia.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
+            st.warning("⚠️ El archivo 'costs_gerencia.py' aún no ha sido creado...")
+            
+    # <--- NUEVO BLOQUE PARA PRODUCCIÓN --->
+    elif unidad == "🏭 Producción":
+        try:
+            from costs_produccion import mostrar_modulo_produccion
+            mostrar_modulo_produccion()
+        except ImportError:
+            st.warning("⚠️ El archivo 'costs_produccion.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
