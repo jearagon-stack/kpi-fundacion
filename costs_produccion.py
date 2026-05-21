@@ -185,18 +185,14 @@ def mostrar_modulo_produccion():
             df_final['Calculo Exacto'] = df_final['Calculo Exacto'].apply(lambda x: max(0.0, round(x, 2)))
 
             df_final['🛒 A COMPRAR (Unidades)'] = df_final['Calculo Exacto'].apply(lambda x: math.ceil(x))
-            df_final['Ritmo Compras'] = (df_final['Compra_Semanal'] * semanas_proyectar).round(2)
 
-            # --- NUEVA LÓGICA DE VARIACIÓN (COMPRAS VS CONSUMO) ---
             def calcular_var(row):
                 c_sem = row['Consumo_Semanal']
                 comp_sem = row['Compra_Semanal']
                 
-                # Si no se consume nada pero se compra, es un 100% de desfase positivo
                 if c_sem == 0:
                     return 100.0 if comp_sem > 0 else 0.0
                 
-                # Fórmula: ((Compra - Consumo) / Consumo) * 100
                 variacion = ((comp_sem - c_sem) / c_sem) * 100.0
                 return round(variacion, 2)
 
@@ -214,8 +210,9 @@ def mostrar_modulo_produccion():
 
             df_final['Semáforo / Alerta'] = df_final.apply(evaluar_semaforo, axis=1)
 
+            # SE INCLUYÓ LA COLUMNA 'Compra_Semanal' EN LA LISTA DE COLUMNAS FINALES
             columnas_finales = [
-                'Código', 'Descripción', 'Stock_Actual', 'Consumo_Semanal', 
+                'Código', 'Descripción', 'Stock_Actual', 'Consumo_Semanal', 'Compra_Semanal',
                 '🛒 A COMPRAR (Unidades)', 'Calculo Exacto', 'Var. Compra vs Consumo (%)', 'Semáforo / Alerta'
             ]
             df_vista_final = df_final[columnas_finales]
