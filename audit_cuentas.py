@@ -36,7 +36,7 @@ def mostrar_modulo_auditoria():
     if arch_ops and arch_acc:
         if st.button("🚀 Ejecutar Cruce de Auditoría", type="primary", use_container_width=True):
             
-            with st.spinner("Triangulando documentos y desglosando cuentas..."):
+            with st.spinner("Escaneando documentos, cruzando cuentas y evaluando diferencias..."):
                 try:
                     df_ops = pd.read_excel(arch_ops, dtype=str)
                     df_acc = pd.read_excel(arch_acc, dtype=str)
@@ -58,7 +58,7 @@ def mostrar_modulo_auditoria():
                         col_tipo_ops = None
 
                     if not all([col_num_ops, col_tot_ops, col_cat_ops, col_desc_ops]):
-                        st.error("🚨 Error en Operaciones: Faltan columnas clave.")
+                        st.error("🚨 Error en Operaciones: Faltan columnas clave (Numero, Total, Categoria o Descripcion).")
                         st.stop()
 
                     df_ops['_Cat_Upper'] = df_ops[col_cat_ops].astype(str).str.upper().str.strip()
@@ -179,10 +179,7 @@ def mostrar_modulo_auditoria():
                     df_acc['Documento_Final'] = df_acc.apply(triangulacion_ciegos, axis=1)
 
                     mapa_cuentas_temp = ['110601', '110603', '110608', '110609']
-                    
-                    # Extraemos los ciegos usando una mascara limpia
-                    mascara_ciegos = (df_acc['Documento_Final'] == 'NO_IDENTIFICADO') & (abs(df_acc['Monto_Conta_Neto']) > 0) & (df_acc[col_cta_acc].astype(str).str.strip().isin(mapa_cuentas_temp))
-                    ciegos_relevantes = df_acc[mascara_ciegos]
+                    ciegos_relevantes = df_acc[(df_acc['Documento_Final'] == 'NO_IDENTIFICADO') & (abs(df_acc['Monto_Conta_Neto']) > 0) & (df_acc[col_cta_acc].astype(str).str.strip().isin(mapa_cuentas_temp))]
                     
                     if not ciegos_relevantes.empty:
                         ejemplos = ciegos_relevantes[[col_partida_acc, col_conc_acc]].drop_duplicates().head(10)
@@ -202,7 +199,6 @@ def mostrar_modulo_auditoria():
                     df_inv['Categoria'] = df_inv['Cuenta_Limpia'].map(mapa_cuentas)
                     df_inv['Cuenta_Nom'] = df_inv[col_nom_cta_acc].astype(str).str.strip()
 
-                    # AGRUPAMOS POR CUENTA PARA QUE SE DESGLOSE EN MÚLTIPLES FILAS
                     df_acc_grouped = df_inv.groupby(['Documento_Final', 'Categoria', 'Cuenta_Nom']).agg({
                         'Monto_Conta_Neto': 'sum',
                         col_partida_acc: lambda x: ', '.join(x.dropna().astype(str).unique())
@@ -213,30 +209,22 @@ def mostrar_modulo_auditoria():
                     # 3. CRUCE BIDIRECCIONAL FINAL
                     # ==========================================
                     df_cruce = pd.merge(df_ops_grouped, df_acc_grouped, on=['Documento', 'Categoria'], how='outer')
-                    df_cruce['Monto_Ops'] = df_cruce['Monto_Ops'].fillna(0.0)
-                    df_cruce['Monto_Conta'] = df_cruce['Monto_Conta'].fillna(0.0)
                     
-                    # EVITAR DUPLICAR MONTO DE OPERACIONES CUANDO CONTABILIDAD SE DIVIDE EN VARIAS CUENTAS
-                    df_cruce['is_dup'] = df_cruce.duplicated(subset=['Documento', 'Categoria'])
-                    df_cruce.loc[df_cruce['is_dup'], 'Monto_Ops'] = 0.0
-                    
+                    df_cruce['Monto_Ops'] = df_cruce['Monto_Ops'].fillna(0.0).round(2)
+                    df_cruce['Monto_Conta'] = df_cruce['Monto_Conta'].fillna(0.0).round(2)
                     df_cruce['Diferencia ($)'] = (df_cruce['Monto_Ops'] - df_cruce['Monto_Conta']).round(2)
+                    
                     df_cruce['Cuenta_Nom'] = df_cruce['Cuenta_Nom'].fillna('SIN REGISTRO EN CONTA')
                     df_cruce['Partida_Conta'] = df_cruce['Partida_Conta'].fillna('SIN PARTIDA')
                     df_cruce['Tipo_Doc'] = df_cruce['Tipo_Doc'].fillna('NO EN OPS')
-
-                    # CALCULAMOS EL GLOBAL DEL DOCUMENTO PARA EVALUAR SU ESTADO CORRECTAMENTE
-                    df_cruce['doc_ops_total'] = df_cruce.groupby(['Documento', 'Categoria'])['Monto_Ops'].transform('sum')
-                    df_cruce['doc_acc_total'] = df_cruce.groupby(['Documento', 'Categoria'])['Monto_Conta'].transform('sum')
 
                     docs_en_ops = set(df_ops_grouped['Documento'].unique())
                     docs_en_acc = set(df_acc_grouped['Documento'].unique())
 
                     def evaluar_auditoria(row):
                         doc = str(row['Documento'])
-                        m_ops = row['doc_ops_total']
-                        m_acc = row['doc_acc_total']
-                        dif_global = abs(m_ops - m_acc)
+                        m_ops = row['Monto_Ops']
+                        m_acc = row['Monto_Conta']
                         
                         if m_ops != 0 and m_acc == 0:
                             if doc in docs_en_acc: return "🔴 ERROR DE CUENTA CONTABLE (Categoría cruzada)"
@@ -245,7 +233,7 @@ def mostrar_modulo_auditoria():
                             if doc in docs_en_ops: return "🔴 ERROR DE CATEGORÍA OPERATIVA (Categoría cruzada)"
                             else: return "🟡 NO EN OPERACIONES (Puede ser un ajuste manual)"
                         else:
-                            if dif_global > 0.05: return "🟠 DIFERENCIA DE MONTO"
+                            if abs(row['Diferencia ($)']) > 0.05: return "🟠 DIFERENCIA DE MONTO"
                             else: return "🟢 CUADRADO EXACTO"
 
                     df_cruce['Estado de Auditoría'] = df_cruce.apply(evaluar_auditoria, axis=1)
@@ -259,7 +247,7 @@ def mostrar_modulo_auditoria():
                         "🟢 CUADRADO EXACTO": 6
                     }
                     df_cruce['Prioridad'] = df_cruce['Estado de Auditoría'].map(orden_estado).fillna(99)
-                    df_cruce = df_cruce.sort_values(['Prioridad', 'Documento']).drop(columns=['Prioridad', 'is_dup', 'doc_ops_total', 'doc_acc_total'])
+                    df_cruce = df_cruce.sort_values(['Prioridad', 'Documento']).drop(columns=['Prioridad'])
 
                     columnas_ordenadas = [
                         'Partida_Conta', 'Tipo_Doc', 'Documento', 'Categoria', 'Cuenta_Nom', 
