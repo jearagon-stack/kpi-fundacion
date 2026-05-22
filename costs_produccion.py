@@ -134,11 +134,10 @@ def mostrar_modulo_produccion():
                         df_m['Consumo_Neto'] = df_m.apply(lambda r: -r['Cant_Abs'] if 'ENTRADA' in str(r['Tipo']).upper() else r['Cant_Abs'], axis=1)
                         df_salidas_group = df_m.groupby('Cod_Clean')['Consumo_Neto'].sum().reset_index().rename(columns={'Consumo_Neto': 'Consumo_Historico'})
 
-                        # PROCESAMIENTO COMPRAS (Y CONTEO DE TRANSACCIONES ÚNICAS)
+                        # PROCESAMIENTO COMPRAS
                         df_c['Cod_Clean'] = df_c['IdProducto'].apply(limpiar_codigo)
                         df_c['Cant_Num'] = pd.to_numeric(df_c['Cantidad'], errors='coerce').fillna(0).abs()
                         
-                        # Contar transacciones de compras (Usando Documento o Fecha para no contar por unidad)
                         col_transaccion = 'Documento' if 'Documento' in df_c.columns else 'Fecha'
                         df_frecuencia = df_c[df_c['Cant_Num'] > 0].groupby('Cod_Clean')[col_transaccion].nunique().reset_index().rename(columns={col_transaccion: 'Veces_Comprado'})
 
@@ -173,7 +172,7 @@ def mostrar_modulo_produccion():
                         df_maestro = df_stock_group.copy()
                         df_maestro = df_maestro.merge(df_salidas_group, on='Cod_Clean', how='left')
                         df_maestro = df_maestro.merge(df_compras_group, on='Cod_Clean', how='left')
-                        df_maestro = df_maestro.merge(df_frecuencia, on='Cod_Clean', how='left') # Pegar la frecuencia
+                        df_maestro = df_maestro.merge(df_frecuencia, on='Cod_Clean', how='left')
                         df_maestro = df_maestro.merge(df_min_lot, on='Cod_Clean', how='left')
                         df_maestro = df_maestro.merge(df_max_lot, on='Cod_Clean', how='left')
 
@@ -185,13 +184,14 @@ def mostrar_modulo_produccion():
                         df_maestro['Veces_Comprado'] = df_maestro['Veces_Comprado'].fillna(0.0)
                         df_maestro['Stock_Seguridad_Pct'] = 0.05 
 
-                        # --- ADUANA 4: ELIMINAR LOS DE < 3 COMPRAS ---
+                        # --- ADUANA 4: FILTRO AJUSTADO (VECES COMPRADO >= 3 O CONSUMO HISTÓRICO > 0) ---
                         total_maestro_antes = len(df_maestro)
-                        df_maestro = df_maestro[df_maestro['Veces_Comprado'] >= 3]
-                        eliminados_compras = total_maestro_antes - len(df_maestro)
+                        condicion_permanencia = (df_maestro['Veces_Comprado'] >= 3) | (df_maestro['Consumo_Historico'] > 0)
+                        df_maestro = df_maestro[condicion_permanencia]
+                        eliminados_filtro = total_maestro_antes - len(df_maestro)
 
                         st.session_state['info_inactivos'] = eliminados_inactivos
-                        st.session_state['info_compras'] = eliminados_compras
+                        st.session_state['info_compras'] = eliminados_filtro
                         
                         st.session_state['prod_df_calculo_base'] = df_maestro
                         st.session_state['prod_ejecutado'] = True
@@ -205,10 +205,7 @@ def mostrar_modulo_produccion():
             rango_fechas = st.session_state.get('prod_rango_fechas', '')
             
             st.success(f"✅ Análisis completado. Historial detectado: **{dias_hist_calc} días** ({rango_fechas}).")
-            
-            # Mensaje visual de los filtros aplicados para generar confianza
-            st.warning(f"🧹 **Limpieza Automática:** Se omitieron **{st.session_state.get('info_inactivos', 0)}** productos por estar Inactivos y **{st.session_state.get('info_compras', 0)}** productos por tener menos de 3 compras en este periodo.")
-            
+            st.warning(f"🧹 **Limpieza Automática:** Se omitieron **{st.session_state.get('info_inactivos', 0)}** productos por estar Inactivos y **{st.session_state.get('info_compras', 0)}** productos por no registrar consumo ni un mínimo de 3 compras.")
             st.markdown("---")
             st.subheader("🎛️ Panel Maestro de Simulación y Sugerencia de Compra")
 
