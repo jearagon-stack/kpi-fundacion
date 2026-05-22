@@ -38,7 +38,6 @@ def mostrar_modulo_auditoria():
             
             with st.spinner("Escaneando documentos, cruzando cuentas y evaluando diferencias..."):
                 try:
-                    # Cargar DataFrames
                     df_ops = pd.read_excel(arch_ops, dtype=str)
                     df_acc = pd.read_excel(arch_acc, dtype=str)
 
@@ -60,7 +59,6 @@ def mostrar_modulo_auditoria():
 
                     df_ops['_Cat_Upper'] = df_ops[col_cat_ops].astype(str).str.upper().str.strip()
 
-                    # ADUANA: Filtro Estricto de Categorías
                     permitidas = ['MATERIA PRIMA', 'PRODUCTO TERMINADO', 'EMPAQUE', 'LIMPIEZA']
                     ignorar_silencio = ['SERVICIO']
                     
@@ -76,17 +74,14 @@ def mostrar_modulo_auditoria():
                         st.error(f"🚨 **PARO DE SEGURIDAD EN OPERACIONES** 🚨\n\nHay productos sin categoría o mal asignados.\n**Corrige antes de continuar:**\n\n- {lista}")
                         st.stop()
 
-                    # Limpiar y preparar Operaciones
                     df_ops = df_ops[df_ops['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))].copy()
                     df_ops['Monto_Ops'] = pd.to_numeric(df_ops[col_tot_ops], errors='coerce').fillna(0)
                     
-                    # Normalizar los Documentos 
                     df_ops['Documento'] = df_ops[col_num_ops].astype(str).str.strip().str.upper()
                     df_ops['Documento'] = df_ops['Documento'].str.replace('CFE-', '').str.replace('FSE-', '')
                     df_ops['Categoria'] = df_ops['_Cat_Upper']
                     df_ops['Desc_Limpia'] = df_ops[col_desc_ops].astype(str).str.upper().str.strip()
 
-                    # Agrupar operaciones 
                     df_ops_grouped = df_ops.groupby(['Documento', 'Categoria'])['Monto_Ops'].sum().reset_index()
                     
                     documentos_conocidos = df_ops['Documento'].unique().tolist()
@@ -102,8 +97,6 @@ def mostrar_modulo_auditoria():
                     col_partida_acc = next((c for c in df_acc.columns if 'NUMERO' in str(c).upper()), None)
                     col_conc_acc = next((c for c in df_acc.columns if 'CONCEPTO' in str(c).upper()), None)
                     col_debe_acc = next((c for c in df_acc.columns if 'DEBE' in str(c).upper()), None)
-                    
-                    # Detectar la columna de Nombre de Cuenta (Columna D)
                     col_nom_cta_acc = next((c for c in df_acc.columns if str(c).strip().upper() == 'NOMBRE'), None)
                     if not col_nom_cta_acc:
                         col_nom_cta_acc = next((c for c in df_acc.columns if 'NOMBRE' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
@@ -112,10 +105,8 @@ def mostrar_modulo_auditoria():
                         st.error("🚨 Error en Contabilidad: Faltan columnas clave (IdTipo, IdCuenta, Nombre, Numero, Concepto, Debe).")
                         st.stop()
 
-                    # Filtrar Cuentas por Pagar (CxP)
                     df_acc = df_acc[df_acc[col_tipo_acc].astype(str).str.upper().str.strip() == 'CXP'].copy()
 
-                    # Extractor 1: Regex y Búsqueda de Texto
                     def extraer_doc(concepto):
                         c = str(concepto).upper()
                         match_uuid = re.search(r'([A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12})', c)
@@ -128,7 +119,6 @@ def mostrar_modulo_auditoria():
 
                     df_acc['Doc_Extraido'] = df_acc[col_conc_acc].apply(extraer_doc)
 
-                    # Extractor 2: Herencia por Partida
                     mapa_partidas = df_acc.dropna(subset=['Doc_Extraido']).groupby(col_partida_acc)['Doc_Extraido'].unique().to_dict()
 
                     def rellenar_doc_ciego(row):
@@ -149,7 +139,6 @@ def mostrar_modulo_auditoria():
 
                     df_acc['Documento_Final'] = df_acc.apply(rellenar_doc_ciego, axis=1)
 
-                    # --- EXTRACTOR 3: EL SABUESO DE TRIANGULACIÓN ---
                     col_f_ops = next((c for c in df_ops.columns if 'FECHA' in str(c).upper()), None)
                     col_p_ops = next((c for c in df_ops.columns if 'PROV' in str(c).upper()), None)
                     col_f_acc = next((c for c in df_acc.columns if 'FECHA' in str(c).upper()), None)
@@ -191,9 +180,7 @@ def mostrar_modulo_auditoria():
                     
                     df_acc['Documento_Final'] = df_acc.apply(triangulacion_ciegos, axis=1)
 
-                    # --- ADUANA: BLOQUEO POR DOCUMENTOS HUÉRFANOS ---
                     ciegos = df_acc[df_acc['Documento_Final'] == 'NO_IDENTIFICADO']
-                    
                     mapa_cuentas_temp = ['110601', '110603', '110608', '110609']
                     ciegos_relevantes = ciegos[
                         (pd.to_numeric(ciegos[col_debe_acc], errors='coerce').fillna(0) > 0) & 
@@ -205,15 +192,12 @@ def mostrar_modulo_auditoria():
                         lista_ciegos = ""
                         for _, row in ejemplos.iterrows():
                             lista_ciegos += f"\n- **Partida:** {row[col_partida_acc]} | **Concepto:** {row[col_conc_acc]}"
-                        
                         if len(ciegos_relevantes) > 10:
                             lista_ciegos += f"\n- ... y {len(ciegos_relevantes) - 10} líneas más."
                             
-                        st.error(f"🚨 **ALERTA ROJA: DOCUMENTOS NO IDENTIFICADOS EN CONTABILIDAD** 🚨\n\nEl sistema intentó triangular por monto, descripción, fecha y proveedor, pero estas líneas siguen huérfanas. \n\n**Por favor, edita tu Excel de contabilidad y agrega manualmente el documento en el concepto:**\n{lista_ciegos}")
+                        st.error(f"🚨 **ALERTA ROJA: DOCUMENTOS NO IDENTIFICADOS EN CONTABILIDAD** 🚨\n\nAgrega manualmente el documento en el concepto:\n{lista_ciegos}")
                         st.stop()
-                    # ------------------------------------------------
 
-                    # Mapeo Cuentas
                     mapa_cuentas = {
                         '110601': 'MATERIA PRIMA',
                         '110603': 'PRODUCTO TERMINADO',
@@ -225,21 +209,10 @@ def mostrar_modulo_auditoria():
                     df_inv = df_acc[df_acc['Cuenta_Limpia'].isin(mapa_cuentas.keys())].copy()
                     df_inv['Categoria'] = df_inv['Cuenta_Limpia'].map(mapa_cuentas)
                     df_inv['Monto_Conta'] = pd.to_numeric(df_inv[col_debe_acc], errors='coerce').fillna(0)
+                    df_inv['Cuenta_Nom'] = df_inv[col_nom_cta_acc].astype(str).str.strip()
 
-                    # --- NUEVA LÓGICA: EXTRAER NOMBRE Y DESGLOSAR MONTOS ---
-                    detalle_cuentas = df_inv.groupby(['Documento_Final', col_nom_cta_acc])['Monto_Conta'].sum().reset_index()
-                    
-                    def formatear_detalle(df_group):
-                        detalles = []
-                        for _, row in df_group.iterrows():
-                            if row['Monto_Conta'] > 0:
-                                detalles.append(f"{row[col_nom_cta_acc]} (${row['Monto_Conta']:,.2f})")
-                        return " + ".join(detalles) if detalles else "SIN REGISTRO"
-                        
-                    mapa_cuentas_doc = detalle_cuentas.groupby('Documento_Final').apply(formatear_detalle).to_dict()
-                    # -------------------------------------------------------
-
-                    df_acc_grouped = df_inv.groupby(['Documento_Final', 'Categoria'])['Monto_Conta'].sum().reset_index()
+                    # AGRUPAMOS INCLUYENDO EL NOMBRE DE LA CUENTA PARA QUE SE DESGLOSEN EN FILAS
+                    df_acc_grouped = df_inv.groupby(['Documento_Final', 'Categoria', 'Cuenta_Nom'])['Monto_Conta'].sum().reset_index()
                     df_acc_grouped.rename(columns={'Documento_Final': 'Documento'}, inplace=True)
 
                     # ==========================================
@@ -251,9 +224,7 @@ def mostrar_modulo_auditoria():
                     df_cruce['Monto_Ops'] = df_cruce['Monto_Ops'].fillna(0.0).round(2)
                     df_cruce['Monto_Conta'] = df_cruce['Monto_Conta'].fillna(0.0).round(2)
                     df_cruce['Diferencia ($)'] = (df_cruce['Monto_Ops'] - df_cruce['Monto_Conta']).round(2)
-                    
-                    # Aplicar la columna con el nombre y desglose de cuentas
-                    df_cruce['Cuenta Contable (Conta)'] = df_cruce['Documento'].map(mapa_cuentas_doc).fillna('SIN REGISTRO')
+                    df_cruce['Cuenta_Nom'] = df_cruce['Cuenta_Nom'].fillna('SIN REGISTRO EN CONTA')
 
                     docs_en_ops = set(df_ops_grouped['Documento'].unique())
                     docs_en_acc = set(df_acc_grouped['Documento'].unique())
@@ -288,12 +259,13 @@ def mostrar_modulo_auditoria():
                     df_cruce['Prioridad'] = df_cruce['Estado de Auditoría'].map(orden_estado).fillna(99)
                     df_cruce = df_cruce.sort_values(['Prioridad', 'Documento']).drop(columns=['Prioridad'])
 
-                    # Organizar las columnas 
                     columnas_ordenadas = [
-                        'Documento', 'Categoria', 'Cuenta Contable (Conta)', 
+                        'Documento', 'Categoria', 'Cuenta_Nom', 
                         'Monto_Ops', 'Monto_Conta', 'Diferencia ($)', 'Estado de Auditoría'
                     ]
                     df_cruce = df_cruce[columnas_ordenadas]
+                    # Renombrar para estética
+                    df_cruce = df_cruce.rename(columns={'Cuenta_Nom': 'Cuenta Contable (Conta)'})
 
                     st.session_state['audit_cruce_df'] = df_cruce
                     st.session_state['audit_ejecutado'] = True
@@ -325,8 +297,8 @@ def mostrar_modulo_auditoria():
                 df_final,
                 column_config={
                     "Documento": st.column_config.TextColumn("Documento Fiscal / Interno"),
-                    "Categoria": st.column_config.TextColumn("Categoría Operativa"),
-                    "Cuenta Contable (Conta)": st.column_config.TextColumn("Cuentas Detectadas (Conta)"),
+                    "Categoria": st.column_config.TextColumn("Categoría / Operativa"),
+                    "Cuenta Contable (Conta)": st.column_config.TextColumn("Cuenta Detectada (Conta)"),
                     "Monto_Ops": st.column_config.NumberColumn("Monto Operaciones ($)", format="$ %.2f"),
                     "Monto_Conta": st.column_config.NumberColumn("Monto Contabilidad ($)", format="$ %.2f"),
                     "Diferencia ($)": st.column_config.NumberColumn("Diferencia ($)", format="$ %.2f"),
