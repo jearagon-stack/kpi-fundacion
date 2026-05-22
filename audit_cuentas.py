@@ -110,7 +110,7 @@ def mostrar_modulo_auditoria():
                     # Filtrar Cuentas por Pagar (CxP)
                     df_acc = df_acc[df_acc[col_tipo_acc].astype(str).str.upper().str.strip() == 'CXP'].copy()
 
-                    # Extractor
+                    # Extractor 1: Regex y Búsqueda de Texto
                     def extraer_doc(concepto):
                         c = str(concepto).upper()
                         match_uuid = re.search(r'([A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12})', c)
@@ -123,7 +123,7 @@ def mostrar_modulo_auditoria():
 
                     df_acc['Doc_Extraido'] = df_acc[col_conc_acc].apply(extraer_doc)
 
-                    # Resolvedor
+                    # Extractor 2: Herencia por Partida
                     mapa_partidas = df_acc.dropna(subset=['Doc_Extraido']).groupby(col_partida_acc)['Doc_Extraido'].unique().to_dict()
 
                     def rellenar_doc_ciego(row):
@@ -144,10 +144,58 @@ def mostrar_modulo_auditoria():
 
                     df_acc['Documento_Final'] = df_acc.apply(rellenar_doc_ciego, axis=1)
 
+                    # --- EXTRACTOR 3: EL SABUESO DE TRIANGULACIÓN ---
+                    # Busca columnas dinámicamente
+                    col_f_ops = next((c for c in df_ops.columns if 'FECHA' in str(c).upper()), None)
+                    col_p_ops = next((c for c in df_ops.columns if 'PROV' in str(c).upper()), None)
+                    col_f_acc = next((c for c in df_acc.columns if 'FECHA' in str(c).upper()), None)
+                    col_p_acc = next((c for c in df_acc.columns if 'PROV' in str(c).upper() or 'REFERENCIA' in str(c).upper()), None)
+
+                    def triangulacion_ciegos(row):
+                        if row['Documento_Final'] != "NO_IDENTIFICADO":
+                            return row['Documento_Final']
+                        
+                        monto_acc = pd.to_numeric(row[col_debe_acc], errors='coerce')
+                        if pd.isna(monto_acc) or monto_acc == 0: return "NO_IDENTIFICADO"
+                        
+                        concepto_acc = str(row[col_conc_acc]).upper()
+                        fecha_acc = str(row[col_f_acc]).strip() if col_f_acc else ""
+                        prov_acc = str(row[col_p_acc]).upper().strip() if col_p_acc else ""
+
+                        # Filtrar Operaciones por monto exacto
+                        ops_match = df_ops[abs(df_ops['Monto_Ops'] - monto_acc) < 0.05]
+                        if ops_match.empty: return "NO_IDENTIFICADO"
+
+                        posibles_docs = []
+                        for _, op_row in ops_match.iterrows():
+                            desc_op = str(op_row['Desc_Limpia'])
+                            fecha_op = str(op_row[col_f_ops]).strip() if col_f_ops else ""
+                            prov_op = str(op_row[col_p_ops]).upper().strip() if col_p_ops else ""
+
+                            # Validar co-existencia de Descripción
+                            match_desc = (desc_op in concepto_acc) or (concepto_acc in desc_op)
+                            
+                            # Validar Fecha y Proveedor (Si existen, deben coincidir)
+                            match_fecha = True
+                            if fecha_acc and fecha_op and (fecha_acc != fecha_op): match_fecha = False
+                            match_prov = True
+                            if prov_acc and prov_op and (prov_op not in prov_acc and prov_acc not in prov_op): match_prov = False
+
+                            if match_desc and match_fecha and match_prov:
+                                posibles_docs.append(op_row['Documento'])
+                        
+                        # Si el sabueso encontró un match perfecto e inequívoco, se lo asigna
+                        if len(set(posibles_docs)) == 1:
+                            return posibles_docs[0]
+                        return "NO_IDENTIFICADO"
+                    
+                    df_acc['Documento_Final'] = df_acc.apply(triangulacion_ciegos, axis=1)
+                    # ------------------------------------------------
+
                     # --- ADUANA: BLOQUEO POR DOCUMENTOS HUÉRFANOS ---
                     ciegos = df_acc[df_acc['Documento_Final'] == 'NO_IDENTIFICADO']
                     
-                    # Solo nos interesan las líneas huérfanas que sí tienen dinero en el Debe y pertenecen a las cuentas de inventario
+                    # Solo interesan las cuentas de inventario con dinero
                     mapa_cuentas_temp = ['110601', '110603', '110608', '110609']
                     ciegos_relevantes = ciegos[
                         (pd.to_numeric(ciegos[col_debe_acc], errors='coerce').fillna(0) > 0) & 
@@ -163,7 +211,7 @@ def mostrar_modulo_auditoria():
                         if len(ciegos_relevantes) > 10:
                             lista_ciegos += f"\n- ... y {len(ciegos_relevantes) - 10} líneas más."
                             
-                        st.error(f"🚨 **ALERTA ROJA: DOCUMENTOS NO IDENTIFICADOS EN CONTABILIDAD** 🚨\n\nEl sistema no pudo extraer ni adivinar a qué factura pertenecen las siguientes líneas. Por favor, edita tu Excel de contabilidad y agrega manualmente el identificador del documento en el concepto:\n{lista_ciegos}")
+                        st.error(f"🚨 **ALERTA ROJA: DOCUMENTOS NO IDENTIFICADOS EN CONTABILIDAD** 🚨\n\nEl sistema intentó triangular por monto, descripción, fecha y proveedor, pero estas líneas siguen huérfanas. \n\n**Por favor, edita tu Excel de contabilidad y agrega manualmente el documento en el concepto:**\n{lista_ciegos}")
                         st.stop()
                     # ------------------------------------------------
 
