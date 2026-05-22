@@ -59,7 +59,7 @@ def mostrar_modulo_produccion():
                 if 'prod_df_calculo_base' in st.session_state:
                     del st.session_state['prod_df_calculo_base']
 
-                with st.spinner("Validando categorías estrictamente y procesando archivos..."):
+                with st.spinner("Validando reglas de negocio estrictas y procesando archivos..."):
                     try:
                         df_s = pd.read_excel(arch_stock, dtype=str)
                         df_m = pd.read_excel(arch_salidas, dtype=str)
@@ -69,9 +69,8 @@ def mostrar_modulo_produccion():
                         df_m.columns = df_m.columns.str.strip()
                         df_c.columns = df_c.columns.str.strip()
 
-                        # --- NUEVO FILTRO: ENFOQUE DE LISTA BLANCA (WHITELIST) ---
+                        # --- 1. FILTRO: ENFOQUE DE LISTA BLANCA DE CATEGORÍAS ---
                         def asegurar_categoria(df, nombre_archivo):
-                            # Buscar la columna independientemente de acentos
                             col_cat = None
                             for col in df.columns:
                                 col_norm = str(col).strip().upper().replace('Í', 'I')
@@ -88,25 +87,19 @@ def mostrar_modulo_produccion():
                             permitidas = ['MATERIA PRIMA', 'PRODUCTO TERMINADO', 'EMPAQUE', 'LIMPIEZA']
                             ignorar_silencio = ['SERVICIO']
                             
-                            # Función brutal: Si no está en las listas de arriba, es Ilegal y detiene el código.
                             def es_ilegal(cat_str):
                                 if pd.isna(cat_str): return True
                                 if cat_str in ['NAN', 'NULL', 'NONE', 'NA', '']: return True
-                                
                                 is_permitida = any(p in cat_str for p in permitidas)
                                 is_ignorada = any(i in cat_str for i in ignorar_silencio)
-                                
-                                # Si no es permitida Y tampoco es servicio ignorado, entonces es ILEGAL.
                                 return not (is_permitida or is_ignorada)
 
                             mascara_invalida = df_temp['_Cat_Upper'].apply(es_ilegal)
                             
                             if mascara_invalida.any():
-                                # Obtener el nombre del producto infractor
                                 col_desc = 'Nombre' if 'Nombre' in df_temp.columns else ('Descripcion' if 'Descripcion' in df_temp.columns else ('IdProducto' if 'IdProducto' in df_temp.columns else df_temp.columns[0]))
                                 nombres = df_temp.loc[mascara_invalida, col_desc].dropna().astype(str).unique()
                                 
-                                # Capturar qué decía la categoría errónea para mostrarla en pantalla
                                 cat_raras = df_temp.loc[mascara_invalida, col_cat].dropna().astype(str).unique()
                                 texto_cat = ", ".join(cat_raras) if len(cat_raras) > 0 else "Vacío/Nulo"
                                 
@@ -114,39 +107,51 @@ def mostrar_modulo_produccion():
                                 if len(nombres) > 10: 
                                     lista += f"\n- ... (y {len(nombres) - 10} más)"
                                 
-                                msg = f"🚨 **ALERTA: CÁLCULO DETENIDO EN '{nombre_archivo.upper()}'** 🚨\n\nSe detectaron productos con categoría inválida o vacía (Se detectó en el Excel como: **{texto_cat}**).\n\n**Solo se permite Materia Prima, Producto Terminado, Empaque, Limpieza o Servicios.**\n\n**Corrige estos productos en tu ERP/Excel antes de continuar:**\n\n- {lista}"
+                                msg = f"🚨 **ALERTA: CÁLCULO DETENIDO EN '{nombre_archivo.upper()}'** 🚨\n\nSe detectaron productos con categoría inválida o vacía (Detectado como: **{texto_cat}**).\n\n**Solo se permite Materia Prima, Producto Terminado, Empaque, Limpieza o Servicios.**\n\n**Corrige estos productos en tu ERP antes de continuar:**\n\n- {lista}"
                                 return None, msg
 
-                            # Si sobrevive al bloqueo, filtramos dejando solo las 4 permitidas (borrando los Servicios)
                             mascara_valida = df_temp['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))
                             df_filtrado = df_temp[mascara_valida].drop(columns=['_Cat_Upper'])
                             
                             return df_filtrado, None
 
-                        # Ejecutar validaciones y bloquear si hay fallos
+                        # Ejecutar validaciones de categoría
                         df_s_filt, err_s = asegurar_categoria(df_s, "Inventario / Stock Actual")
-                        if err_s:
-                            st.error(err_s)
-                            st.stop()
+                        if err_s: st.error(err_s); st.stop()
 
                         df_m_filt, err_m = asegurar_categoria(df_m, "Movimientos de Bodega")
-                        if err_m:
-                            st.error(err_m)
-                            st.stop()
+                        if err_m: st.error(err_m); st.stop()
 
                         df_c_filt, err_c = asegurar_categoria(df_c, "Historial de Compras")
-                        if err_c:
-                            st.error(err_c)
-                            st.stop()
+                        if err_c: st.error(err_c); st.stop()
 
-                        # Asignar DataFrames limpios
                         df_s = df_s_filt
                         df_m = df_m_filt
                         df_c = df_c_filt
 
-                        # --- STOCK ---
+                        # --- 2. PROCESAMIENTO DE STOCK (MÁS NUEVOS FILTROS DE ESTADO Y NEGATIVOS) ---
+                        
+                        # Filtro de Inactivos
+                        if 'Estado' in df_s.columns:
+                            df_s['_Estado_Upper'] = df_s['Estado'].astype(str).str.upper().str.strip()
+                            df_s = df_s[df_s['_Estado_Upper'] != 'INACTIVO'] # Omitir los inactivos
+                            df_s = df_s.drop(columns=['_Estado_Upper'])
+
                         df_s['Cod_Clean'] = df_s['IdProducto'].apply(limpiar_codigo)
                         df_s['Stock_Num'] = pd.to_numeric(df_s['Existencias'], errors='coerce').fillna(0)
+                        
+                        # PARO DE SEGURIDAD: STOCK NEGATIVO
+                        negativos = df_s[df_s['Stock_Num'] < 0]
+                        if not negativos.empty:
+                            col_desc = 'Nombre' if 'Nombre' in df_s.columns else 'IdProducto'
+                            nombres_neg = negativos[col_desc].dropna().astype(str).unique()
+                            lista_neg = "\n- ".join(nombres_neg[:10])
+                            if len(nombres_neg) > 10: lista_neg += f"\n- ... (y {len(nombres_neg) - 10} más)"
+                            
+                            msg_neg = f"🚨 **ALERTA ROJA: INVENTARIO NEGATIVO DETECTADO** 🚨\n\nNo se puede proyectar con existencias bajo cero. **Por favor corrige las existencias de estos productos en tu ERP antes de continuar:**\n{lista_neg}"
+                            st.error(msg_neg)
+                            st.stop()
+
                         df_stock_group = df_s.groupby('Cod_Clean').agg({'Nombre': 'first', 'Stock_Num': 'sum'}).reset_index().rename(columns={'Nombre': 'Descripción', 'Stock_Num': 'Stock_Actual'})
 
                         # --- MOVIMIENTOS ---
@@ -156,17 +161,22 @@ def mostrar_modulo_produccion():
 
                         def calcular_consumo_neto(row):
                             tipo = str(row['Tipo']).upper()
-                            if 'ENTRADA' in tipo:
-                                return -row['Cant_Abs']
+                            if 'ENTRADA' in tipo: return -row['Cant_Abs']
                             return row['Cant_Abs']
                         
                         df_m['Consumo_Neto'] = df_m.apply(calcular_consumo_neto, axis=1)
                         df_salidas_group = df_m.groupby('Cod_Clean')['Consumo_Neto'].sum().reset_index().rename(columns={'Consumo_Neto': 'Consumo_Historico'})
 
-                        # --- COMPRAS ---
+                        # --- COMPRAS (CON CONTADOR DE FRECUENCIA) ---
                         df_c['Cod_Clean'] = df_c['IdProducto'].apply(limpiar_codigo)
                         df_c['Cant_Num'] = pd.to_numeric(df_c['Cantidad'], errors='coerce').fillna(0).abs()
-                        df_compras_group = df_c.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Compras_Historicas'})
+                        
+                        # Agrupamos sumando las cantidades Y contando las veces que se compró
+                        df_compras_group = df_c.groupby('Cod_Clean').agg(
+                            Compras_Historicas=('Cant_Num', 'sum'),
+                            Frecuencia_Compras=('Cant_Num', 'size') # Cuenta las transacciones
+                        ).reset_index()
+                        
                         df_min_lot = df_c[df_c['Cant_Num'] > 0].groupby('Cod_Clean')['Cant_Num'].min().reset_index().rename(columns={'Cant_Num': 'Lot_Min'})
                         df_max_lot = df_c.groupby('Cod_Clean')['Cant_Num'].max().reset_index().rename(columns={'Cant_Num': 'Lot_Max'})
 
@@ -201,7 +211,7 @@ def mostrar_modulo_produccion():
                         st.session_state['prod_dias_hist'] = dias_historial_calculado
                         st.session_state['prod_rango_fechas'] = rango_fechas_str
 
-                        # Consolidación
+                        # --- CONSOLIDACIÓN MAESTRA ---
                         df_maestro = df_stock_group.copy()
                         df_maestro = df_maestro.merge(df_salidas_group, on='Cod_Clean', how='left')
                         df_maestro = df_maestro.merge(df_compras_group, on='Cod_Clean', how='left')
@@ -213,7 +223,12 @@ def mostrar_modulo_produccion():
                         df_maestro['Stock_Actual'] = df_maestro['Stock_Actual'].fillna(0.0)
                         df_maestro['Consumo_Historico'] = df_maestro['Consumo_Historico'].fillna(0.0)
                         df_maestro['Compras_Historicas'] = df_maestro['Compras_Historicas'].fillna(0.0)
+                        df_maestro['Frecuencia_Compras'] = df_maestro['Frecuencia_Compras'].fillna(0.0)
                         df_maestro['Stock_Seguridad_Pct'] = 0.05 
+
+                        # --- 3. FILTRO FINAL: OMITIR PRODUCTOS CON MENOS DE 3 COMPRAS ---
+                        # Solo dejamos pasar a los que se hayan comprado al menos 3 veces
+                        df_maestro = df_maestro[df_maestro['Frecuencia_Compras'] >= 3]
 
                         st.session_state['prod_df_calculo_base'] = df_maestro
                         st.session_state['prod_ejecutado'] = True
@@ -229,13 +244,15 @@ def mostrar_modulo_produccion():
             st.success(f"✅ Análisis completado y validado. Historial detectado: **{dias_hist_calc} días** ({rango_fechas}).")
             st.markdown("---")
             st.subheader("🎛️ Panel Maestro de Simulación y Sugerencia de Compra")
-            st.info("💡 **Tip Interactivo:** Puedes editar la columna **Seguridad (0.05)** y verás cómo la proyección y la compra se actualizan de inmediato.")
+            st.info("💡 **Filtro Aplicado:** Se han omitido los productos inactivos y aquellos con menos de 3 compras históricas.")
 
             if "editor_interactivo_prod" in st.session_state:
                 ediciones = st.session_state["editor_interactivo_prod"].get("edited_rows", {})
                 for fila_idx, cambios in ediciones.items():
                     if "Stock_Seguridad_Pct" in cambios:
-                        st.session_state['prod_df_calculo_base'].loc[fila_idx, 'Stock_Seguridad_Pct'] = cambios["Stock_Seguridad_Pct"]
+                        # Identificar el índice real en el df base
+                        real_idx = st.session_state['prod_df_calculo_base'].index[fila_idx]
+                        st.session_state['prod_df_calculo_base'].loc[real_idx, 'Stock_Seguridad_Pct'] = cambios["Stock_Seguridad_Pct"]
 
             df_calculado = st.session_state['prod_df_calculo_base'].copy()
 
@@ -280,7 +297,7 @@ def mostrar_modulo_produccion():
                 '🛒 A COMPRAR (Unidades)' 
             ]
             
-            df_vista_final = df_calculado[columnas_finales]
+            df_vista_final = df_calculado[columnas_finales].reset_index(drop=True)
 
             df_resultado = st.data_editor(
                 df_vista_final,
