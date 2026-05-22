@@ -54,12 +54,12 @@ def mostrar_modulo_produccion():
         if arch_stock and arch_salidas and arch_compras:
             if st.button("🚀 Ejecutar Análisis de Demanda y Variación", type="primary", use_container_width=True):
                 
-                # PURGA DE MEMORIA: Borrar cualquier estado anterior
+                # PURGA DE MEMORIA
                 st.session_state['prod_ejecutado'] = False
                 if 'prod_df_calculo_base' in st.session_state:
                     del st.session_state['prod_df_calculo_base']
 
-                with st.spinner("Validando reglas de negocio estrictas y procesando archivos..."):
+                with st.spinner("Ejecutando filtros estrictos y validando reglas de negocio..."):
                     try:
                         df_s = pd.read_excel(arch_stock, dtype=str)
                         df_m = pd.read_excel(arch_salidas, dtype=str)
@@ -69,15 +69,9 @@ def mostrar_modulo_produccion():
                         df_m.columns = df_m.columns.str.strip()
                         df_c.columns = df_c.columns.str.strip()
 
-                        # --- 1. FILTRO: ENFOQUE DE LISTA BLANCA DE CATEGORÍAS ---
+                        # --- ADUANA 1: CATEGORÍAS (LISTA BLANCA) ---
                         def asegurar_categoria(df, nombre_archivo):
-                            col_cat = None
-                            for col in df.columns:
-                                col_norm = str(col).strip().upper().replace('Í', 'I')
-                                if col_norm == 'CATEGORIA':
-                                    col_cat = col
-                                    break
-                            
+                            col_cat = next((col for col in df.columns if str(col).strip().upper().replace('Í', 'I') == 'CATEGORIA'), None)
                             if not col_cat:
                                 return None, f"🚨 **ERROR ESTRUCTURAL EN '{nombre_archivo}':** No se encontró la columna 'Categoria'."
 
@@ -88,133 +82,98 @@ def mostrar_modulo_produccion():
                             ignorar_silencio = ['SERVICIO']
                             
                             def es_ilegal(cat_str):
-                                if pd.isna(cat_str): return True
-                                if cat_str in ['NAN', 'NULL', 'NONE', 'NA', '']: return True
-                                is_permitida = any(p in cat_str for p in permitidas)
-                                is_ignorada = any(i in cat_str for i in ignorar_silencio)
-                                return not (is_permitida or is_ignorada)
+                                if pd.isna(cat_str) or cat_str in ['NAN', 'NULL', 'NONE', 'NA', '']: return True
+                                return not (any(p in cat_str for p in permitidas) or any(i in cat_str for i in ignorar_silencio))
 
-                            mascara_invalida = df_temp['_Cat_Upper'].apply(es_ilegal)
-                            
-                            if mascara_invalida.any():
-                                col_desc = 'Nombre' if 'Nombre' in df_temp.columns else ('Descripcion' if 'Descripcion' in df_temp.columns else ('IdProducto' if 'IdProducto' in df_temp.columns else df_temp.columns[0]))
-                                nombres = df_temp.loc[mascara_invalida, col_desc].dropna().astype(str).unique()
-                                
-                                cat_raras = df_temp.loc[mascara_invalida, col_cat].dropna().astype(str).unique()
-                                texto_cat = ", ".join(cat_raras) if len(cat_raras) > 0 else "Vacío/Nulo"
-                                
-                                lista = "\n- ".join(nombres[:10])
-                                if len(nombres) > 10: 
-                                    lista += f"\n- ... (y {len(nombres) - 10} más)"
-                                
-                                msg = f"🚨 **ALERTA: CÁLCULO DETENIDO EN '{nombre_archivo.upper()}'** 🚨\n\nSe detectaron productos con categoría inválida o vacía (Detectado como: **{texto_cat}**).\n\n**Solo se permite Materia Prima, Producto Terminado, Empaque, Limpieza o Servicios.**\n\n**Corrige estos productos en tu ERP antes de continuar:**\n\n- {lista}"
+                            if df_temp['_Cat_Upper'].apply(es_ilegal).any():
+                                invalidos = df_temp[df_temp['_Cat_Upper'].apply(es_ilegal)]
+                                col_desc = 'Nombre' if 'Nombre' in df_temp.columns else ('IdProducto' if 'IdProducto' in df_temp.columns else df_temp.columns[0])
+                                nombres = invalidos[col_desc].dropna().astype(str).unique()
+                                lista = "\n- ".join(nombres[:10]) + ("\n- ..." if len(nombres) > 10 else "")
+                                msg = f"🚨 **ALERTA: CÁLCULO DETENIDO EN '{nombre_archivo.upper()}'** 🚨\n\nSe detectaron productos con categoría inválida o vacía.\n**Corrige estos productos antes de continuar:**\n\n- {lista}"
                                 return None, msg
 
                             mascara_valida = df_temp['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))
-                            df_filtrado = df_temp[mascara_valida].drop(columns=['_Cat_Upper'])
-                            
-                            return df_filtrado, None
+                            return df_temp[mascara_valida].drop(columns=['_Cat_Upper']), None
 
-                        # Ejecutar validaciones de categoría
-                        df_s_filt, err_s = asegurar_categoria(df_s, "Inventario / Stock Actual")
+                        df_s, err_s = asegurar_categoria(df_s, "Inventario / Stock Actual")
                         if err_s: st.error(err_s); st.stop()
 
-                        df_m_filt, err_m = asegurar_categoria(df_m, "Movimientos de Bodega")
+                        df_m, err_m = asegurar_categoria(df_m, "Movimientos de Bodega")
                         if err_m: st.error(err_m); st.stop()
 
-                        df_c_filt, err_c = asegurar_categoria(df_c, "Historial de Compras")
+                        df_c, err_c = asegurar_categoria(df_c, "Historial de Compras")
                         if err_c: st.error(err_c); st.stop()
 
-                        df_s = df_s_filt
-                        df_m = df_m_filt
-                        df_c = df_c_filt
-
-                        # --- 2. PROCESAMIENTO DE STOCK (MÁS NUEVOS FILTROS DE ESTADO Y NEGATIVOS) ---
-                        
-                        # Filtro de Inactivos
-                        if 'Estado' in df_s.columns:
-                            df_s['_Estado_Upper'] = df_s['Estado'].astype(str).str.upper().str.strip()
-                            df_s = df_s[df_s['_Estado_Upper'] != 'INACTIVO'] # Omitir los inactivos
-                            df_s = df_s.drop(columns=['_Estado_Upper'])
-
-                        df_s['Cod_Clean'] = df_s['IdProducto'].apply(limpiar_codigo)
-                        df_s['Stock_Num'] = pd.to_numeric(df_s['Existencias'], errors='coerce').fillna(0)
-                        
-                        # PARO DE SEGURIDAD: STOCK NEGATIVO
-                        negativos = df_s[df_s['Stock_Num'] < 0]
+                        # --- ADUANA 2: PARO POR NEGATIVOS ---
+                        df_s['Stock_Temp'] = pd.to_numeric(df_s['Existencias'], errors='coerce').fillna(0)
+                        negativos = df_s[df_s['Stock_Temp'] < 0]
                         if not negativos.empty:
                             col_desc = 'Nombre' if 'Nombre' in df_s.columns else 'IdProducto'
                             nombres_neg = negativos[col_desc].dropna().astype(str).unique()
-                            lista_neg = "\n- ".join(nombres_neg[:10])
-                            if len(nombres_neg) > 10: lista_neg += f"\n- ... (y {len(nombres_neg) - 10} más)"
-                            
-                            msg_neg = f"🚨 **ALERTA ROJA: INVENTARIO NEGATIVO DETECTADO** 🚨\n\nNo se puede proyectar con existencias bajo cero. **Por favor corrige las existencias de estos productos en tu ERP antes de continuar:**\n{lista_neg}"
-                            st.error(msg_neg)
+                            lista_neg = "\n- ".join(nombres_neg[:10]) + ("\n- ..." if len(nombres_neg) > 10 else "")
+                            st.error(f"🚨 **ALERTA ROJA: INVENTARIO NEGATIVO DETECTADO** 🚨\n\nNo puedes proyectar con existencias bajo cero. **Corrige el stock de estos productos en tu ERP:**\n\n- {lista_neg}")
                             st.stop()
 
-                        df_stock_group = df_s.groupby('Cod_Clean').agg({'Nombre': 'first', 'Stock_Num': 'sum'}).reset_index().rename(columns={'Nombre': 'Descripción', 'Stock_Num': 'Stock_Actual'})
+                        # --- ADUANA 3: FILTRO DE ESTADO (INACTIVOS) ---
+                        total_s_antes = len(df_s)
+                        col_estado = next((col for col in df_s.columns if 'ESTADO' in str(col).upper()), None)
+                        if col_estado:
+                            df_s['_Est_Upper'] = df_s[col_estado].astype(str).str.upper().str.strip()
+                            df_s = df_s[df_s['_Est_Upper'] != 'INACTIVO'].drop(columns=['_Est_Upper'])
+                        eliminados_inactivos = total_s_antes - len(df_s)
 
-                        # --- MOVIMIENTOS ---
+                        # PROCESAMIENTO STOCK
+                        df_s['Cod_Clean'] = df_s['IdProducto'].apply(limpiar_codigo)
+                        df_stock_group = df_s.groupby('Cod_Clean').agg({'Nombre': 'first', 'Stock_Temp': 'sum'}).reset_index().rename(columns={'Nombre': 'Descripción', 'Stock_Temp': 'Stock_Actual'})
+
+                        # PROCESAMIENTO MOVIMIENTOS
                         df_m['Cod_Clean'] = df_m['IdProducto'].apply(limpiar_codigo)
                         col_cant_mov = 'Cantidad' if 'Cantidad' in df_m.columns else 'Cantida'
                         df_m['Cant_Abs'] = pd.to_numeric(df_m[col_cant_mov], errors='coerce').fillna(0).abs()
-
-                        def calcular_consumo_neto(row):
-                            tipo = str(row['Tipo']).upper()
-                            if 'ENTRADA' in tipo: return -row['Cant_Abs']
-                            return row['Cant_Abs']
-                        
-                        df_m['Consumo_Neto'] = df_m.apply(calcular_consumo_neto, axis=1)
+                        df_m['Consumo_Neto'] = df_m.apply(lambda r: -r['Cant_Abs'] if 'ENTRADA' in str(r['Tipo']).upper() else r['Cant_Abs'], axis=1)
                         df_salidas_group = df_m.groupby('Cod_Clean')['Consumo_Neto'].sum().reset_index().rename(columns={'Consumo_Neto': 'Consumo_Historico'})
 
-                        # --- COMPRAS (CON CONTADOR DE FRECUENCIA) ---
+                        # PROCESAMIENTO COMPRAS (Y CONTEO DE TRANSACCIONES ÚNICAS)
                         df_c['Cod_Clean'] = df_c['IdProducto'].apply(limpiar_codigo)
                         df_c['Cant_Num'] = pd.to_numeric(df_c['Cantidad'], errors='coerce').fillna(0).abs()
                         
-                        # Agrupamos sumando las cantidades Y contando las veces que se compró
-                        df_compras_group = df_c.groupby('Cod_Clean').agg(
-                            Compras_Historicas=('Cant_Num', 'sum'),
-                            Frecuencia_Compras=('Cant_Num', 'size') # Cuenta las transacciones
-                        ).reset_index()
-                        
+                        # Contar transacciones de compras (Usando Documento o Fecha para no contar por unidad)
+                        col_transaccion = 'Documento' if 'Documento' in df_c.columns else 'Fecha'
+                        df_frecuencia = df_c[df_c['Cant_Num'] > 0].groupby('Cod_Clean')[col_transaccion].nunique().reset_index().rename(columns={col_transaccion: 'Veces_Comprado'})
+
+                        df_compras_group = df_c.groupby('Cod_Clean')['Cant_Num'].sum().reset_index().rename(columns={'Cant_Num': 'Compras_Historicas'})
                         df_min_lot = df_c[df_c['Cant_Num'] > 0].groupby('Cod_Clean')['Cant_Num'].min().reset_index().rename(columns={'Cant_Num': 'Lot_Min'})
                         df_max_lot = df_c.groupby('Cod_Clean')['Cant_Num'].max().reset_index().rename(columns={'Cant_Num': 'Lot_Max'})
 
-                        # --- FECHAS ---
+                        # FECHAS
                         min_dates, max_dates = [], []
-                        
                         if 'Fecha' in df_m.columns:
-                            fechas_m = pd.to_datetime(df_m['Fecha'], dayfirst=True, errors='coerce').dropna()
-                            fechas_m = fechas_m[(fechas_m.dt.year >= 2020) & (fechas_m.dt.year <= 2030)]
-                            if not fechas_m.empty:
-                                min_dates.append(fechas_m.min())
-                                max_dates.append(fechas_m.max())
+                            f_m = pd.to_datetime(df_m['Fecha'], dayfirst=True, errors='coerce').dropna()
+                            f_m = f_m[(f_m.dt.year >= 2020) & (f_m.dt.year <= 2030)]
+                            if not f_m.empty: min_dates.append(f_m.min()); max_dates.append(f_m.max())
                         
                         if 'Fecha' in df_c.columns:
-                            fechas_c = pd.to_datetime(df_c['Fecha'], dayfirst=True, errors='coerce').dropna()
-                            fechas_c = fechas_c[(fechas_c.dt.year >= 2020) & (fechas_c.dt.year <= 2030)]
-                            if not fechas_c.empty:
-                                min_dates.append(fechas_c.min())
-                                max_dates.append(fechas_c.max())
+                            f_c = pd.to_datetime(df_c['Fecha'], dayfirst=True, errors='coerce').dropna()
+                            f_c = f_c[(f_c.dt.year >= 2020) & (f_c.dt.year <= 2030)]
+                            if not f_c.empty: min_dates.append(f_c.min()); max_dates.append(f_c.max())
 
                         if min_dates and max_dates:
-                            fecha_min_global = min(min_dates)
-                            fecha_max_global = max(max_dates)
-                            dias_historial_calculado = (fecha_max_global - fecha_min_global).days + 1
-                            rango_fechas_str = f"desde {fecha_min_global.strftime('%d/%m/%Y')} hasta {fecha_max_global.strftime('%d/%m/%Y')}"
+                            dias_historial_calculado = (max(max_dates) - min(min_dates)).days + 1
+                            rango_fechas_str = f"desde {min(min_dates).strftime('%d/%m/%Y')} hasta {max(max_dates).strftime('%d/%m/%Y')}"
                         else:
                             dias_historial_calculado = 180
                             rango_fechas_str = "No detectado (Usando 180 días por defecto)"
                             
                         if dias_historial_calculado < 1: dias_historial_calculado = 1
-
                         st.session_state['prod_dias_hist'] = dias_historial_calculado
                         st.session_state['prod_rango_fechas'] = rango_fechas_str
 
-                        # --- CONSOLIDACIÓN MAESTRA ---
+                        # CONSOLIDACIÓN MAESTRA
                         df_maestro = df_stock_group.copy()
                         df_maestro = df_maestro.merge(df_salidas_group, on='Cod_Clean', how='left')
                         df_maestro = df_maestro.merge(df_compras_group, on='Cod_Clean', how='left')
+                        df_maestro = df_maestro.merge(df_frecuencia, on='Cod_Clean', how='left') # Pegar la frecuencia
                         df_maestro = df_maestro.merge(df_min_lot, on='Cod_Clean', how='left')
                         df_maestro = df_maestro.merge(df_max_lot, on='Cod_Clean', how='left')
 
@@ -223,34 +182,40 @@ def mostrar_modulo_produccion():
                         df_maestro['Stock_Actual'] = df_maestro['Stock_Actual'].fillna(0.0)
                         df_maestro['Consumo_Historico'] = df_maestro['Consumo_Historico'].fillna(0.0)
                         df_maestro['Compras_Historicas'] = df_maestro['Compras_Historicas'].fillna(0.0)
-                        df_maestro['Frecuencia_Compras'] = df_maestro['Frecuencia_Compras'].fillna(0.0)
+                        df_maestro['Veces_Comprado'] = df_maestro['Veces_Comprado'].fillna(0.0)
                         df_maestro['Stock_Seguridad_Pct'] = 0.05 
 
-                        # --- 3. FILTRO FINAL: OMITIR PRODUCTOS CON MENOS DE 3 COMPRAS ---
-                        # Solo dejamos pasar a los que se hayan comprado al menos 3 veces
-                        df_maestro = df_maestro[df_maestro['Frecuencia_Compras'] >= 3]
+                        # --- ADUANA 4: ELIMINAR LOS DE < 3 COMPRAS ---
+                        total_maestro_antes = len(df_maestro)
+                        df_maestro = df_maestro[df_maestro['Veces_Comprado'] >= 3]
+                        eliminados_compras = total_maestro_antes - len(df_maestro)
 
+                        st.session_state['info_inactivos'] = eliminados_inactivos
+                        st.session_state['info_compras'] = eliminados_compras
+                        
                         st.session_state['prod_df_calculo_base'] = df_maestro
                         st.session_state['prod_ejecutado'] = True
 
                     except Exception as e:
                         st.error(f"Error procesando la información. Verifica el formato de tus archivos. Error: {e}")
 
-        # --- SECCIÓN VISUAL (Solo visible si pasó todas las aduanas) ---
+        # --- SECCIÓN VISUAL ---
         if st.session_state.get('prod_ejecutado', False):
             dias_hist_calc = st.session_state.get('prod_dias_hist', 180)
             rango_fechas = st.session_state.get('prod_rango_fechas', '')
             
-            st.success(f"✅ Análisis completado y validado. Historial detectado: **{dias_hist_calc} días** ({rango_fechas}).")
+            st.success(f"✅ Análisis completado. Historial detectado: **{dias_hist_calc} días** ({rango_fechas}).")
+            
+            # Mensaje visual de los filtros aplicados para generar confianza
+            st.warning(f"🧹 **Limpieza Automática:** Se omitieron **{st.session_state.get('info_inactivos', 0)}** productos por estar Inactivos y **{st.session_state.get('info_compras', 0)}** productos por tener menos de 3 compras en este periodo.")
+            
             st.markdown("---")
             st.subheader("🎛️ Panel Maestro de Simulación y Sugerencia de Compra")
-            st.info("💡 **Filtro Aplicado:** Se han omitido los productos inactivos y aquellos con menos de 3 compras históricas.")
 
             if "editor_interactivo_prod" in st.session_state:
                 ediciones = st.session_state["editor_interactivo_prod"].get("edited_rows", {})
                 for fila_idx, cambios in ediciones.items():
                     if "Stock_Seguridad_Pct" in cambios:
-                        # Identificar el índice real en el df base
                         real_idx = st.session_state['prod_df_calculo_base'].index[fila_idx]
                         st.session_state['prod_df_calculo_base'].loc[real_idx, 'Stock_Seguridad_Pct'] = cambios["Stock_Seguridad_Pct"]
 
@@ -272,8 +237,7 @@ def mostrar_modulo_produccion():
             def calcular_var(row):
                 c_sem = row['Consumo_Semanal']
                 comp_sem = row['Compra_Semanal']
-                if c_sem == 0:
-                    return 100.0 if comp_sem > 0 else 0.0
+                if c_sem == 0: return 100.0 if comp_sem > 0 else 0.0
                 return round(((comp_sem - c_sem) / c_sem) * 100.0, 2)
 
             df_calculado['Var. Compra vs Consumo (%)'] = df_calculado.apply(calcular_var, axis=1)
