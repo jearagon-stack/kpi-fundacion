@@ -15,8 +15,7 @@ def limpiar_codigo_cuenta(c):
 
 def generar_excel_auditoria(df, nombre_hoja="Auditoria_Cuentas"):
     output = io.BytesIO()
-    # Quitamos la columna interna 'Categoria' antes de descargar para que el Excel quede limpio
-    df_descarga = df.drop(columns=['Categoria']) if 'Categoria' in df.columns else df
+    df_descarga = df.drop(columns=['Categoria_Original'], errors='ignore')
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_descarga.to_excel(writer, index=False, sheet_name=nombre_hoja)
     return output.getvalue()
@@ -38,7 +37,7 @@ def mostrar_modulo_auditoria():
     if arch_ops and arch_acc:
         if st.button("🚀 Ejecutar Cruce de Auditoría", type="primary", use_container_width=True):
             
-            with st.spinner("Escaneando documentos, cruzando cuentas y evaluando diferencias..."):
+            with st.spinner("Triangulando documentos y desglosando cuentas..."):
                 try:
                     df_ops = pd.read_excel(arch_ops, dtype=str)
                     df_acc = pd.read_excel(arch_acc, dtype=str)
@@ -203,7 +202,6 @@ def mostrar_modulo_auditoria():
                     df_inv['Categoria'] = df_inv['Cuenta_Limpia'].map(mapa_cuentas)
                     df_inv['Cuenta_Nom'] = df_inv[col_nom_cta_acc].astype(str).str.strip()
 
-                    # AGRUPAMOS POR CUENTA PARA QUE SE DESGLOSE EN MÚLTIPLES FILAS
                     df_acc_grouped = df_inv.groupby(['Documento_Final', 'Categoria', 'Cuenta_Nom']).agg({
                         'Monto_Conta_Neto': 'sum',
                         col_partida_acc: lambda x: ', '.join(x.dropna().astype(str).unique())
@@ -217,7 +215,6 @@ def mostrar_modulo_auditoria():
                     df_cruce['Monto_Ops'] = df_cruce['Monto_Ops'].fillna(0.0)
                     df_cruce['Monto_Conta'] = df_cruce['Monto_Conta'].fillna(0.0)
                     
-                    # EVITAR DUPLICAR MONTO DE OPERACIONES CUANDO CONTABILIDAD SE DIVIDE EN VARIAS CUENTAS
                     df_cruce['is_dup'] = df_cruce.duplicated(subset=['Documento', 'Categoria'])
                     df_cruce.loc[df_cruce['is_dup'], 'Monto_Ops'] = 0.0
                     
@@ -226,12 +223,12 @@ def mostrar_modulo_auditoria():
                     df_cruce['Partida_Conta'] = df_cruce['Partida_Conta'].fillna('SIN PARTIDA')
                     df_cruce['Tipo_Doc'] = df_cruce['Tipo_Doc'].fillna('NO EN OPS')
 
-                    # --- AJUSTE: CATEGORÍA VISUAL PARA OPERACIONES ---
-                    df_cruce['Categoria Operativa'] = df_cruce.apply(lambda r: r['Categoria'] if r['Monto_Ops'] != 0 else 'NO EN OPS', axis=1)
+                    # Configuración de las columnas visibles y ocultas
+                    df_cruce['Categoria_Original'] = df_cruce['Categoria']
+                    df_cruce['Categoria Operativa'] = df_cruce.apply(lambda r: r['Categoria'] if r['Monto_Ops'] != 0 else 'SIN REGISTRO EN OPS', axis=1)
 
-                    # CALCULAMOS EL GLOBAL DEL DOCUMENTO PARA EVALUAR SU ESTADO CORRECTAMENTE
-                    df_cruce['doc_ops_total'] = df_cruce.groupby(['Documento', 'Categoria'])['Monto_Ops'].transform('sum')
-                    df_cruce['doc_acc_total'] = df_cruce.groupby(['Documento', 'Categoria'])['Monto_Conta'].transform('sum')
+                    df_cruce['doc_ops_total'] = df_cruce.groupby(['Documento', 'Categoria_Original'])['Monto_Ops'].transform('sum')
+                    df_cruce['doc_acc_total'] = df_cruce.groupby(['Documento', 'Categoria_Original'])['Monto_Conta'].transform('sum')
 
                     docs_en_ops = set(df_ops_grouped['Documento'].unique())
                     docs_en_acc = set(df_acc_grouped['Documento'].unique())
@@ -263,12 +260,11 @@ def mostrar_modulo_auditoria():
                         "🟢 CUADRADO EXACTO": 6
                     }
                     df_cruce['Prioridad'] = df_cruce['Estado de Auditoría'].map(orden_estado).fillna(99)
-                    df_cruce = df_cruce.sort_values(['Prioridad', 'Documento']).drop(columns=['Prioridad', 'is_dup', 'doc_ops_total', 'doc_acc_total'])
+                    df_cruce = df_cruce.sort_values(['Prioridad', 'Documento']).drop(columns=['Prioridad', 'is_dup', 'doc_ops_total', 'doc_acc_total', 'Categoria'])
 
-                    # Ordenamos las columnas, manteniendo 'Categoria' oculta para el resumen
                     columnas_ordenadas = [
-                        'Partida_Conta', 'Tipo_Doc', 'Documento', 'Categoria Operativa', 'Categoria', 'Cuenta_Nom', 
-                        'Monto_Ops', 'Monto_Conta', 'Diferencia ($)', 'Estado de Auditoría'
+                        'Partida_Conta', 'Tipo_Doc', 'Documento', 'Categoria Operativa', 'Cuenta_Nom', 
+                        'Monto_Ops', 'Monto_Conta', 'Diferencia ($)', 'Estado de Auditoría', 'Categoria_Original'
                     ]
                     df_cruce = df_cruce[columnas_ordenadas]
                     df_cruce = df_cruce.rename(columns={
@@ -303,9 +299,8 @@ def mostrar_modulo_auditoria():
             
             st.subheader("📋 Matriz de Validación de Cuentas")
             
-            # Mostramos el dataframe sin la columna interna 'Categoria'
             st.dataframe(
-                df_final.drop(columns=['Categoria']),
+                df_final.drop(columns=['Categoria_Original'], errors='ignore'),
                 column_config={
                     "Partida Contable (Conta)": st.column_config.TextColumn("Partida"),
                     "Tipo Doc (Ops)": st.column_config.TextColumn("Tipo"),
@@ -325,13 +320,13 @@ def mostrar_modulo_auditoria():
             st.subheader("📊 Resumen Macro por Categoría")
             st.info("Este panel suma los dólares exactos de las columnas de arriba para asegurar que los grandes totales coincidan.")
             
-            # Usamos la columna interna 'Categoria' para asegurar que agrupe por rubro contable
-            df_resumen = df_final.groupby('Categoria')[['Monto_Ops', 'Monto_Conta', 'Diferencia ($)']].sum().reset_index()
+            df_resumen = df_final.groupby('Categoria_Original')[['Monto_Ops', 'Monto_Conta', 'Diferencia ($)']].sum().reset_index()
+            df_resumen.rename(columns={'Categoria_Original': 'Categoría General'}, inplace=True)
             
             st.dataframe(
                 df_resumen,
                 column_config={
-                    "Categoria": st.column_config.TextColumn("Categoría General"),
+                    "Categoría General": st.column_config.TextColumn("Categoría General"),
                     "Monto_Ops": st.column_config.NumberColumn("Total Operaciones ($)", format="$ %.2f"),
                     "Monto_Conta": st.column_config.NumberColumn("Total Contabilidad ($)", format="$ %.2f"),
                     "Diferencia ($)": st.column_config.NumberColumn("Descuadre Global ($)", format="$ %.2f")
