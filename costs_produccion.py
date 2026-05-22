@@ -184,14 +184,13 @@ def mostrar_modulo_produccion():
                         df_maestro['Veces_Comprado'] = df_maestro['Veces_Comprado'].fillna(0.0)
                         df_maestro['Stock_Seguridad_Pct'] = 0.05 
 
-                        # --- ADUANA 4: FILTRO AJUSTADO (VECES COMPRADO >= 3 O CONSUMO HISTÓRICO > 0) ---
+                        # --- ADUANA 4: FILTRO ESTRICTO (SOLO >= 3 COMPRAS) ---
                         total_maestro_antes = len(df_maestro)
-                        condicion_permanencia = (df_maestro['Veces_Comprado'] >= 3) | (df_maestro['Consumo_Historico'] > 0)
-                        df_maestro = df_maestro[condicion_permanencia]
-                        eliminados_filtro = total_maestro_antes - len(df_maestro)
+                        df_maestro = df_maestro[df_maestro['Veces_Comprado'] >= 3]
+                        eliminados_compras = total_maestro_antes - len(df_maestro)
 
                         st.session_state['info_inactivos'] = eliminados_inactivos
-                        st.session_state['info_compras'] = eliminados_filtro
+                        st.session_state['info_compras'] = eliminados_compras
                         
                         st.session_state['prod_df_calculo_base'] = df_maestro
                         st.session_state['prod_ejecutado'] = True
@@ -205,7 +204,7 @@ def mostrar_modulo_produccion():
             rango_fechas = st.session_state.get('prod_rango_fechas', '')
             
             st.success(f"✅ Análisis completado. Historial detectado: **{dias_hist_calc} días** ({rango_fechas}).")
-            st.warning(f"🧹 **Limpieza Automática:** Se omitieron **{st.session_state.get('info_inactivos', 0)}** productos por estar Inactivos y **{st.session_state.get('info_compras', 0)}** productos por no registrar consumo ni un mínimo de 3 compras.")
+            st.warning(f"🧹 **Limpieza Automática:** Se omitieron **{st.session_state.get('info_inactivos', 0)}** productos por estar Inactivos y **{st.session_state.get('info_compras', 0)}** productos por tener menos de 3 compras en este periodo.")
             st.markdown("---")
             st.subheader("🎛️ Panel Maestro de Simulación y Sugerencia de Compra")
 
