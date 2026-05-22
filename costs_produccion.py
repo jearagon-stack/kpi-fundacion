@@ -19,15 +19,6 @@ def generar_excel_proyeccion(df, nombre_hoja="Proyeccion_Compras"):
         df.to_excel(writer, index=False, sheet_name=nombre_hoja)
     return output.getvalue()
 
-def detectar_columna_categoria(df, indice_fallback):
-    """Busca la columna Categoria por nombre, si falla usa la posición del usuario"""
-    for col in df.columns:
-        if str(col).strip().upper() in ['CATEGORIA', 'CATEGORÍA']:
-            return col
-    if indice_fallback < len(df.columns):
-        return df.columns[indice_fallback]
-    return None
-
 # ==========================================
 # MÓDULO PRINCIPAL DE PRODUCCIÓN
 # ==========================================
@@ -63,12 +54,12 @@ def mostrar_modulo_produccion():
         if arch_stock and arch_salidas and arch_compras:
             if st.button("🚀 Ejecutar Análisis de Demanda y Variación", type="primary", use_container_width=True):
                 
-                # 1. PURGA DE MEMORIA: Borrar cualquier tabla anterior antes de validar
+                # PURGA DE MEMORIA: Borrar cualquier estado anterior
                 st.session_state['prod_ejecutado'] = False
                 if 'prod_df_calculo_base' in st.session_state:
                     del st.session_state['prod_df_calculo_base']
 
-                with st.spinner("Validando categorías y procesando archivos..."):
+                with st.spinner("Validando categorías estrictamente y procesando archivos..."):
                     try:
                         df_s = pd.read_excel(arch_stock, dtype=str)
                         df_m = pd.read_excel(arch_salidas, dtype=str)
@@ -78,9 +69,9 @@ def mostrar_modulo_produccion():
                         df_m.columns = df_m.columns.str.strip()
                         df_c.columns = df_c.columns.str.strip()
 
-                        # --- FUNCIÓN DE CONTROL DE CALIDAD POR NOMBRE EXACTO ---
+                        # --- NUEVO FILTRO: ENFOQUE DE LISTA BLANCA (WHITELIST) ---
                         def asegurar_categoria(df, nombre_archivo):
-                            # Buscar la columna independientemente de acentos o mayúsculas
+                            # Buscar la columna independientemente de acentos
                             col_cat = None
                             for col in df.columns:
                                 col_norm = str(col).strip().upper().replace('Í', 'I')
@@ -89,47 +80,54 @@ def mostrar_modulo_produccion():
                                     break
                             
                             if not col_cat:
-                                return None, f"🚨 **ERROR ESTRUCTURAL EN '{nombre_archivo}':** No se encontró ninguna columna llamada 'Categoria'."
+                                return None, f"🚨 **ERROR ESTRUCTURAL EN '{nombre_archivo}':** No se encontró la columna 'Categoria'."
 
                             df_temp = df.copy()
                             df_temp['_Cat_Upper'] = df_temp[col_cat].astype(str).str.upper().str.strip()
                             
-                            # Detección de vacíos y "Sin especificar"
-                            invalidos = ['NAN', 'NULL', 'NONE', 'NA', '', 'VACIO']
-                            mascara_vacia = df_temp['_Cat_Upper'].isin(invalidos) | df_temp['_Cat_Upper'].str.contains('SIN ESPEC', na=False)
+                            permitidas = ['MATERIA PRIMA', 'PRODUCTO TERMINADO', 'EMPAQUE', 'LIMPIEZA']
+                            ignorar_silencio = ['SERVICIO']
                             
-                            if mascara_vacia.any():
-                                # Seleccionar de forma segura la columna para mostrar el nombre del producto
-                                if 'Nombre' in df_temp.columns:
-                                    col_desc = 'Nombre'
-                                elif 'Descripcion' in df_temp.columns:
-                                    col_desc = 'Descripcion'
-                                elif 'IdProducto' in df_temp.columns:
-                                    col_desc = 'IdProducto'
-                                else:
-                                    col_desc = df_temp.columns[0]
+                            # Función brutal: Si no está en las listas de arriba, es Ilegal y detiene el código.
+                            def es_ilegal(cat_str):
+                                if pd.isna(cat_str): return True
+                                if cat_str in ['NAN', 'NULL', 'NONE', 'NA', '']: return True
                                 
-                                nombres = df_temp.loc[mascara_vacia, col_desc].dropna().astype(str).unique()
+                                is_permitida = any(p in cat_str for p in permitidas)
+                                is_ignorada = any(i in cat_str for i in ignorar_silencio)
+                                
+                                # Si no es permitida Y tampoco es servicio ignorado, entonces es ILEGAL.
+                                return not (is_permitida or is_ignorada)
+
+                            mascara_invalida = df_temp['_Cat_Upper'].apply(es_ilegal)
+                            
+                            if mascara_invalida.any():
+                                # Obtener el nombre del producto infractor
+                                col_desc = 'Nombre' if 'Nombre' in df_temp.columns else ('Descripcion' if 'Descripcion' in df_temp.columns else ('IdProducto' if 'IdProducto' in df_temp.columns else df_temp.columns[0]))
+                                nombres = df_temp.loc[mascara_invalida, col_desc].dropna().astype(str).unique()
+                                
+                                # Capturar qué decía la categoría errónea para mostrarla en pantalla
+                                cat_raras = df_temp.loc[mascara_invalida, col_cat].dropna().astype(str).unique()
+                                texto_cat = ", ".join(cat_raras) if len(cat_raras) > 0 else "Vacío/Nulo"
                                 
                                 lista = "\n- ".join(nombres[:10])
                                 if len(nombres) > 10: 
                                     lista += f"\n- ... (y {len(nombres) - 10} más)"
                                 
-                                msg = f"🚨 **ALERTA: CÁLCULO DETENIDO EN '{nombre_archivo.upper()}'** 🚨\n\nSe detectaron productos sin categoría asignada o marcados como 'Sin especificar'.\n\n**Corrige estos productos en tu ERP/Excel antes de continuar:**\n\n- {lista}"
+                                msg = f"🚨 **ALERTA: CÁLCULO DETENIDO EN '{nombre_archivo.upper()}'** 🚨\n\nSe detectaron productos con categoría inválida o vacía (Se detectó en el Excel como: **{texto_cat}**).\n\n**Solo se permite Materia Prima, Producto Terminado, Empaque, Limpieza o Servicios.**\n\n**Corrige estos productos en tu ERP/Excel antes de continuar:**\n\n- {lista}"
                                 return None, msg
 
-                            # Filtrar permitidas
-                            permitidas = ['MATERIA PRIMA', 'PRODUCTO TERMINADO', 'EMPAQUE', 'LIMPIEZA']
+                            # Si sobrevive al bloqueo, filtramos dejando solo las 4 permitidas (borrando los Servicios)
                             mascara_valida = df_temp['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))
                             df_filtrado = df_temp[mascara_valida].drop(columns=['_Cat_Upper'])
                             
                             return df_filtrado, None
 
-                        # Ejecutar validaciones en cascada
+                        # Ejecutar validaciones y bloquear si hay fallos
                         df_s_filt, err_s = asegurar_categoria(df_s, "Inventario / Stock Actual")
                         if err_s:
                             st.error(err_s)
-                            st.stop() # Abortar ejecución inmediatamente
+                            st.stop()
 
                         df_m_filt, err_m = asegurar_categoria(df_m, "Movimientos de Bodega")
                         if err_m:
@@ -141,7 +139,7 @@ def mostrar_modulo_produccion():
                             st.error(err_c)
                             st.stop()
 
-                        # Asignar DataFrames filtrados
+                        # Asignar DataFrames limpios
                         df_s = df_s_filt
                         df_m = df_m_filt
                         df_c = df_c_filt
@@ -217,14 +215,13 @@ def mostrar_modulo_produccion():
                         df_maestro['Compras_Historicas'] = df_maestro['Compras_Historicas'].fillna(0.0)
                         df_maestro['Stock_Seguridad_Pct'] = 0.05 
 
-                        # Autorizar la visualización de la tabla
                         st.session_state['prod_df_calculo_base'] = df_maestro
                         st.session_state['prod_ejecutado'] = True
 
                     except Exception as e:
                         st.error(f"Error procesando la información. Verifica el formato de tus archivos. Error: {e}")
 
-        # --- SECCIÓN VISUAL ---
+        # --- SECCIÓN VISUAL (Solo visible si pasó todas las aduanas) ---
         if st.session_state.get('prod_ejecutado', False):
             dias_hist_calc = st.session_state.get('prod_dias_hist', 180)
             rango_fechas = st.session_state.get('prod_rango_fechas', '')
