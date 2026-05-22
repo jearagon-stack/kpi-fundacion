@@ -102,9 +102,14 @@ def mostrar_modulo_auditoria():
                     col_partida_acc = next((c for c in df_acc.columns if 'NUMERO' in str(c).upper()), None)
                     col_conc_acc = next((c for c in df_acc.columns if 'CONCEPTO' in str(c).upper()), None)
                     col_debe_acc = next((c for c in df_acc.columns if 'DEBE' in str(c).upper()), None)
+                    
+                    # Detectar la columna de Nombre de Cuenta (Columna D)
+                    col_nom_cta_acc = next((c for c in df_acc.columns if str(c).strip().upper() == 'NOMBRE'), None)
+                    if not col_nom_cta_acc:
+                        col_nom_cta_acc = next((c for c in df_acc.columns if 'NOMBRE' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
 
-                    if not all([col_tipo_acc, col_cta_acc, col_partida_acc, col_conc_acc, col_debe_acc]):
-                        st.error("🚨 Error en Contabilidad: Faltan columnas clave (IdTipo, IdCuenta, Numero, Concepto, Debe).")
+                    if not all([col_tipo_acc, col_cta_acc, col_partida_acc, col_conc_acc, col_debe_acc, col_nom_cta_acc]):
+                        st.error("🚨 Error en Contabilidad: Faltan columnas clave (IdTipo, IdCuenta, Nombre, Numero, Concepto, Debe).")
                         st.stop()
 
                     # Filtrar Cuentas por Pagar (CxP)
@@ -145,7 +150,6 @@ def mostrar_modulo_auditoria():
                     df_acc['Documento_Final'] = df_acc.apply(rellenar_doc_ciego, axis=1)
 
                     # --- EXTRACTOR 3: EL SABUESO DE TRIANGULACIÓN ---
-                    # Busca columnas dinámicamente
                     col_f_ops = next((c for c in df_ops.columns if 'FECHA' in str(c).upper()), None)
                     col_p_ops = next((c for c in df_ops.columns if 'PROV' in str(c).upper()), None)
                     col_f_acc = next((c for c in df_acc.columns if 'FECHA' in str(c).upper()), None)
@@ -162,7 +166,6 @@ def mostrar_modulo_auditoria():
                         fecha_acc = str(row[col_f_acc]).strip() if col_f_acc else ""
                         prov_acc = str(row[col_p_acc]).upper().strip() if col_p_acc else ""
 
-                        # Filtrar Operaciones por monto exacto
                         ops_match = df_ops[abs(df_ops['Monto_Ops'] - monto_acc) < 0.05]
                         if ops_match.empty: return "NO_IDENTIFICADO"
 
@@ -172,10 +175,8 @@ def mostrar_modulo_auditoria():
                             fecha_op = str(op_row[col_f_ops]).strip() if col_f_ops else ""
                             prov_op = str(op_row[col_p_ops]).upper().strip() if col_p_ops else ""
 
-                            # Validar co-existencia de Descripción
                             match_desc = (desc_op in concepto_acc) or (concepto_acc in desc_op)
                             
-                            # Validar Fecha y Proveedor (Si existen, deben coincidir)
                             match_fecha = True
                             if fecha_acc and fecha_op and (fecha_acc != fecha_op): match_fecha = False
                             match_prov = True
@@ -184,18 +185,15 @@ def mostrar_modulo_auditoria():
                             if match_desc and match_fecha and match_prov:
                                 posibles_docs.append(op_row['Documento'])
                         
-                        # Si el sabueso encontró un match perfecto e inequívoco, se lo asigna
                         if len(set(posibles_docs)) == 1:
                             return posibles_docs[0]
                         return "NO_IDENTIFICADO"
                     
                     df_acc['Documento_Final'] = df_acc.apply(triangulacion_ciegos, axis=1)
-                    # ------------------------------------------------
 
                     # --- ADUANA: BLOQUEO POR DOCUMENTOS HUÉRFANOS ---
                     ciegos = df_acc[df_acc['Documento_Final'] == 'NO_IDENTIFICADO']
                     
-                    # Solo interesan las cuentas de inventario con dinero
                     mapa_cuentas_temp = ['110601', '110603', '110608', '110609']
                     ciegos_relevantes = ciegos[
                         (pd.to_numeric(ciegos[col_debe_acc], errors='coerce').fillna(0) > 0) & 
@@ -228,8 +226,18 @@ def mostrar_modulo_auditoria():
                     df_inv['Categoria'] = df_inv['Cuenta_Limpia'].map(mapa_cuentas)
                     df_inv['Monto_Conta'] = pd.to_numeric(df_inv[col_debe_acc], errors='coerce').fillna(0)
 
-                    # Extraer la cuenta contable exacta por documento
-                    mapa_cuentas_doc = df_inv.groupby('Documento_Final')['Cuenta_Limpia'].apply(lambda x: ', '.join(x.unique())).to_dict()
+                    # --- NUEVA LÓGICA: EXTRAER NOMBRE Y DESGLOSAR MONTOS ---
+                    detalle_cuentas = df_inv.groupby(['Documento_Final', col_nom_cta_acc])['Monto_Conta'].sum().reset_index()
+                    
+                    def formatear_detalle(df_group):
+                        detalles = []
+                        for _, row in df_group.iterrows():
+                            if row['Monto_Conta'] > 0:
+                                detalles.append(f"{row[col_nom_cta_acc]} (${row['Monto_Conta']:,.2f})")
+                        return " + ".join(detalles) if detalles else "SIN REGISTRO"
+                        
+                    mapa_cuentas_doc = detalle_cuentas.groupby('Documento_Final').apply(formatear_detalle).to_dict()
+                    # -------------------------------------------------------
 
                     df_acc_grouped = df_inv.groupby(['Documento_Final', 'Categoria'])['Monto_Conta'].sum().reset_index()
                     df_acc_grouped.rename(columns={'Documento_Final': 'Documento'}, inplace=True)
@@ -244,7 +252,7 @@ def mostrar_modulo_auditoria():
                     df_cruce['Monto_Conta'] = df_cruce['Monto_Conta'].fillna(0.0).round(2)
                     df_cruce['Diferencia ($)'] = (df_cruce['Monto_Ops'] - df_cruce['Monto_Conta']).round(2)
                     
-                    # Agregar la columna de la cuenta detectada en conta
+                    # Aplicar la columna con el nombre y desglose de cuentas
                     df_cruce['Cuenta Contable (Conta)'] = df_cruce['Documento'].map(mapa_cuentas_doc).fillna('SIN REGISTRO')
 
                     docs_en_ops = set(df_ops_grouped['Documento'].unique())
@@ -318,7 +326,7 @@ def mostrar_modulo_auditoria():
                 column_config={
                     "Documento": st.column_config.TextColumn("Documento Fiscal / Interno"),
                     "Categoria": st.column_config.TextColumn("Categoría Operativa"),
-                    "Cuenta Contable (Conta)": st.column_config.TextColumn("Cuenta Detectada (Conta)"),
+                    "Cuenta Contable (Conta)": st.column_config.TextColumn("Cuentas Detectadas (Conta)"),
                     "Monto_Ops": st.column_config.NumberColumn("Monto Operaciones ($)", format="$ %.2f"),
                     "Monto_Conta": st.column_config.NumberColumn("Monto Contabilidad ($)", format="$ %.2f"),
                     "Diferencia ($)": st.column_config.NumberColumn("Diferencia ($)", format="$ %.2f"),
