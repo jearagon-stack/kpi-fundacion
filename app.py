@@ -78,8 +78,8 @@ if not st.session_state.logged_in:
 # --- Sidebar y Menú ---
 with st.sidebar:
     st.title("Menú Principal")
-    # Agregamos PRODUCCIÓN al menú
-    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN"]
+    # --- SE AGREGÓ "AUDITORÍA DE CUENTAS" AL MENÚ ---
+    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS"]
     
     if st.session_state.rol_actual == "ADMIN":
         opciones_menu.append("CONFIGURACIÓN")
@@ -130,6 +130,15 @@ elif opcion == "PRODUCCIÓN":
         mostrar_modulo_produccion()
     except ImportError:
         st.warning("⚠️ El archivo 'costs_produccion.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
+
+# --- NUEVO ENRUTADOR DE AUDITORÍA ---
+elif opcion == "AUDITORÍA DE CUENTAS":
+    try:
+        from audit_cuentas import mostrar_modulo_auditoria
+        mostrar_modulo_auditoria()
+    except ImportError:
+        st.warning("⚠️ El archivo 'audit_cuentas.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
+
 elif opcion == "CONFIGURACIÓN":
     st.title("⚙️ Configuración del Sistema")
     st.markdown("Desde aquí puedes administrar los accesos a la plataforma de forma rápida.")
