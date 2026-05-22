@@ -19,6 +19,15 @@ def generar_excel_proyeccion(df, nombre_hoja="Proyeccion_Compras"):
         df.to_excel(writer, index=False, sheet_name=nombre_hoja)
     return output.getvalue()
 
+def detectar_columna_categoria(df, indice_fallback):
+    """Busca la columna Categoria por nombre, si falla usa la posición del usuario"""
+    for col in df.columns:
+        if str(col).strip().upper() in ['CATEGORIA', 'CATEGORÍA']:
+            return col
+    if indice_fallback < len(df.columns):
+        return df.columns[indice_fallback]
+    return None
+
 # ==========================================
 # MÓDULO PRINCIPAL DE PRODUCCIÓN
 # ==========================================
@@ -90,11 +99,21 @@ def mostrar_modulo_produccion():
                             mascara_vacia = df_temp['_Cat_Upper'].isin(invalidos) | df_temp['_Cat_Upper'].str.contains('SIN ESPEC', na=False)
                             
                             if mascara_vacia.any():
-                                col_desc = 'Nombre' if 'Nombre' in df_temp.columns else ('Descripcion' if 'Descripcion' in df_temp.columns else ('IdProducto' if 'IdProducto' in df_temp.columns else df_temp.columns[0]))
+                                # Seleccionar de forma segura la columna para mostrar el nombre del producto
+                                if 'Nombre' in df_temp.columns:
+                                    col_desc = 'Nombre'
+                                elif 'Descripcion' in df_temp.columns:
+                                    col_desc = 'Descripcion'
+                                elif 'IdProducto' in df_temp.columns:
+                                    col_desc = 'IdProducto'
+                                else:
+                                    col_desc = df_temp.columns[0]
+                                
                                 nombres = df_temp.loc[mascara_vacia, col_desc].dropna().astype(str).unique()
                                 
                                 lista = "\n- ".join(nombres[:10])
-                                if len(nombres) > 10: lista += f"\n- ... (y {len(nombres) - 10} más)"
+                                if len(nombres) > 10: 
+                                    lista += f"\n- ... (y {len(nombres) - 10} más)"
                                 
                                 msg = f"🚨 **ALERTA: CÁLCULO DETENIDO EN '{nombre_archivo.upper()}'** 🚨\n\nSe detectaron productos sin categoría asignada o marcados como 'Sin especificar'.\n\n**Corrige estos productos en tu ERP/Excel antes de continuar:**\n\n- {lista}"
                                 return None, msg
@@ -205,7 +224,7 @@ def mostrar_modulo_produccion():
                     except Exception as e:
                         st.error(f"Error procesando la información. Verifica el formato de tus archivos. Error: {e}")
 
-        # --- SECCIÓN VISUAL (Solo se ejecuta si no hubo errores previos) ---
+        # --- SECCIÓN VISUAL ---
         if st.session_state.get('prod_ejecutado', False):
             dias_hist_calc = st.session_state.get('prod_dias_hist', 180)
             rango_fechas = st.session_state.get('prod_rango_fechas', '')
@@ -297,4 +316,6 @@ def mostrar_modulo_produccion():
             )
 
     with tab_recetas:
-        st.subheader("Estructura de Recetas (BOM - Bill of Materials
+        st.subheader("Estructura de Recetas (BOM - Bill of Materials)")
+        st.write("Gestión de explosión de ingredientes y costos unitarios de fabricación.")
+        st.info("Pestaña lista para recibir la lógica de recetas en la siguiente etapa.")
