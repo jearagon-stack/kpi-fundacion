@@ -52,8 +52,10 @@ def mostrar_modulo_auditoria():
                     col_cat_ops = next((c for c in df_ops.columns if 'CATEGORIA' in str(c).upper()), None)
                     col_desc_ops = next((c for c in df_ops.columns if 'DESCRIPCION' in str(c).upper() or 'NOMBRE' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
 
-                    try: col_tipo_ops = df_ops.columns[10]
-                    except IndexError: col_tipo_ops = None
+                    try: 
+                        col_tipo_ops = df_ops.columns[10]
+                    except IndexError: 
+                        col_tipo_ops = None
 
                     if not all([col_num_ops, col_tot_ops, col_cat_ops, col_desc_ops]):
                         st.error("🚨 Error en Operaciones: Faltan columnas clave.")
@@ -103,7 +105,8 @@ def mostrar_modulo_auditoria():
                     col_haber_acc = next((c for c in df_acc.columns if 'HABER' in str(c).upper()), None)
                     
                     col_nom_cta_acc = next((c for c in df_acc.columns if str(c).strip().upper() == 'NOMBRE'), None)
-                    if not col_nom_cta_acc: col_nom_cta_acc = next((c for c in df_acc.columns if 'NOMBRE' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
+                    if not col_nom_cta_acc: 
+                        col_nom_cta_acc = next((c for c in df_acc.columns if 'NOMBRE' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
 
                     if not all([col_tipo_acc, col_cta_acc, col_partida_acc, col_conc_acc, col_debe_acc, col_nom_cta_acc]):
                         st.error("🚨 Error en Contabilidad: Faltan columnas clave.")
@@ -127,7 +130,8 @@ def mostrar_modulo_auditoria():
                     def rellenar_doc_ciego(row):
                         if pd.notna(row['Doc_Extraido']): return row['Doc_Extraido']
                         docs_en_partida = mapa_partidas.get(row[col_partida_acc], [])
-                        if len(docs_en_partida) == 1: return docs_en_partida[0] 
+                        if len(docs_en_partida) == 1: 
+                            return docs_en_partida[0] 
                         elif len(docs_en_partida) > 1:
                             concepto_conta = str(row[col_conc_acc]).upper()
                             for doc in docs_en_partida:
@@ -175,7 +179,11 @@ def mostrar_modulo_auditoria():
                     df_acc['Documento_Final'] = df_acc.apply(triangulacion_ciegos, axis=1)
 
                     mapa_cuentas_temp = ['110601', '110603', '110608', '110609']
-                    ciegos_relevantes = df_acc[(df_acc['Documento_Final'] == 'NO_IDENTIFICADO') & (abs(df_acc['Monto_Conta_Neto']) > 0) & (df_acc[col_cta_acc].astype(str).str.strip().isin(mapa_cuentas_temp))]
+                    
+                    # Extraemos los ciegos usando una mascara limpia
+                    mascara_ciegos = (df_acc['Documento_Final'] == 'NO_IDENTIFICADO') & (abs(df_acc['Monto_Conta_Neto']) > 0) & (df_acc[col_cta_acc].astype(str).str.strip().isin(mapa_cuentas_temp))
+                    ciegos_relevantes = df_acc[mascara_ciegos]
+                    
                     if not ciegos_relevantes.empty:
                         ejemplos = ciegos_relevantes[[col_partida_acc, col_conc_acc]].drop_duplicates().head(10)
                         lista = "".join([f"\n- **Partida:** {r[col_partida_acc]} | **Concepto:** {r[col_conc_acc]}" for _, r in ejemplos.iterrows()])
@@ -237,3 +245,98 @@ def mostrar_modulo_auditoria():
                             if doc in docs_en_ops: return "🔴 ERROR DE CATEGORÍA OPERATIVA (Categoría cruzada)"
                             else: return "🟡 NO EN OPERACIONES (Puede ser un ajuste manual)"
                         else:
+                            if dif_global > 0.05: return "🟠 DIFERENCIA DE MONTO"
+                            else: return "🟢 CUADRADO EXACTO"
+
+                    df_cruce['Estado de Auditoría'] = df_cruce.apply(evaluar_auditoria, axis=1)
+
+                    orden_estado = {
+                        "🔴 ERROR DE CUENTA CONTABLE (Categoría cruzada)": 1,
+                        "🔴 ERROR DE CATEGORÍA OPERATIVA (Categoría cruzada)": 2,
+                        "🔴 NO CONTABILIZADO (Falta la Partida o Inventario)": 3,
+                        "🟠 DIFERENCIA DE MONTO": 4,
+                        "🟡 NO EN OPERACIONES (Puede ser un ajuste manual)": 5,
+                        "🟢 CUADRADO EXACTO": 6
+                    }
+                    df_cruce['Prioridad'] = df_cruce['Estado de Auditoría'].map(orden_estado).fillna(99)
+                    df_cruce = df_cruce.sort_values(['Prioridad', 'Documento']).drop(columns=['Prioridad', 'is_dup', 'doc_ops_total', 'doc_acc_total'])
+
+                    columnas_ordenadas = [
+                        'Partida_Conta', 'Tipo_Doc', 'Documento', 'Categoria', 'Cuenta_Nom', 
+                        'Monto_Ops', 'Monto_Conta', 'Diferencia ($)', 'Estado de Auditoría'
+                    ]
+                    df_cruce = df_cruce[columnas_ordenadas]
+                    df_cruce = df_cruce.rename(columns={
+                        'Cuenta_Nom': 'Cuenta Contable (Conta)',
+                        'Partida_Conta': 'Partida Contable (Conta)',
+                        'Tipo_Doc': 'Tipo Doc (Ops)'
+                    })
+
+                    st.session_state['audit_cruce_df'] = df_cruce
+                    st.session_state['audit_ejecutado'] = True
+
+                except Exception as e:
+                    st.error(f"Error procesando los archivos. Verifica los formatos. Detalle: {e}")
+
+        # --- SECCIÓN VISUAL DE RESULTADOS ---
+        if st.session_state.get('audit_ejecutado', False):
+            df_final = st.session_state['audit_cruce_df']
+            
+            errores_cuenta = len(df_final[df_final['Estado de Auditoría'].str.contains('ERROR DE CUENTA')])
+            no_conta = len(df_final[df_final['Estado de Auditoría'].str.contains('NO CONTABILIZADO')])
+            dif_monto = len(df_final[df_final['Estado de Auditoría'].str.contains('DIFERENCIA')])
+            cuadrados = len(df_final[df_final['Estado de Auditoría'].str.contains('CUADRADO')])
+            
+            st.success("✅ Auditoría completada con éxito.")
+            st.markdown("---")
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Errores de Cuenta", errores_cuenta)
+            c2.metric("Falta Contabilizar", no_conta)
+            c3.metric("Diferencias de Monto", dif_monto)
+            c4.metric("Documentos Cuadrados", cuadrados)
+            
+            st.subheader("📋 Matriz de Validación de Cuentas")
+            
+            st.dataframe(
+                df_final,
+                column_config={
+                    "Partida Contable (Conta)": st.column_config.TextColumn("Partida"),
+                    "Tipo Doc (Ops)": st.column_config.TextColumn("Tipo"),
+                    "Documento": st.column_config.TextColumn("Documento Fiscal"),
+                    "Categoria": st.column_config.TextColumn("Categoría Operativa"),
+                    "Cuenta Contable (Conta)": st.column_config.TextColumn("Cuenta Detectada"),
+                    "Monto_Ops": st.column_config.NumberColumn("Monto Ops ($)", format="$ %.2f"),
+                    "Monto_Conta": st.column_config.NumberColumn("Monto Conta ($)", format="$ %.2f"),
+                    "Diferencia ($)": st.column_config.NumberColumn("Diferencia ($)", format="$ %.2f"),
+                    "Estado de Auditoría": st.column_config.TextColumn("Estado de Auditoría")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+            
+            st.markdown("---")
+            st.subheader("📊 Resumen Macro por Categoría")
+            st.info("Este panel suma los dólares exactos de las columnas de arriba para asegurar que los grandes totales coincidan.")
+            
+            df_resumen = df_final.groupby('Categoria')[['Monto_Ops', 'Monto_Conta', 'Diferencia ($)']].sum().reset_index()
+            
+            st.dataframe(
+                df_resumen,
+                column_config={
+                    "Categoria": st.column_config.TextColumn("Categoría"),
+                    "Monto_Ops": st.column_config.NumberColumn("Total Operaciones ($)", format="$ %.2f"),
+                    "Monto_Conta": st.column_config.NumberColumn("Total Contabilidad ($)", format="$ %.2f"),
+                    "Diferencia ($)": st.column_config.NumberColumn("Descuadre Global ($)", format="$ %.2f")
+                },
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.download_button(
+                label="📥 Descargar Reporte de Auditoría Detallado (.xlsx)",
+                data=generar_excel_auditoria(df_final),
+                file_name=f"Auditoria_Cuentas_{date.today().strftime('%d_%m_%Y')}.xlsx",
+                type="primary",
+                use_container_width=True
+            )
