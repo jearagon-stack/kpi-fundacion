@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import io
 import re
+from datetime import date # <- ¡Solución al error de pantalla roja!
 
 # ==========================================
 # FUNCIONES AUXILIARES
@@ -48,18 +49,18 @@ def mostrar_modulo_auditoria():
                     # 1. PROCESAMIENTO DE OPERACIONES (COMPRAS)
                     # ==========================================
                     
-                    # Identificar columnas Operaciones
                     col_num_ops = next((c for c in df_ops.columns if 'NUMERO' in str(c).upper()), None)
                     col_tot_ops = next((c for c in df_ops.columns if 'TOTAL' in str(c).upper()), None)
                     col_cat_ops = next((c for c in df_ops.columns if 'CATEGORIA' in str(c).upper() or 'CATEGORÍA' in str(c).upper()), None)
+                    col_desc_ops = next((c for c in df_ops.columns if 'DESCRIPCION' in str(c).upper() or 'NOMBRE' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
 
-                    if not all([col_num_ops, col_tot_ops, col_cat_ops]):
-                        st.error("🚨 Error en archivo de Operaciones: No se encontraron las columnas Numero, Total o Categoria.")
+                    if not all([col_num_ops, col_tot_ops, col_cat_ops, col_desc_ops]):
+                        st.error("🚨 Error en Operaciones: Faltan columnas clave (Numero, Total, Categoria o Descripcion).")
                         st.stop()
 
                     df_ops['_Cat_Upper'] = df_ops[col_cat_ops].astype(str).str.upper().str.strip()
 
-                    # ADUANA: Filtro Estricto de Categorías (Igual que Producción)
+                    # ADUANA: Filtro Estricto de Categorías
                     permitidas = ['MATERIA PRIMA', 'PRODUCTO TERMINADO', 'EMPAQUE', 'LIMPIEZA']
                     ignorar_silencio = ['SERVICIO']
                     
@@ -69,73 +70,90 @@ def mostrar_modulo_auditoria():
 
                     if df_ops['_Cat_Upper'].apply(es_ilegal).any():
                         invalidos = df_ops[df_ops['_Cat_Upper'].apply(es_ilegal)]
-                        col_desc = 'Nombre' if 'Nombre' in df_ops.columns else col_num_ops
-                        nombres = invalidos[col_desc].dropna().astype(str).unique()
+                        col_desc_err = 'Nombre' if 'Nombre' in df_ops.columns else col_num_ops
+                        nombres = invalidos[col_desc_err].dropna().astype(str).unique()
                         lista = "\n- ".join(nombres[:10]) + ("\n- ..." if len(nombres) > 10 else "")
                         st.error(f"🚨 **PARO DE SEGURIDAD EN OPERACIONES** 🚨\n\nHay productos sin categoría o mal asignados.\n**Corrige antes de continuar:**\n\n- {lista}")
                         st.stop()
 
-                    # Filtrar validos y sumarizar
-                    df_ops = df_ops[df_ops['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))]
+                    # Limpiar y preparar Operaciones
+                    df_ops = df_ops[df_ops['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))].copy()
                     df_ops['Monto_Ops'] = pd.to_numeric(df_ops[col_tot_ops], errors='coerce').fillna(0)
-                    df_ops['Documento'] = df_ops[col_num_ops].astype(str).str.strip()
+                    
+                    # Normalizar los Documentos (Quitando posibles prefijos para cruce limpio)
+                    df_ops['Documento'] = df_ops[col_num_ops].astype(str).str.strip().str.upper()
+                    df_ops['Documento'] = df_ops['Documento'].str.replace('CFE-', '').str.replace('FSE-', '')
                     df_ops['Categoria'] = df_ops['_Cat_Upper']
+                    df_ops['Desc_Limpia'] = df_ops[col_desc_ops].astype(str).str.upper().str.strip()
 
-                    # Agrupar operaciones por Documento y Categoría
+                    # Agrupar operaciones para el cruce final
                     df_ops_grouped = df_ops.groupby(['Documento', 'Categoria'])['Monto_Ops'].sum().reset_index()
-                    documentos_conocidos = df_ops_grouped['Documento'].unique().tolist()
-                    documentos_conocidos.sort(key=len, reverse=True) # Ordenar por longitud para que el regex agarre el más específico primero
+                    
+                    # Diccionario para "Adivinar" facturas múltiples por descripcion
+                    documentos_conocidos = df_ops['Documento'].unique().tolist()
+                    documentos_conocidos.sort(key=len, reverse=True) # Los más largos primero (UUIDs antes que "00008")
+                    ops_docs_desc = df_ops.groupby('Documento')['Desc_Limpia'].apply(list).to_dict()
 
                     # ==========================================
                     # 2. PROCESAMIENTO DE CONTABILIDAD
                     # ==========================================
                     
                     col_tipo_acc = next((c for c in df_acc.columns if 'IDTIPO' in str(c).upper()), None)
-                    col_cta_acc = next((c for c in df_acc.columns if 'IDCUENTA' in str(c).upper()), None)
+                    col_cta_acc = next((c for c in df_acc.columns if 'IDCUENTA' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
                     col_partida_acc = next((c for c in df_acc.columns if 'NUMERO' in str(c).upper()), None)
                     col_conc_acc = next((c for c in df_acc.columns if 'CONCEPTO' in str(c).upper()), None)
                     col_debe_acc = next((c for c in df_acc.columns if 'DEBE' in str(c).upper()), None)
 
                     if not all([col_tipo_acc, col_cta_acc, col_partida_acc, col_conc_acc, col_debe_acc]):
-                        st.error("🚨 Error en archivo de Contabilidad: Faltan columnas clave (IdTipo, IdCuenta, Numero, Concepto, Debe).")
+                        st.error("🚨 Error en Contabilidad: Faltan columnas clave (IdTipo, IdCuenta, Numero, Concepto, Debe).")
                         st.stop()
 
-                    # Filtrar solo Cuentas por Pagar (CxP)
+                    # Filtrar Cuentas por Pagar (CxP)
                     df_acc = df_acc[df_acc[col_tipo_acc].astype(str).str.upper().str.strip() == 'CXP'].copy()
 
-                    # --- EXTRACTOR INTELIGENTE DE DOCUMENTOS ---
+                    # --- EXTRACTOR INTELIGENTE Y ROBUSTO ---
                     def extraer_doc(concepto):
-                        concepto = str(concepto).upper()
-                        # 1. Buscar si el concepto contiene un documento exacto de Operaciones
+                        c = str(concepto).upper()
+                        # 1. Buscar UUIDs formales explícitos
+                        match_uuid = re.search(r'([A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12})', c)
+                        if match_uuid: return match_uuid.group(1)
+                        # 2. Buscar si el string del documento (ej. "00008") está dentro del concepto ("FSE-00008")
                         for doc in documentos_conocidos:
-                            if doc.upper() in concepto:
-                                return doc
-                        # 2. Si no, buscar formatos estandar de Nexus
-                        match = re.search(r'(CFE-[A-Z0-9\-]+|FSE-\d+|[A-Z0-9]{8}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{4}-[A-Z0-9]{12})', concepto)
-                        if match:
-                            # Quitar prefijos comunes si los atrapa el regex
-                            return match.group(1).replace('CFE-', '').replace('FSE-', 'FSE-')
+                            if doc in c: return doc
+                        # 3. Rescate por formato general CFE o FSE
+                        match_fse = re.search(r'(?:CFE|FSE)-([A-Z0-9\-]+)', c)
+                        if match_fse: return match_fse.group(1)
                         return None
 
                     df_acc['Doc_Extraido'] = df_acc[col_conc_acc].apply(extraer_doc)
 
-                    # --- HEREDAR DOCUMENTOS CIEGOS POR PARTIDA (Ej. PANCITO CON POLLO) ---
-                    # Crear un diccionario: Número de Partida -> Documento Encontrado
+                    # --- RESOLVEDOR DE PARTIDAS MULTIPLES ---
                     mapa_partidas = df_acc.dropna(subset=['Doc_Extraido']).groupby(col_partida_acc)['Doc_Extraido'].unique().to_dict()
 
                     def rellenar_doc_ciego(row):
                         if pd.notna(row['Doc_Extraido']):
                             return row['Doc_Extraido']
+                        
                         docs_en_partida = mapa_partidas.get(row[col_partida_acc], [])
                         if len(docs_en_partida) == 1:
-                            return docs_en_partida[0] # Hereda el documento de las otras líneas
+                            return docs_en_partida[0] # Fácil, solo hay 1 factura en la partida
+                        
                         elif len(docs_en_partida) > 1:
-                            return docs_en_partida[0] # Si hay varios, se asume el primero por defecto
+                            # ¡Múltiples facturas! Buscar a cuál le pertenece leyendo la descripción de la zanahoria/pan
+                            concepto_conta = str(row[col_conc_acc]).upper()
+                            for doc in docs_en_partida:
+                                descripciones_ops = ops_docs_desc.get(doc, [])
+                                for desc in descripciones_ops:
+                                    if desc in concepto_conta:
+                                        return doc
+                            # Si no se pudo enlazar, lo marcamos para que se note la mezcla
+                            return f"MULTIPLE_NO_IDENTIFICADO_{row[col_partida_acc]}"
+                            
                         return "DOC_NO_IDENTIFICADO"
 
                     df_acc['Documento_Final'] = df_acc.apply(rellenar_doc_ciego, axis=1)
 
-                    # --- FILTRAR CUENTAS Y MAPEAR CATEGORÍAS ---
+                    # --- MAPEO DE CUENTAS CONTABLES ---
                     mapa_cuentas = {
                         '110601': 'MATERIA PRIMA',
                         '110603': 'PRODUCTO TERMINADO',
@@ -148,55 +166,41 @@ def mostrar_modulo_auditoria():
                     df_inv['Categoria'] = df_inv['Cuenta_Limpia'].map(mapa_cuentas)
                     df_inv['Monto_Conta'] = pd.to_numeric(df_inv[col_debe_acc], errors='coerce').fillna(0)
 
-                    # Agrupar contabilidad por Documento y Categoría Mapeada
                     df_acc_grouped = df_inv.groupby(['Documento_Final', 'Categoria'])['Monto_Conta'].sum().reset_index()
                     df_acc_grouped.rename(columns={'Documento_Final': 'Documento'}, inplace=True)
 
                     # ==========================================
-                    # 3. CRUCE Y AUDITORÍA BIDIRECCIONAL
+                    # 3. CRUCE BIDIRECCIONAL FINAL
                     # ==========================================
                     
-                    # Unir ambos dataframes asegurando que se vean todas las caras de la moneda
                     df_cruce = pd.merge(df_ops_grouped, df_acc_grouped, on=['Documento', 'Categoria'], how='outer')
                     
                     df_cruce['Monto_Ops'] = df_cruce['Monto_Ops'].fillna(0.0).round(2)
                     df_cruce['Monto_Conta'] = df_cruce['Monto_Conta'].fillna(0.0).round(2)
                     df_cruce['Diferencia ($)'] = (df_cruce['Monto_Ops'] - df_cruce['Monto_Conta']).round(2)
 
-                    # Listas de control para identificar dónde está el error
-                    docs_en_ops = df_ops_grouped['Documento'].unique()
-                    docs_en_acc = df_acc_grouped['Documento'].unique()
+                    docs_en_ops = set(df_ops_grouped['Documento'].unique())
+                    docs_en_acc = set(df_acc_grouped['Documento'].unique())
 
                     def evaluar_auditoria(row):
-                        doc = row['Documento']
+                        doc = str(row['Documento'])
                         m_ops = row['Monto_Ops']
                         m_acc = row['Monto_Conta']
                         
                         if m_ops > 0 and m_acc == 0:
-                            # Está en Ops, pero no bajo esta categoría en Conta
-                            if doc in docs_en_acc:
-                                return "🔴 ERROR DE CUENTA CONTABLE (Categoría cruzada)"
-                            else:
-                                return "🔴 NO CONTABILIZADO (Falta la Partida o Inventario)"
+                            if doc in docs_en_acc: return "🔴 ERROR DE CUENTA CONTABLE (Categoría cruzada)"
+                            else: return "🔴 NO CONTABILIZADO (Falta la Partida o Inventario)"
                                 
                         elif m_acc > 0 and m_ops == 0:
-                            # Está en Conta bajo esta categoría, pero no en Ops
-                            if doc in docs_en_ops:
-                                return "🔴 ERROR DE CATEGORÍA OPERATIVA (Categoría cruzada)"
-                            else:
-                                return "🟡 NO EN OPERACIONES (Puede ser un ajuste manual)"
+                            if doc in docs_en_ops: return "🔴 ERROR DE CATEGORÍA OPERATIVA (Categoría cruzada)"
+                            else: return "🟡 NO EN OPERACIONES (Puede ser un ajuste manual)"
                                 
                         else:
-                            # Ambos existen en la misma categoría, evaluar dinero
-                            diff = abs(row['Diferencia ($)'])
-                            if diff > 0.05: # Tolerancia de centavos
-                                return "🟠 DIFERENCIA DE MONTO"
-                            else:
-                                return "🟢 CUADRADO EXACTO"
+                            if abs(row['Diferencia ($)']) > 0.05: return "🟠 DIFERENCIA DE MONTO"
+                            else: return "🟢 CUADRADO EXACTO"
 
                     df_cruce['Estado de Auditoría'] = df_cruce.apply(evaluar_auditoria, axis=1)
 
-                    # Ordenar para que los errores salgan arriba
                     orden_estado = {
                         "🔴 ERROR DE CUENTA CONTABLE (Categoría cruzada)": 1,
                         "🔴 ERROR DE CATEGORÍA OPERATIVA (Categoría cruzada)": 2,
@@ -205,7 +209,7 @@ def mostrar_modulo_auditoria():
                         "🟡 NO EN OPERACIONES (Puede ser un ajuste manual)": 5,
                         "🟢 CUADRADO EXACTO": 6
                     }
-                    df_cruce['Prioridad'] = df_cruce['Estado de Auditoría'].map(orden_estado)
+                    df_cruce['Prioridad'] = df_cruce['Estado de Auditoría'].map(orden_estado).fillna(99)
                     df_cruce = df_cruce.sort_values(['Prioridad', 'Documento']).drop(columns=['Prioridad'])
 
                     st.session_state['audit_cruce_df'] = df_cruce
@@ -218,7 +222,6 @@ def mostrar_modulo_auditoria():
         if st.session_state.get('audit_ejecutado', False):
             df_final = st.session_state['audit_cruce_df']
             
-            # Estadísticas rápidas
             errores_cuenta = len(df_final[df_final['Estado de Auditoría'].str.contains('ERROR DE CUENTA')])
             no_conta = len(df_final[df_final['Estado de Auditoría'].str.contains('NO CONTABILIZADO')])
             dif_monto = len(df_final[df_final['Estado de Auditoría'].str.contains('DIFERENCIA')])
