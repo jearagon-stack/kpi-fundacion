@@ -80,11 +80,18 @@ def mostrar_modulo_auditoria():
                         st.stop()
 
                     df_ops = df_ops[df_ops['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))].copy()
-                    df_ops['Monto_Ops'] = pd.to_numeric(df_ops[col_tot_ops], errors='coerce').fillna(0)
-                    df_ops['Documento'] = df_ops[col_num_ops].astype(str).str.replace('CFE-', '').str.replace('FSE-', '').str.strip().str.upper()
+                    
+                    # Limpieza segura del Documento usando Regex para afectar SOLO el inicio (^), evitando dañar UUIDs
+                    df_ops['Documento'] = df_ops[col_num_ops].astype(str).str.strip().str.upper()
+                    df_ops['Documento'] = df_ops['Documento'].str.replace(r'^CFE-', '', regex=True).str.replace(r'^FSE-', '', regex=True)
+                    
                     df_ops['Categoria'] = df_ops['_Cat_Upper']
                     df_ops['Desc_Limpia'] = df_ops[col_desc_ops].astype(str).str.upper().str.strip()
                     df_ops['Tipo_Doc'] = df_ops[col_tipo_ops].astype(str).str.upper().str.strip() if col_tipo_ops else "NO IDENTIFICADO"
+
+                    # Convertir Monto_Ops a número y aplicar la REGLA DE LOS SIGNOS para Notas de Crédito
+                    df_ops['Monto_Ops_Abs'] = pd.to_numeric(df_ops[col_tot_ops], errors='coerce').fillna(0)
+                    df_ops['Monto_Ops'] = df_ops.apply(lambda r: -abs(r['Monto_Ops_Abs']) if 'NOTA DE CRÉDITO' in r['Tipo_Doc'] or 'NOTA DE CREDITO' in r['Tipo_Doc'] else r['Monto_Ops_Abs'], axis=1)
 
                     df_ops_grouped = df_ops.groupby(['Documento', 'Categoria']).agg({
                         'Monto_Ops': 'sum',
@@ -202,6 +209,7 @@ def mostrar_modulo_auditoria():
                     df_inv['Categoria'] = df_inv['Cuenta_Limpia'].map(mapa_cuentas)
                     df_inv['Cuenta_Nom'] = df_inv[col_nom_cta_acc].astype(str).str.strip()
 
+                    # AGRUPAMOS POR CUENTA PARA QUE SE DESGLOSE EN MÚLTIPLES FILAS
                     df_acc_grouped = df_inv.groupby(['Documento_Final', 'Categoria', 'Cuenta_Nom']).agg({
                         'Monto_Conta_Neto': 'sum',
                         col_partida_acc: lambda x: ', '.join(x.dropna().astype(str).unique())
