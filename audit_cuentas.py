@@ -31,16 +31,8 @@ def mostrar_modulo_auditoria():
     col1, col2 = st.columns(2)
     with col1:
         arch_ops = st.file_uploader("1. Reporte de Compras (Operaciones)", type=["xlsx", "xls"], key="audit_ops")
-        mes_seleccionado = st.selectbox(
-            "📅 Mes Operativo de Corte", 
-            ["Todos (Auditoría Continua)", "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"],
-            help="Selecciona el mes límite de tu revisión operativa. Los registros contables posteriores a este mes se marcarán como 'Mes Posterior'."
-        )
     with col2:
-        arch_acc = st.file_uploader("2. Reporte Contable (Puede incluir meses posteriores)", type=["xlsx", "xls"], key="audit_acc")
-
-    mapa_meses = {"Todos (Auditoría Continua)": 0, "Enero": 1, "Febrero": 2, "Marzo": 3, "Abril": 4, "Mayo": 5, "Junio": 6, "Julio": 7, "Agosto": 8, "Septiembre": 9, "Octubre": 10, "Noviembre": 11, "Diciembre": 12}
-    mes_corte_num = mapa_meses[mes_seleccionado]
+        arch_acc = st.file_uploader("2. Reporte Contable", type=["xlsx", "xls"], key="audit_acc")
 
     if arch_ops and arch_acc:
         if st.button("🚀 Ejecutar Cruce de Auditoría", type="primary", use_container_width=True):
@@ -69,7 +61,7 @@ def mostrar_modulo_auditoria():
                         col_tipo_ops = None
 
                     if not all([col_num_ops, col_tot_ops, col_cat_ops, col_desc_ops]):
-                        st.error("🚨 Error en Operaciones: Faltan columnas clave (Numero, Total, Categoria o Descripcion).")
+                        st.error("🚨 Error en Operaciones: Faltan columnas clave.")
                         st.stop()
 
                     df_ops['_Cat_Upper'] = df_ops[col_cat_ops].astype(str).str.upper().str.strip()
@@ -263,10 +255,10 @@ def mostrar_modulo_auditoria():
                         else:
                             if dif_global > 0.05: return "🟠 DIFERENCIA DE MONTO"
                             else: 
-                                f_acc = row['Fecha_Conta_dt']
                                 f_ops = row['Fecha_Ops_dt']
-                                if mes_corte_num > 0 and pd.notna(f_acc):
-                                    if f_acc.month > mes_corte_num or (pd.notna(f_ops) and f_acc.year > f_ops.year):
+                                f_acc = row['Fecha_Conta_dt']
+                                if pd.notna(f_ops) and pd.notna(f_acc):
+                                    if (f_acc.year > f_ops.year) or (f_acc.year == f_ops.year and f_acc.month > f_ops.month):
                                         return "🔵 CONTABILIZADO EN MES POSTERIOR"
                                 return "🟢 CUADRADO EXACTO"
 
