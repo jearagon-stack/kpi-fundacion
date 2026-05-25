@@ -15,7 +15,8 @@ def limpiar_codigo_cuenta(c):
 
 def generar_excel_auditoria(df, nombre_hoja="Auditoria_Cuentas"):
     output = io.BytesIO()
-    df_descarga = df.drop(columns=['Categoria_Original'], errors='ignore')
+    # Ocultar las columnas internas de fecha y categoria original del Excel final
+    df_descarga = df.drop(columns=['Categoria_Original', 'Fecha_Ops_dt', 'Fecha_Conta_dt'], errors='ignore')
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_descarga.to_excel(writer, index=False, sheet_name=nombre_hoja)
     return output.getvalue()
@@ -30,14 +31,14 @@ def mostrar_modulo_auditoria():
     st.markdown("##### 📥 Carga de Reportes")
     col1, col2 = st.columns(2)
     with col1:
-        arch_ops = st.file_uploader("1. Reporte de Compras (Operaciones)", type=["xlsx", "xls"], key="audit_ops")
+        arch_ops = st.file_uploader("1. Reporte de Compras (Mes a Auditar)", type=["xlsx", "xls"], key="audit_ops")
     with col2:
-        arch_acc = st.file_uploader("2. Reporte de Movimientos (Contabilidad)", type=["xlsx", "xls"], key="audit_acc")
+        arch_acc = st.file_uploader("2. Reporte de Movimientos Contables (Acumulado)", type=["xlsx", "xls"], key="audit_acc")
 
     if arch_ops and arch_acc:
         if st.button("🚀 Ejecutar Cruce de Auditoría", type="primary", use_container_width=True):
             
-            with st.spinner("Triangulando documentos y desglosando cuentas..."):
+            with st.spinner("Triangulando documentos y evaluando periodos contables..."):
                 try:
                     df_ops = pd.read_excel(arch_ops, dtype=str)
                     df_acc = pd.read_excel(arch_acc, dtype=str)
@@ -52,6 +53,8 @@ def mostrar_modulo_auditoria():
                     col_tot_ops = next((c for c in df_ops.columns if 'TOTAL' in str(c).upper()), None)
                     col_cat_ops = next((c for c in df_ops.columns if 'CATEGORIA' in str(c).upper()), None)
                     col_desc_ops = next((c for c in df_ops.columns if 'DESCRIPCION' in str(c).upper() or 'NOMBRE' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
+                    col_f_ops = next((c for c in df_ops.columns if 'FECHA' in str(c).upper()), None)
+                    col_p_ops = next((c for c in df_ops.columns if 'PROV' in str(c).upper()), None)
 
                     try: 
                         col_tipo_ops = df_ops.columns[10]
@@ -81,7 +84,7 @@ def mostrar_modulo_auditoria():
 
                     df_ops = df_ops[df_ops['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))].copy()
                     
-                    # Limpieza segura del Documento usando Regex para afectar SOLO el inicio (^), evitando dañar UUIDs
+                    # Limpieza segura de prefijos
                     df_ops['Documento'] = df_ops[col_num_ops].astype(str).str.strip().str.upper()
                     df_ops['Documento'] = df_ops['Documento'].str.replace(r'^CFE-', '', regex=True).str.replace(r'^FSE-', '', regex=True)
                     
@@ -89,13 +92,17 @@ def mostrar_modulo_auditoria():
                     df_ops['Desc_Limpia'] = df_ops[col_desc_ops].astype(str).str.upper().str.strip()
                     df_ops['Tipo_Doc'] = df_ops[col_tipo_ops].astype(str).str.upper().str.strip() if col_tipo_ops else "NO IDENTIFICADO"
 
-                    # Convertir Monto_Ops a número y aplicar la REGLA DE LOS SIGNOS para Notas de Crédito
+                    # Regla de signos para Notas de Crédito
                     df_ops['Monto_Ops_Abs'] = pd.to_numeric(df_ops[col_tot_ops], errors='coerce').fillna(0)
                     df_ops['Monto_Ops'] = df_ops.apply(lambda r: -abs(r['Monto_Ops_Abs']) if 'NOTA DE CRÉDITO' in r['Tipo_Doc'] or 'NOTA DE CREDITO' in r['Tipo_Doc'] else r['Monto_Ops_Abs'], axis=1)
 
+                    # Transformación de Fechas para Opción A (Mes Posterior)
+                    df_ops['Fecha_Ops_dt'] = pd.to_datetime(df_ops[col_f_ops], errors='coerce', dayfirst=True) if col_f_ops else pd.NaT
+
                     df_ops_grouped = df_ops.groupby(['Documento', 'Categoria']).agg({
                         'Monto_Ops': 'sum',
-                        'Tipo_Doc': 'first'
+                        'Tipo_Doc': 'first',
+                        'Fecha_Ops_dt': 'first'
                     }).reset_index()
                     
                     documentos_conocidos = df_ops['Documento'].unique().tolist()
@@ -111,6 +118,8 @@ def mostrar_modulo_auditoria():
                     col_conc_acc = next((c for c in df_acc.columns if 'CONCEPTO' in str(c).upper()), None)
                     col_debe_acc = next((c for c in df_acc.columns if 'DEBE' in str(c).upper()), None)
                     col_haber_acc = next((c for c in df_acc.columns if 'HABER' in str(c).upper()), None)
+                    col_f_acc = next((c for c in df_acc.columns if 'FECHA' in str(c).upper()), None)
+                    col_p_acc = next((c for c in df_acc.columns if 'PROV' in str(c).upper() or 'REFERENCIA' in str(c).upper()), None)
                     
                     col_nom_cta_acc = next((c for c in df_acc.columns if str(c).strip().upper() == 'NOMBRE'), None)
                     if not col_nom_cta_acc: 
@@ -148,11 +157,6 @@ def mostrar_modulo_auditoria():
                         return "NO_IDENTIFICADO"
 
                     df_acc['Documento_Final'] = df_acc.apply(rellenar_doc_ciego, axis=1)
-
-                    col_f_ops = next((c for c in df_ops.columns if 'FECHA' in str(c).upper()), None)
-                    col_p_ops = next((c for c in df_ops.columns if 'PROV' in str(c).upper()), None)
-                    col_f_acc = next((c for c in df_acc.columns if 'FECHA' in str(c).upper()), None)
-                    col_p_acc = next((c for c in df_acc.columns if 'PROV' in str(c).upper() or 'REFERENCIA' in str(c).upper()), None)
 
                     df_acc['Debe_Num'] = pd.to_numeric(df_acc[col_debe_acc], errors='coerce').fillna(0)
                     df_acc['Haber_Num'] = pd.to_numeric(df_acc[col_haber_acc], errors='coerce').fillna(0) if col_haber_acc else 0
@@ -208,11 +212,15 @@ def mostrar_modulo_auditoria():
                     df_inv = df_acc[df_acc['Cuenta_Limpia'].isin(mapa_cuentas.keys())].copy()
                     df_inv['Categoria'] = df_inv['Cuenta_Limpia'].map(mapa_cuentas)
                     df_inv['Cuenta_Nom'] = df_inv[col_nom_cta_acc].astype(str).str.strip()
+                    
+                    # Extracción de fecha para contabilidad
+                    df_inv['Fecha_Conta_dt'] = pd.to_datetime(df_inv[col_f_acc], errors='coerce', dayfirst=True) if col_f_acc else pd.NaT
 
-                    # AGRUPAMOS POR CUENTA PARA QUE SE DESGLOSE EN MÚLTIPLES FILAS
+                    # Agrupación Contable (Incluyendo la fecha detectada)
                     df_acc_grouped = df_inv.groupby(['Documento_Final', 'Categoria', 'Cuenta_Nom']).agg({
                         'Monto_Conta_Neto': 'sum',
-                        col_partida_acc: lambda x: ', '.join(x.dropna().astype(str).unique())
+                        col_partida_acc: lambda x: ', '.join(x.dropna().astype(str).unique()),
+                        'Fecha_Conta_dt': 'first'
                     }).reset_index()
                     df_acc_grouped.rename(columns={'Documento_Final': 'Documento', 'Monto_Conta_Neto': 'Monto_Conta', col_partida_acc: 'Partida_Conta'}, inplace=True)
 
@@ -231,7 +239,6 @@ def mostrar_modulo_auditoria():
                     df_cruce['Partida_Conta'] = df_cruce['Partida_Conta'].fillna('SIN PARTIDA')
                     df_cruce['Tipo_Doc'] = df_cruce['Tipo_Doc'].fillna('NO EN OPS')
 
-                    # Configuración de las columnas visibles y ocultas
                     df_cruce['Categoria_Original'] = df_cruce['Categoria']
                     df_cruce['Categoria Operativa'] = df_cruce.apply(lambda r: r['Categoria'] if r['Monto_Ops'] != 0 else 'SIN REGISTRO EN OPS', axis=1)
 
@@ -255,7 +262,14 @@ def mostrar_modulo_auditoria():
                             else: return "🟡 NO EN OPERACIONES (Puede ser un ajuste manual)"
                         else:
                             if dif_global > 0.05: return "🟠 DIFERENCIA DE MONTO"
-                            else: return "🟢 CUADRADO EXACTO"
+                            else: 
+                                # --- NUEVA REGLA: MES POSTERIOR ---
+                                f_ops = row['Fecha_Ops_dt']
+                                f_acc = row['Fecha_Conta_dt']
+                                if pd.notna(f_ops) and pd.notna(f_acc):
+                                    if (f_acc.year > f_ops.year) or (f_acc.year == f_ops.year and f_acc.month > f_ops.month):
+                                        return "🔵 CONTABILIZADO EN MES POSTERIOR"
+                                return "🟢 CUADRADO EXACTO"
 
                     df_cruce['Estado de Auditoría'] = df_cruce.apply(evaluar_auditoria, axis=1)
 
@@ -264,15 +278,17 @@ def mostrar_modulo_auditoria():
                         "🔴 ERROR DE CATEGORÍA OPERATIVA (Categoría cruzada)": 2,
                         "🔴 NO CONTABILIZADO (Falta la Partida o Inventario)": 3,
                         "🟠 DIFERENCIA DE MONTO": 4,
-                        "🟡 NO EN OPERACIONES (Puede ser un ajuste manual)": 5,
-                        "🟢 CUADRADO EXACTO": 6
+                        "🔵 CONTABILIZADO EN MES POSTERIOR": 5,
+                        "🟡 NO EN OPERACIONES (Puede ser un ajuste manual)": 6,
+                        "🟢 CUADRADO EXACTO": 7
                     }
                     df_cruce['Prioridad'] = df_cruce['Estado de Auditoría'].map(orden_estado).fillna(99)
                     df_cruce = df_cruce.sort_values(['Prioridad', 'Documento']).drop(columns=['Prioridad', 'is_dup', 'doc_ops_total', 'doc_acc_total', 'Categoria'])
 
                     columnas_ordenadas = [
                         'Partida_Conta', 'Tipo_Doc', 'Documento', 'Categoria Operativa', 'Cuenta_Nom', 
-                        'Monto_Ops', 'Monto_Conta', 'Diferencia ($)', 'Estado de Auditoría', 'Categoria_Original'
+                        'Monto_Ops', 'Monto_Conta', 'Diferencia ($)', 'Estado de Auditoría', 
+                        'Categoria_Original', 'Fecha_Ops_dt', 'Fecha_Conta_dt'
                     ]
                     df_cruce = df_cruce[columnas_ordenadas]
                     df_cruce = df_cruce.rename(columns={
@@ -294,21 +310,23 @@ def mostrar_modulo_auditoria():
             errores_cuenta = len(df_final[df_final['Estado de Auditoría'].str.contains('ERROR DE CUENTA')])
             no_conta = len(df_final[df_final['Estado de Auditoría'].str.contains('NO CONTABILIZADO')])
             dif_monto = len(df_final[df_final['Estado de Auditoría'].str.contains('DIFERENCIA')])
+            mes_posterior = len(df_final[df_final['Estado de Auditoría'].str.contains('MES POSTERIOR')])
             cuadrados = len(df_final[df_final['Estado de Auditoría'].str.contains('CUADRADO')])
             
             st.success("✅ Auditoría completada con éxito.")
             st.markdown("---")
             
-            c1, c2, c3, c4 = st.columns(4)
+            c1, c2, c3, c4, c5 = st.columns(5)
             c1.metric("Errores de Cuenta", errores_cuenta)
             c2.metric("Falta Contabilizar", no_conta)
             c3.metric("Diferencias de Monto", dif_monto)
-            c4.metric("Documentos Cuadrados", cuadrados)
+            c4.metric("Mes Posterior", mes_posterior)
+            c5.metric("Documentos Cuadrados", cuadrados)
             
             st.subheader("📋 Matriz de Validación de Cuentas")
             
             st.dataframe(
-                df_final.drop(columns=['Categoria_Original'], errors='ignore'),
+                df_final.drop(columns=['Categoria_Original', 'Fecha_Ops_dt', 'Fecha_Conta_dt'], errors='ignore'),
                 column_config={
                     "Partida Contable (Conta)": st.column_config.TextColumn("Partida"),
                     "Tipo Doc (Ops)": st.column_config.TextColumn("Tipo"),
