@@ -267,15 +267,15 @@ def mostrar_modulo_costos():
                                 else:
                                     df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
 
-                                # 2. Diferenciar estrictamente Existencia Inicial de Final desde el archivo maestro
+                               # 2. Diferenciar estrictamente Existencia Inicial de Final desde el archivo maestro
                                 df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
                                 df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-                                df_ini_m['Valor'] = df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']
+                                df_ini_m['Valor'] = (df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']).round(2)
 
                                 df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
-                                df_fin_m['Valor'] = df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']
+                                df_fin_m['Valor'] = (df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']).round(2)
                                 
-                                df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
+                                df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0).round(2)
 
                                 grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum()
                                 grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
@@ -561,12 +561,12 @@ def mostrar_modulo_costos():
 
                             df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
                             df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-                            df_ini_m['Valor'] = df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']
+                            df_ini_m['Valor'] = (df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']).round(2)
 
                             df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
-                            df_fin_m['Valor'] = df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']
+                            df_fin_m['Valor'] = (df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']).round(2)
                             
-                            df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO']]), errors='coerce').fillna(0.0)
+                            df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO']]), errors='coerce').fillna(0.0).round(2)
 
                             grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum()
                             grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum()
