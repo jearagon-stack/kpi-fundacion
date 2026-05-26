@@ -72,6 +72,7 @@ def mostrar_modulo_costos():
         return df
 
     def consolidar(lista):
+        if not lista: return pd.DataFrame()
         return pd.concat([limpiar_nativos_nexus(cargar_y_marcar(a)) for a in lista], ignore_index=True)
 
     def get_num(df, keys):
@@ -187,6 +188,7 @@ def mostrar_modulo_costos():
             with col_k1: arch_kardex_aud = st.file_uploader("4. Kardex Valuado (Opcional)", type=["xlsx"], accept_multiple_files=True)
             with col_k2: arch_kardex_res = st.file_uploader("5. Kardex Resumen (Para Unificar Costos Finales)", type=["xlsx"])
 
+
             if arch_inv_maestro and arch_com:
                 if 'huerfanos_df' not in st.session_state:
                     forzar_calculo = st.checkbox("⚠️ Forzar cálculo ciego (Omitir revisión de cuentas)")
@@ -263,15 +265,15 @@ def mostrar_modulo_costos():
                                     df_fin_m['Costo_Unificado'] = df_fin_m['Codigo'].map(mapa_costo_unificado)
                                     df_fin_m['Costo_Usar'] = pd.to_numeric(df_fin_m['Costo_Unificado'], errors='coerce').fillna(0.0)
                                 else:
-                                    df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                    df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
 
-                                # 2. Diferenciar estrictamente Existencia Inicial de Final (Desde Archivo Maestro)
+                                # 2. Diferenciar estrictamente Existencia Inicial de Final desde el archivo maestro
                                 df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
                                 df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
                                 df_ini_m['Valor'] = df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']
 
                                 df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
-                                df_fin_m['Valor'] = df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar'] # Usa costo_usar que puede venir de kardex o del mismo archivo
+                                df_fin_m['Valor'] = df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']
                                 
                                 df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
 
@@ -400,7 +402,7 @@ def mostrar_modulo_costos():
                                             df_v['COSTO_NUM'] = pd.to_numeric(df_v[c_costo_k], errors='coerce').fillna(0.0).astype(float)
 
                                             # Filtro Existencia > 0 (Mapeado desde df_fin_m)
-                                            mapa_exist = dict(zip(df_fin_m['Codigo'], pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)))
+                                            mapa_exist = dict(zip(df_fin_m['Codigo'], pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)))
                                             df_v['Unid_Actuales'] = df_v[c_cod_k].map(mapa_exist).fillna(0.0)
                                             df_v = df_v[df_v['Unid_Actuales'] > 0]
 
@@ -428,14 +430,14 @@ def mostrar_modulo_costos():
                                     if not df_ini_m.empty:
                                         df_temp_ini = df_ini_m.copy()
                                         try:
-                                            df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                            df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
                                             df_ini_unitario = df_temp_ini.groupby('Codigo')['Costo_Inicial'].max().reset_index()
                                         except: pass
 
                                     df_inv_actual = pd.DataFrame()
                                     if not df_fin_m.empty:
                                         df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
-                                        df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                                        df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
                                         df_inv_actual['Costo_Unitario_Actual'] = df_fin_m['Costo_Usar'] # Usa el costo unificado
                                         df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
 
@@ -555,7 +557,7 @@ def mostrar_modulo_costos():
                                 df_fin_m['Costo_Unificado'] = df_fin_m['Codigo'].map(mapa_costo_unificado)
                                 df_fin_m['Costo_Usar'] = pd.to_numeric(df_fin_m['Costo_Unificado'], errors='coerce').fillna(0.0)
                             else:
-                                df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
 
                             df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
                             df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
@@ -613,14 +615,14 @@ def mostrar_modulo_costos():
                             if not df_ini_m.empty:
                                 df_temp_ini = df_ini_m.copy()
                                 try:
-                                    df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                    df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
                                     df_ini_unitario = df_temp_ini.groupby('Codigo')['Costo_Inicial'].max().reset_index()
                                 except: pass
 
                             df_inv_actual = pd.DataFrame()
                             if not df_fin_m.empty:
                                 df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
-                                df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                                df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
                                 df_inv_actual['Costo_Unitario_Actual'] = df_fin_m['Costo_Usar'] # Usa el costo unificado
                                 df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
 
@@ -788,11 +790,11 @@ def mostrar_modulo_costos():
                                     filas_g.append([fecha_hoy, mem['mes_cierre'], mem['anio_cierre'], u_r, str(r['Cuenta_Contable']), round(r['Inicial'],2), round(r['Compra'],2), round(r['Final'],2), round(r['Consumo'],2), r['Codigo'], r['ORIGEN_ARCHIVO']])
                             if filas_g: ws_det.append_rows(filas_g)
                             
-                            del st.session_state['memoria_cierre']
-                            del st.session_state['datos_auditoria']
-                            st.session_state['auditoria_aprobada'] = False
-                            st.cache_data.clear()
-                            st.rerun()
+                        del st.session_state['memoria_cierre']
+                        del st.session_state['datos_auditoria']
+                        st.session_state['auditoria_aprobada'] = False
+                        st.cache_data.clear()
+                        st.rerun()
 
     # =========================================================================
     # PESTAÑA 2: REGISTRO DE TRASLADOS (CON FILTRO ESTRICTO)
