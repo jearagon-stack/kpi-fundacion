@@ -177,10 +177,9 @@ def mostrar_modulo_costos():
             costo_diferido_anterior = st.number_input("Costo Diferido de Arrastre (110602):", min_value=0.0, value=0.0)
             
             st.markdown("#### 📁 Archivos Base de Cierre (Cálculo de Consumo)")
-            col_u1, col_u2, col_u3 = st.columns(3)
-            with col_u1: arch_ini = st.file_uploader("1. Inv. Inicial", type=["xlsx"], accept_multiple_files=True)
+            col_u1, col_u2 = st.columns(2)
+            with col_u1: arch_inv_maestro = st.file_uploader("1. Inventario Maestro (Inicial y Final)", type=["xlsx"], accept_multiple_files=True)
             with col_u2: arch_com = st.file_uploader("2. Compras", type=["xlsx"], accept_multiple_files=True)
-            with col_u3: arch_fin = st.file_uploader("3. Inv. Final", type=["xlsx"], accept_multiple_files=True)
 
             st.markdown("---")
             st.markdown("#### 🛡️ Auditoría Inteligente (Validación de Costos)")
@@ -188,8 +187,7 @@ def mostrar_modulo_costos():
             with col_k1: arch_kardex_aud = st.file_uploader("4. Kardex Valuado (Opcional)", type=["xlsx"], accept_multiple_files=True)
             with col_k2: arch_kardex_res = st.file_uploader("5. Kardex Resumen (Para Unificar Costos Finales)", type=["xlsx"])
 
-
-            if arch_ini and arch_com and arch_fin:
+            if arch_inv_maestro and arch_com:
                 if 'huerfanos_df' not in st.session_state:
                     forzar_calculo = st.checkbox("⚠️ Forzar cálculo ciego (Omitir revisión de cuentas)")
                     
@@ -215,7 +213,11 @@ def mostrar_modulo_costos():
                                         st.warning(f"No se pudo unificar costo del Kardex Resumen: {e}")
 
                                 # --- LÓGICA CONTABLE (CÁLCULO DEL CONSUMO) ---
-                                df_inicial = consolidar(arch_ini); df_compras = consolidar(arch_com); df_final = consolidar(arch_fin)
+                                df_maestro_inv = consolidar(arch_inv_maestro)
+                                df_inicial = df_maestro_inv.copy()
+                                df_final = df_maestro_inv.copy()
+                                df_compras = consolidar(arch_com)
+                                
                                 df_dic = obtener_dataframe("Categorias_Costos")
                                 def limpiar_cod(s): return s.astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
                                 for df in [df_dic, df_inicial, df_compras, df_final]: df['Codigo'] = limpiar_cod(df['Codigo'])
@@ -263,13 +265,13 @@ def mostrar_modulo_costos():
                                 else:
                                     df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
 
-                                # 2. Diferenciar estrictamente Existencia Inicial de Final
-                                df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIA', 'INIC'], ['SALDO', 'INIC'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
-                                df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                # 2. Diferenciar estrictamente Existencia Inicial de Final (Desde Archivo Maestro)
+                                df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
+                                df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
                                 df_ini_m['Valor'] = df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']
 
-                                df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIA', 'FIN'], ['SALDO', 'FIN'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
-                                df_fin_m['Valor'] = df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']
+                                df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
+                                df_fin_m['Valor'] = df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar'] # Usa costo_usar que puede venir de kardex o del mismo archivo
                                 
                                 df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
 
@@ -555,11 +557,11 @@ def mostrar_modulo_costos():
                             else:
                                 df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
 
-                            df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIA', 'INIC'], ['SALDO', 'INIC'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
-                            df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                            df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
+                            df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
                             df_ini_m['Valor'] = df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']
 
-                            df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIA', 'FIN'], ['SALDO', 'FIN'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
+                            df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
                             df_fin_m['Valor'] = df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']
                             
                             df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO']]), errors='coerce').fillna(0.0)
