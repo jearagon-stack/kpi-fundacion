@@ -12,20 +12,18 @@ def mostrar_modulo_costos():
     # ==========================================
     # FUNCIONES DE APOYO Y FILTROS ESTRICTOS
     # ==========================================
+    
+    # LISTA EXACTA (Si no está aquí escrita exactamente así, es EXTERNA)
     BODEGAS_CAFETERIA = [
         "CAFETERIA CENTRAL", "CAFETERIA ABASTECIMIENTO", "CAFETERIA ICAS", 
         "CAFETERIA POLIDEPORTIVO", "CAFETERIA EVENTOS", "CAFETERIA JARDINES",
-        "TERRAZA", "CENTRO SOHO"
-    ]
-
-    destinos_ignorados = [
-        "CAFETERIA EVENTOS", "CAFETERIA JARDINES", "CAFETERIA POLIDEPORTIVO", 
-        "CAFETERIA ICAS", "PRODUCCION CAFETERIA CENTRAL", "CAFETERIA CENTRAL"
+        "TERRAZA", "CENTRO SOHO", "GENERAL"
     ]
 
     def es_cafeteria(b):
         b = str(b).strip().upper()
-        return ("CAFETERIA" in b) or (b in ["TERRAZA", "CENTRO SOHO"])
+        # Coincidencia exacta con la lista para evitar falsos positivos con "Producción Cafetería"
+        return b in [bodega.upper() for bodega in BODEGAS_CAFETERIA]
 
     def es_despensa(b):
         b = str(b).strip().upper()
@@ -128,10 +126,10 @@ def mostrar_modulo_costos():
                 
                 suma_actual = sum(pesos) * 100
                 if round(suma_actual, 2) != 100.0:
-                    st.error(f"❌ Error: La distribución suma {suma_actual:.2f}%. Debe ser exactamente 100.00% para poder continuar.")
-                    st.stop()
+                    st.error(f"❌ Error de Distribución: Los porcentajes ingresados suman {suma_actual:.2f}%. Deben sumar exactamente 100.00% para poder procesar los datos.")
+                    st.stop() # Esto bloquea todo hasta que sume 100
                 else:
-                    st.success("✅ Distribución de costo configurada al 100.00%.")
+                    st.success("✅ Distribución configurada correctamente al 100.00%.")
 
             st.divider()
             df_ventas = obtener_dataframe("Historico_Ventas")
@@ -151,7 +149,7 @@ def mostrar_modulo_costos():
             traslados_neta = 0.0
             f_t_in = None; f_t_out = None
             
-            # FILTRO ESTRICTO DE TRASLADOS DESDE NUBE (LÓGICA DE FRONTERA)
+            # FILTRO ESTRICTO DE TRASLADOS (LÓGICA DE FRONTERA)
             if not df_hist_tras.empty:
                 df_hist_tras['Monto'] = pd.to_numeric(df_hist_tras['Monto'], errors='coerce').fillna(0.0)
                 
@@ -169,9 +167,9 @@ def mostrar_modulo_costos():
                 mask_orig_desp = df_hist_tras['Origen'].apply(es_despensa)
 
                 if unidad_cierre == "CAFETERIA":
-                    # Entra a Cafeteria pero NO proviene de Cafeteria
+                    # Sumar: Entra a Cafetería, pero NO viene de Cafetería
                     f_t_in = filtro_base & mask_dest_caf & (~mask_orig_caf)
-                    # Sale de Cafeteria hacia un destino que NO es Cafeteria (ej. Talleres Graficos)
+                    # Sumar: Sale de Cafetería, pero su destino NO es Cafetería
                     f_t_out = filtro_base & mask_orig_caf & (~mask_dest_caf)
                 else: # DESPENSA
                     f_t_in = filtro_base & mask_dest_desp & (~mask_orig_desp)
@@ -268,7 +266,7 @@ def mostrar_modulo_costos():
                                 df_com_m = proteger_cuentas_nulas(df_com_m)
                                 df_fin_m = proteger_cuentas_nulas(df_fin_m)
 
-                                # --- CÁLCULO ESTRICTO DE CANTIDADES Y COSTOS ---
+                                # --- CÁLCULO ESTRICTO DE CANTIDADES Y COSTOS (REDONDEO) ---
                                 if mapa_costo_unificado:
                                     df_fin_m['Costo_Unificado'] = df_fin_m['Codigo'].map(mapa_costo_unificado)
                                     df_fin_m['Costo_Usar'] = pd.to_numeric(df_fin_m['Costo_Unificado'], errors='coerce').fillna(0.0)
@@ -557,7 +555,7 @@ def mostrar_modulo_costos():
                             df_com_m = proteger_cuentas_nulas(df_com_m)
                             df_fin_m = proteger_cuentas_nulas(df_fin_m)
 
-                            # --- CÁLCULO ESTRICTO ---
+                            # --- CÁLCULO ESTRICTO CON REDONDEO ---
                             if mapa_costo_unificado:
                                 df_fin_m['Costo_Unificado'] = df_fin_m['Codigo'].map(mapa_costo_unificado)
                                 df_fin_m['Costo_Usar'] = pd.to_numeric(df_fin_m['Costo_Unificado'], errors='coerce').fillna(0.0)
@@ -708,7 +706,7 @@ def mostrar_modulo_costos():
 
             elif 'anomalias_antiguas' in mem and not mem['anomalias_antiguas'].empty:
                 st.warning("Visualizando auditoría básica (Kardex no subido o no válido).")
-                st.dataframe(mem['anomalias_antiguas'].style.format({'Costo_Inicial':'${:.4f}', 'Compras_Promedio':'${:.4f}', 'Costo_Actual':'${:.4f}', 'Diferencia_$':'${:.4f}', 'Variacion_Porcentual':'{:.2%}'}), use_container_width=True)
+                st.dataframe(mem['anomalias_antiguas'].style.format({'Costo_Inicial':'${:.4f}', 'Compras_Promedio':'${:.4f}', 'Costo_Actual':'${:.4f}', 'Diferencia_$' : '${:.4f}', 'Variacion_Porcentual':'{:.2%}'}), use_container_width=True)
             else:
                 st.success("✅ Validación impecable: No hay desviaciones significativas detectadas (o los artículos tienen existencia 0).")
 
@@ -753,7 +751,6 @@ def mostrar_modulo_costos():
                 if not mem['es_consolidado']:
                     mostrar_descargas_logic(mem['costo_operativo'], mem['costo_dif_mes'], mem['costo_diferido_anterior'], meses_texto[mem['mes_cierre']], mem['consumo_por_cuenta'], mem['costo_operativo'], "std")
                 else:
-                    # LÓGICA DE CADENA CONTABLE TRIMESTRAL
                     diferido_para_liquidar = mem['costo_diferido_anterior'] 
                     
                     for i in range(len(mem['pesos'])):
@@ -797,7 +794,7 @@ def mostrar_modulo_costos():
                         st.rerun()
 
     # =========================================================================
-    # PESTAÑA 2: REGISTRO DE TRASLADOS (CON FILTRO ESTRICTO LÓGICO Y SIN DB)
+    # PESTAÑA 2: REGISTRO DE TRASLADOS (FILTRO LÓGICO FRONTERA)
     # =========================================================================
     with tab2:
         st.subheader("🚚 Registro Automático de Traslados Nexus")
@@ -823,23 +820,19 @@ def mostrar_modulo_costos():
                 df_raw_t['Monto'] = pd.to_numeric(df_raw_t['Monto'], errors='coerce').fillna(0.0)
                 df_raw_t['Cantidad'] = pd.to_numeric(df_raw_t['Cantidad'], errors='coerce').fillna(0.0)
 
-                # Definición de lo que es "Interno" para el sistema de control
+                # Usamos la misma función es_cafeteria que ahora usa búsqueda ESTRICTA
                 def es_interno(b, unidad):
-                    b = str(b).strip().upper()
                     if unidad == "CAFETERIA":
-                        return ("CAFETERIA" in b) or (b in ["TERRAZA", "CENTRO SOHO"])
+                        return es_cafeteria(b)
                     else:
-                        return "DESPENSA" in b
+                        return es_despensa(b)
 
-                # Evaluamos de qué lado de la frontera está el origen y el destino
                 mask_orig_interna = df_raw_t['Origen'].apply(lambda x: es_interno(x, u_responsable))
                 mask_dest_interna = df_raw_t['Destino'].apply(lambda x: es_interno(x, u_responsable))
 
-                # LÓGICA XOR: Solo pasa si uno es interno y el otro es externo. 
-                # Esto ignora los internos-internos (ej. Soho a Terraza) y externos-externos (ej. Eventos a Despensa).
+                # EXCLUSIVO: Solo suma si uno es True y el otro es False
                 filtro_direccion = mask_orig_interna != mask_dest_interna
 
-                # Excluir servicios y montos en cero
                 mask_base_tecnica = (df_raw_t['Monto'] > 0) & (df_raw_t['Categoria'] != 'SERVICIO')
 
                 df_tras_filtrados = df_raw_t[filtro_direccion & mask_base_tecnica]
