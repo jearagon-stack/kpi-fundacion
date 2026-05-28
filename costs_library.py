@@ -258,7 +258,6 @@ def mostrar_modulo_libreria():
                         if not df.empty:
                             c_tipo = next((c for c in df.columns if 'TIPO' in c.upper() or 'CONCEPT' in c.upper()), None)
                             
-                            # Corrección principal: Búsqueda flexible de columnas de origen y destino
                             c_sender = next((c for c in df.columns if c.upper().strip() in ['BODEGASALIDA', 'BODEGA SALIDA', 'SALIDA']), None)
                             if not c_sender: c_sender = next((c for c in df.columns if 'SALIDA' in c.upper() and 'VAL' not in c.upper() and 'UNID' not in c.upper()), None)
                             
@@ -307,7 +306,8 @@ def mostrar_modulo_libreria():
 
                                 # --- BLOQUE 1: CONSIGNACIÓN (INVENTARIO) ---
                                 if 'CONSIGNACION' in category:
-                                    if is_receiver_lib and not is_sender_lib:
+                                    # Se aplica la restricción de que debe decir "ENTRADA" o "INGRESO" en el tipo
+                                    if is_receiver_lib and not is_sender_lib and ("ENTRADA" in tipo or "INGRESO" in tipo):
                                         desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                         partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
                                             gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
@@ -327,7 +327,6 @@ def mostrar_modulo_libreria():
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
                                             ])
                                         else:
-                                            # Salidas y ajustes de consignación
                                             desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                             partidas_dict["CONSIGNACION"]["Salidas_Consignacion"].extend([
                                                 gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
@@ -343,7 +342,7 @@ def mostrar_modulo_libreria():
                                         
                                         elif is_sender_lib and not is_receiver_lib:
                                             if es_spc:
-                                                pass # Se omite contablemente el costo de la devolución al proveedor
+                                                pass 
                                             else:
                                                 desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE O CONSUMO DE PRODUCTO DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                                 partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
