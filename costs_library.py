@@ -9,8 +9,10 @@ from datetime import date
 CTA_PROVISION_PUENTE = "21020302" 
 CTA_CONSIGNACION_DR_ENTRADA = "7101" 
 CTA_CONSIGNACION_CR_ENTRADA = "8101" 
-CTA_CONSIGNACION_DR_SALIDA = "8101" 
-CTA_CONSIGNACION_CR_SALIDA = "7101" 
+
+# Cuentas invertidas ("dadas vuelta") según requerimiento
+CTA_CONSIGNACION_DR_SALIDA = "7101" 
+CTA_CONSIGNACION_CR_SALIDA = "8101" 
 
 CTA_BASE_GASTO = "410104" 
 CTA_BASE_PT = "110603" 
@@ -306,12 +308,11 @@ def mostrar_modulo_libreria():
 
                                 # --- BLOQUE 1: CONSIGNACIÓN (INVENTARIO) ---
                                 if 'CONSIGNACION' in category:
-                                    # CANDADO ESTRICTO: Solo sumar si la columna Tipo dice literalmente "ENTRADAS DE INVENTARIO"
                                     if is_receiver_lib and not is_sender_lib and tipo == "ENTRADAS DE INVENTARIO":
                                         desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                         partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
-                                            gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
-                                            gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
+                                            gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0),
+                                            gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total)
                                         ])
                                             
                                     elif is_sender_lib:
@@ -320,17 +321,18 @@ def mostrar_modulo_libreria():
                                             tab_traslado = f"Traslado_{safe_rec}"
                                             if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
                                             desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                            
+                                            # SOLO 2 LÍNEAS PARA EL TRASLADO (Limpiamos el código extra)
                                             partidas_dict["CONSIGNACION"][tab_traslado].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc_traslado, total, 0, raw_receiver),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc_traslado, 0, total, raw_receiver),
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0, raw_sender),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total)
                                             ])
+                                            
                                         else:
                                             desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                             partidas_dict["CONSIGNACION"]["Salidas_Consignacion"].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total, raw_sender)
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total)
                                             ])
 
                                 # --- BLOQUE 2: INVENTARIO REGULAR (NO CONSIGNACIÓN) ---
@@ -387,8 +389,8 @@ def mostrar_modulo_libreria():
                                 if total_ventas_consignacion > 0:
                                     desc_venta_consig = f"RECONOCIMIENTO POR VENTA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                     partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consig_Global"] = [
-                                        gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0, "LIBRERÍA CENTRAL"),
-                                        gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion, "LIBRERÍA CENTRAL")
+                                        gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0),
+                                        gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion)
                                     ]
                             else: st.warning("⚠️ No se encontraron las columnas 'Categoria' o 'TotalCosto' en el reporte de ventas.")
 
