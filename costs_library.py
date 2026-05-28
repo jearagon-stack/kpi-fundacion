@@ -10,6 +10,7 @@ CTA_PROVISION_PUENTE = "21020302"
 CTA_CONSIGNACION_DR_ENTRADA = "7101" 
 CTA_CONSIGNACION_CR_ENTRADA = "8101" 
 
+# Regresado a la configuración original para que 8101 salga en la primera línea (Debe)
 CTA_CONSIGNACION_DR_SALIDA = "8101" 
 CTA_CONSIGNACION_CR_SALIDA = "7101" 
 
@@ -76,9 +77,7 @@ def gen_excels_memory(partidas_dict, mes_proceso):
                 
                 df_grouped = df_nexus.groupby(["CUENTA", "VACIO", "CONCEPTO", "AUXILIAR"], as_index=False)[["DEBE", "HABER"]].sum()
                 df_grouped = df_grouped[(df_grouped["DEBE"] > 0) | (df_grouped["HABER"] > 0)]
-                
-                # Se agrega orden descendente a la columna CUENTA para forzar que 8101 quede arriba de 7101
-                df_grouped = df_grouped.sort_values(by=["CONCEPTO", "HABER", "DEBE", "CUENTA"], ascending=[True, True, False, False])
+                df_grouped = df_grouped.sort_values(by=["CONCEPTO", "HABER", "DEBE"], ascending=[True, True, False])
                 
                 safe_sheet = str(sheet_name).replace("/", "-")[:31]
                 df_grouped[["CUENTA", "VACIO", "CONCEPTO", "DEBE", "HABER"]].to_excel(writer, index=False, header=False, sheet_name=safe_sheet)
@@ -322,13 +321,9 @@ def mostrar_modulo_libreria():
                                             tab_traslado = f"Traslado_{safe_rec}"
                                             if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
                                             desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
-                                            
-                                            # Se inyectan ambos montos en el Debe y el Haber de cada cuenta para lograr la consolidación en la misma línea
                                             partidas_dict["CONSIGNACION"][tab_traslado].extend([
-                                                gen_nexus_spec("8101", desc_traslado, total, 0),
-                                                gen_nexus_spec("8101", desc_traslado, 0, total),
-                                                gen_nexus_spec("7101", desc_traslado, total, 0),
-                                                gen_nexus_spec("7101", desc_traslado, 0, total)
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total)
                                             ])
                                         else:
                                             desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
