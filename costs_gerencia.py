@@ -307,31 +307,39 @@ def mostrar_modulo_gerencia():
 
                                 # --- BLOQUE 1: CONSIGNACIÓN (INVENTARIO) ---
                                 if 'CONSIGNACION' in category:
-                                    if is_receiver_ger and not is_sender_ger:
+                                    if is_receiver_ger and not is_sender_ger and tipo == "ENTRADAS DE INVENTARIO":
                                         desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE GERENCIA COMERCIAL, MES {mes_proceso} DE {anio_proceso}."
                                         partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
-                                            gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
-                                            gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
+                                            # Eliminados los parámetros de bodega para que no desdoble líneas
+                                            gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0),
+                                            gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total)
                                         ])
                                             
                                     elif is_sender_ger:
                                         if es_traslado and receiver_desc != "DESTINO":
                                             safe_rec = str(receiver_desc).replace('/', '-').replace('\\', '-')[:15]
+                                            desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                            
+                                            # PESTAÑA 1 (Normal: 8101 Debe, 7101 Haber)
                                             tab_traslado = f"Traslado_{safe_rec}"
                                             if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
-                                            desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
                                             partidas_dict["CONSIGNACION"][tab_traslado].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc_traslado, total, 0, raw_receiver),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc_traslado, 0, total, raw_receiver),
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0, raw_sender),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
+                                                gen_nexus_spec("8101", desc_traslado, total, 0),
+                                                gen_nexus_spec("7101", desc_traslado, 0, total)
+                                            ])
+                                            
+                                            # PESTAÑA 2 (Invertida: 7101 Debe, 8101 Haber)
+                                            tab_traslado_inv = f"Tras_Inv_{safe_rec}"
+                                            if tab_traslado_inv not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado_inv] = []
+                                            partidas_dict["CONSIGNACION"][tab_traslado_inv].extend([
+                                                gen_nexus_spec("7101", desc_traslado, total, 0),
+                                                gen_nexus_spec("8101", desc_traslado, 0, total)
                                             ])
                                         else:
-                                            # Salidas y ajustes de consignación
                                             desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE GERENCIA COMERCIAL, MES {mes_proceso} DE {anio_proceso}."
                                             partidas_dict["CONSIGNACION"]["Salidas_Consignacion"].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total, raw_sender)
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total)
                                             ])
 
                                 # --- BLOQUE 2: INVENTARIO REGULAR (NO CONSIGNACIÓN) ---
@@ -343,7 +351,7 @@ def mostrar_modulo_gerencia():
                                         
                                         elif is_sender_ger and not is_receiver_ger:
                                             if es_spc:
-                                                pass # Se omite contablemente el costo de la devolución al proveedor
+                                                pass 
                                             else:
                                                 desc = f"RECONOCIMIENTO DE SALIDA POR AJUSTE O CONSUMO DE PRODUCTO DE GERENCIA COMERCIAL, MES {mes_proceso} DE {anio_proceso}."
                                                 partidas_dict["AJUSTES"]["Salidas_por_Ajuste"].extend([gen_nexus_spec(CTA_BASE_GASTO, desc, total, 0), gen_nexus_spec(inv_acc, desc, 0, total)])
@@ -388,8 +396,9 @@ def mostrar_modulo_gerencia():
                                 if total_ventas_consignacion > 0:
                                     desc_venta_consig = f"RECONOCIMIENTO POR VENTA DE PRODUCTOS EN CONSIGNACION DE GERENCIA COMERCIAL, MES {mes_proceso} DE {anio_proceso}."
                                     partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consig_Global"] = [
-                                        gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0, "GERENCIA COMERCIAL"),
-                                        gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion, "GERENCIA COMERCIAL")
+                                        # Eliminados también los parámetros extra por seguridad
+                                        gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0),
+                                        gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion)
                                     ]
                             else: st.warning("⚠️ No se encontraron las columnas 'Categoria' o 'TotalCosto' en el reporte de ventas.")
 
