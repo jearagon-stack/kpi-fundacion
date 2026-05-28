@@ -306,8 +306,8 @@ def mostrar_modulo_libreria():
 
                                 # --- BLOQUE 1: CONSIGNACIÓN (INVENTARIO) ---
                                 if 'CONSIGNACION' in category:
-                                    # Se aplica la restricción de que debe decir "ENTRADA" o "INGRESO" en el tipo
-                                    if is_receiver_lib and not is_sender_lib and ("ENTRADA" in tipo or "INGRESO" in tipo):
+                                    # CANDADO ESTRICTO: Solo sumar si la columna Tipo dice literalmente "ENTRADAS DE INVENTARIO"
+                                    if is_receiver_lib and not is_sender_lib and tipo == "ENTRADAS DE INVENTARIO":
                                         desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                         partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
                                             gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
