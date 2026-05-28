@@ -10,9 +10,9 @@ CTA_PROVISION_PUENTE = "21020302"
 CTA_CONSIGNACION_DR_ENTRADA = "7101" 
 CTA_CONSIGNACION_CR_ENTRADA = "8101" 
 
-# Cuentas invertidas ("dadas vuelta") según requerimiento
-CTA_CONSIGNACION_DR_SALIDA = "7101" 
-CTA_CONSIGNACION_CR_SALIDA = "8101" 
+# Regresado a la configuración original para que 8101 salga en la primera línea (Debe)
+CTA_CONSIGNACION_DR_SALIDA = "8101" 
+CTA_CONSIGNACION_CR_SALIDA = "7101" 
 
 CTA_BASE_GASTO = "410104" 
 CTA_BASE_PT = "110603" 
@@ -125,7 +125,7 @@ def mostrar_modulo_libreria():
 
             with st.spinner("Analizando información y cruzando datos de Kardex..."):
                 
-                spc_ids = set() # Memoria para los ID de las devoluciones SPC
+                spc_ids = set() 
                 
                 # ====================================================
                 # BLOQUE: AUDITORÍA DE KARDEX Y EXTRACCIÓN SPC
@@ -321,13 +321,10 @@ def mostrar_modulo_libreria():
                                             tab_traslado = f"Traslado_{safe_rec}"
                                             if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
                                             desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
-                                            
-                                            # SOLO 2 LÍNEAS PARA EL TRASLADO (Limpiamos el código extra)
                                             partidas_dict["CONSIGNACION"][tab_traslado].extend([
                                                 gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0),
                                                 gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total)
                                             ])
-                                            
                                         else:
                                             desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                             partidas_dict["CONSIGNACION"]["Salidas_Consignacion"].extend([
