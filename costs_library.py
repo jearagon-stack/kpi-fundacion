@@ -10,7 +10,6 @@ CTA_PROVISION_PUENTE = "21020302"
 CTA_CONSIGNACION_DR_ENTRADA = "7101" 
 CTA_CONSIGNACION_CR_ENTRADA = "8101" 
 
-# Regresado a la configuración original para que 8101 salga en la primera línea (Debe)
 CTA_CONSIGNACION_DR_SALIDA = "8101" 
 CTA_CONSIGNACION_CR_SALIDA = "7101" 
 
@@ -318,13 +317,24 @@ def mostrar_modulo_libreria():
                                     elif is_sender_lib:
                                         if es_traslado and receiver_desc != "DESTINO":
                                             safe_rec = str(receiver_desc).replace('/', '-').replace('\\', '-')[:15]
+                                            desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
+                                            
+                                            # PESTAÑA 1 (Normal: 8101 Debe, 7101 Haber)
                                             tab_traslado = f"Traslado_{safe_rec}"
                                             if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
-                                            desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
                                             partidas_dict["CONSIGNACION"][tab_traslado].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total)
+                                                gen_nexus_spec("8101", desc_traslado, total, 0),
+                                                gen_nexus_spec("7101", desc_traslado, 0, total)
                                             ])
+                                            
+                                            # PESTAÑA 2 (Duplicada e Invertida: 7101 Debe, 8101 Haber)
+                                            tab_traslado_inv = f"Tras_Inv_{safe_rec}"
+                                            if tab_traslado_inv not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado_inv] = []
+                                            partidas_dict["CONSIGNACION"][tab_traslado_inv].extend([
+                                                gen_nexus_spec("7101", desc_traslado, total, 0),
+                                                gen_nexus_spec("8101", desc_traslado, 0, total)
+                                            ])
+                                            
                                         else:
                                             desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE LIBRERÍA CENTRAL, MES {mes_proceso} DE {anio_proceso}."
                                             partidas_dict["CONSIGNACION"]["Salidas_Consignacion"].extend([
