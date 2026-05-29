@@ -61,8 +61,3 @@ def mostrar_modulo_costos():
         except ImportError:
             st.warning("⚠️ El archivo 'costs_gerencia.py' aún no ha sido creado...")
             
-        try:
-            from costs_produccion import mostrar_modulo_produccion
-            mostrar_modulo_produccion()
-        except ImportError:
-            st.warning("⚠️ El archivo 'costs_produccion.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
