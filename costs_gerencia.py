@@ -124,7 +124,7 @@ def mostrar_modulo_gerencia():
 
             with st.spinner("Analizando información y cruzando datos de Kardex..."):
                 
-                spc_ids = set() # Memoria para los ID de las devoluciones SPC
+                spc_ids = set() 
                 
                 # ====================================================
                 # BLOQUE: AUDITORÍA DE KARDEX Y EXTRACCIÓN SPC
@@ -286,6 +286,10 @@ def mostrar_modulo_gerencia():
                                 if raw_sender == "" and ("SALIDA" in tipo or "AJUSTE" in tipo): raw_sender = bod_principal
                                 if raw_receiver == "" and ("ENTRADA" in tipo or "INGRESO" in tipo): raw_receiver = bod_principal
 
+                                # CANDADO ESTRICTO: Omitir cualquier movimiento que involucre Producción
+                                if "PRODUCCION" in raw_sender or "PRODUCCION" in raw_receiver:
+                                    continue
+
                                 category = clean_value(row[c_category]) if c_category else ""
                                 row_str_upper = ' '.join(row.fillna('').astype(str)).upper()
                                 
@@ -310,7 +314,6 @@ def mostrar_modulo_gerencia():
                                     if is_receiver_ger and not is_sender_ger and tipo == "ENTRADAS DE INVENTARIO":
                                         desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE GERENCIA COMERCIAL, MES {mes_proceso} DE {anio_proceso}."
                                         partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
-                                            # Eliminados los parámetros de bodega para que no desdoble líneas
                                             gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0),
                                             gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total)
                                         ])
@@ -328,7 +331,7 @@ def mostrar_modulo_gerencia():
                                                 gen_nexus_spec("7101", desc_traslado, 0, total)
                                             ])
                                             
-                                            # PESTAÑA 2 (Invertida: 7101 Debe, 8101 Haber)
+                                            # PESTAÑA 2 (Duplicada e Invertida: 7101 Debe, 8101 Haber)
                                             tab_traslado_inv = f"Tras_Inv_{safe_rec}"
                                             if tab_traslado_inv not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado_inv] = []
                                             partidas_dict["CONSIGNACION"][tab_traslado_inv].extend([
@@ -396,7 +399,6 @@ def mostrar_modulo_gerencia():
                                 if total_ventas_consignacion > 0:
                                     desc_venta_consig = f"RECONOCIMIENTO POR VENTA DE PRODUCTOS EN CONSIGNACION DE GERENCIA COMERCIAL, MES {mes_proceso} DE {anio_proceso}."
                                     partidas_dict["VENTAS_CONSIGNACION"]["Ventas_Consig_Global"] = [
-                                        # Eliminados también los parámetros extra por seguridad
                                         gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_venta_consig, total_ventas_consignacion, 0),
                                         gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_venta_consig, 0, total_ventas_consignacion)
                                     ]
