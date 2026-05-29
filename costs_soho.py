@@ -166,7 +166,7 @@ def mostrar_modulo_soho():
                             df_k['Prefijo_Upper'] = df_k[c_pref].fillna('').astype(str).str.upper().str.strip()
                             df_k['Doc_Upper'] = df_k[c_doc].fillna('').astype(str).str.upper().str.strip() if c_doc else ""
 
-                            # --- CASCADA DE COSTO BASE (A PRUEBA DE CEROS) ---
+                            # --- CASCADA DE COSTO BASE ---
                             def get_weighted(df_sub):
                                 df_valid = df_sub[df_sub[c_ent_u] > 0]
                                 if df_valid.empty: return pd.DataFrame(columns=[c_cod, 'Costo_Ref'])
@@ -220,7 +220,7 @@ def mostrar_modulo_soho():
                         st.error(f"Error procesando el Kardex: {e_k}")
 
                 # ====================================================
-                # PROCESAMIENTO 1: ARCHIVO DE INVENTARIOS (FECHAS BLINDADAS)
+                # PROCESAMIENTO 1: ARCHIVO DE INVENTARIOS
                 # ====================================================
                 try:
                     partidas_dict = {
@@ -304,39 +304,42 @@ def mostrar_modulo_soho():
 
                                 # BLOQUE CONSIGNACIÓN (INVENTARIOS)
                                 if 'CONSIGNACION' in category:
-                                    if is_receiver_unidad and not is_sender_unidad:
-                                        if raw_sender in OTRAS_UNIDADES_INTERNAS or es_traslado:
-                                            pass 
-                                        else:
-                                            desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                            if "Entradas_Consignacion" not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"]["Entradas_Consignacion"] = []
-                                            partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0, raw_receiver),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total, raw_receiver)
-                                            ])
-                                    elif is_sender_unidad:
-                                        # 1. Salida Global (Inventario)
-                                        tab_salida = "Salida_Consig_Global"
-                                        if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
-                                        desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
-                                        partidas_dict["CONSIGNACION"][tab_salida].extend([
-                                            gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0, raw_sender),
-                                            gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total, raw_sender)
+                                    if is_receiver_unidad and not is_sender_unidad and tipo == "ENTRADAS DE INVENTARIO":
+                                        desc = f"RECONOCIMIENTO POR ENTRADA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
+                                        if "Entradas_Consignacion" not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"]["Entradas_Consignacion"] = []
+                                        partidas_dict["CONSIGNACION"]["Entradas_Consignacion"].extend([
+                                            # Se omite el 5to parámetro de sucursal para consolidar líneas
+                                            gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc, total, 0),
+                                            gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc, 0, total)
                                         ])
-                                        
-                                        # 2. Traslados hacia otra unidad (Pestaña por unidad)
+                                    elif is_sender_unidad:
                                         if es_traslado and receiver_desc != "DESTINO":
                                             safe_rec = str(receiver_desc).replace('/', '-').replace('\\', '-')[:15]
-                                            tab_traslado = f"Traslado_{safe_rec}"
-                                            if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
                                             desc_traslado = f"RECONOCIMIENTO POR TRASLADOS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION HACIA {receiver_desc}, MES {mes_proceso} DE {anio_proceso}."
                                             
+                                            # PESTAÑA 1 (Normal: 8101 Debe, 7101 Haber)
+                                            tab_traslado = f"Traslado_{safe_rec}"
+                                            if tab_traslado not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado] = []
                                             partidas_dict["CONSIGNACION"][tab_traslado].extend([
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_ENTRADA, desc_traslado, total, 0, raw_receiver),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_ENTRADA, desc_traslado, 0, total, raw_receiver),
-                                                # LAS DOS LÍNEAS QUE FALTABAN PARA SOHO (8101 y 7101 invertidas)
-                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_traslado, total, 0, raw_sender),
-                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_traslado, 0, total, raw_sender)
+                                                gen_nexus_spec("8101", desc_traslado, total, 0),
+                                                gen_nexus_spec("7101", desc_traslado, 0, total)
+                                            ])
+                                            
+                                            # PESTAÑA 2 (Invertida: 7101 Debe, 8101 Haber)
+                                            tab_traslado_inv = f"Tras_Inv_{safe_rec}"
+                                            if tab_traslado_inv not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_traslado_inv] = []
+                                            partidas_dict["CONSIGNACION"][tab_traslado_inv].extend([
+                                                gen_nexus_spec("7101", desc_traslado, total, 0),
+                                                gen_nexus_spec("8101", desc_traslado, 0, total)
+                                            ])
+                                        else:
+                                            # Salida Global
+                                            tab_salida = "Salida_Consig_Global"
+                                            if tab_salida not in partidas_dict["CONSIGNACION"]: partidas_dict["CONSIGNACION"][tab_salida] = []
+                                            desc_salida = f"RECONOCIMIENTO POR SALIDAS DE INVENTARIO DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO, MES {mes_proceso} DE {anio_proceso}."
+                                            partidas_dict["CONSIGNACION"][tab_salida].extend([
+                                                gen_nexus_spec(CTA_CONSIGNACION_DR_SALIDA, desc_salida, total, 0),
+                                                gen_nexus_spec(CTA_CONSIGNACION_CR_SALIDA, desc_salida, 0, total)
                                             ])
 
                                         if 'AJUS' in tipo or not es_traslado:
@@ -372,7 +375,7 @@ def mostrar_modulo_soho():
                                     ])
 
                     # ====================================================
-                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS (FECHAS BLINDADAS)
+                    # PROCESAMIENTO 2: ARCHIVO DE VENTAS 
                     # ====================================================
                     if arch_ventas:
                         df_v = pd.read_excel(arch_ventas, dtype=str)
@@ -432,7 +435,6 @@ def mostrar_modulo_soho():
                                             partidas_dict["VENTAS_CONSIGNACION"][tab_name_v] = []
                                             
                                         desc_traslado_v = f"RECONOCIMIENTO DE TRASLADO POR COSTO DE VENTA DE PRODUCTOS EN CONSIGNACION DE CENTRO SOHO HACIA {origen_v}, MES {mes_proceso} DE {anio_proceso}."
-                                        # Espacio invisible para obligar a Excel a mostrar las 4 filas separadas
                                         desc_traslado_v2 = desc_traslado_v + " "
                                         
                                         partidas_dict["VENTAS_CONSIGNACION"][tab_name_v].extend([
