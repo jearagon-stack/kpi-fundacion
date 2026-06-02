@@ -7,7 +7,7 @@ def mostrar_modulo_configuracion():
     st.markdown("Administración de accesos y parámetros de la plataforma.")
     
     st.subheader("👥 Gestión de Usuarios")
-    with st.expander("➕ Agregar nuevo usuario", expanded=False):
+    with st.expander("➕ Agregar nuevo usuario", expanded=True):
         with st.form("form_nuevo_usuario"):
             st.write("Datos para registrar a una nueva persona:")
             col_n1, col_n2 = st.columns(2)
@@ -24,9 +24,31 @@ def mostrar_modulo_configuracion():
                 default=["PEDIDOS CAFETERÍA"]
             )
             
-            btn_crear = st.form_submit_button("Guardar Usuario")
+            btn_crear = st.form_submit_button("💾 Guardar Usuario")
+            
             if btn_crear:
-                st.info("Asegúrate de configurar la escritura en Google Sheets para guardar estos datos en tu base 'Usuarios'.")
+                if nuevo_nombre == "" or nueva_pass == "":
+                    st.warning("⚠️ El nombre de usuario y la contraseña son obligatorios.")
+                else:
+                    try:
+                        # OJO: Asumo que tu pestaña de accesos se llama "Usuarios". 
+                        # Si se llama diferente, cambia el nombre aquí abajo.
+                        ws_usuarios = conectar_hoja("Usuarios") 
+                        
+                        # Convertimos la lista de módulos en texto separado por comas
+                        modulos_str = ", ".join(modulos_seleccionados)
+                        
+                        # Creamos la fila que se insertará en Google Sheets
+                        nueva_fila = [nuevo_nombre, nueva_pass, nuevo_rol, nuevo_anexo, modulos_str]
+                        
+                        # Guardamos en la nube
+                        ws_usuarios.append_row(nueva_fila)
+                        st.cache_data.clear() # Limpiamos caché para que el sistema reconozca al nuevo usuario de inmediato
+                        
+                        st.success(f"✅ ¡Usuario '{nuevo_nombre}' creado y guardado en la base de datos con éxito!")
+                    except Exception as e:
+                        st.error(f"❌ Error al conectar con Google Sheets: {e}")
+                        st.info("Verifica que la pestaña se llame 'Usuarios' en tu Google Sheets.")
                 
     st.divider()
     st.subheader("⚙️ Configuración de Parámetros de Auditoría")
@@ -71,4 +93,4 @@ def mostrar_modulo_configuracion():
             ]
             ws_p.update("A1", filas)
             st.cache_data.clear()
-            st.success("Parámetros de auditoría actualizados correctamente.")
+            st.success("✅ Parámetros de auditoría actualizados correctamente.")
