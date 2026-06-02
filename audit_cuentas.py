@@ -200,9 +200,10 @@ def mostrar_modulo_auditoria():
                     mapa_cuentas = {
                         '110601': 'MATERIA PRIMA',
                         '110603': 'PRODUCTO TERMINADO',
+                        '110610': 'REPUESTO',
                         '110608': 'LIMPIEZA',
                         '110609': 'EMPAQUE'
-                        '110610': 'REPUESTO'
+                        
                     }
                     
                     df_acc['Cuenta_Limpia'] = df_acc[col_cta_acc].astype(str).str.strip().apply(lambda c: c[:-2] if c.endswith('.0') else c)
