@@ -186,7 +186,7 @@ def mostrar_modulo_auditoria():
                     
                     df_acc['Documento_Final'] = df_acc.apply(triangulacion_ciegos, axis=1)
 
-                    mapa_cuentas_temp = ['110601', '110603', '110608', '110609']
+                    mapa_cuentas_temp = ['110601', '110603', '110608', '110609', '110610']
                     
                     mascara_ciegos = (df_acc['Documento_Final'] == 'NO_IDENTIFICADO') & (abs(df_acc['Monto_Conta_Neto']) > 0) & (df_acc[col_cta_acc].astype(str).str.strip().isin(mapa_cuentas_temp))
                     ciegos_relevantes = df_acc[mascara_ciegos]
