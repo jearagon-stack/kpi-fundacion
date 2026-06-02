@@ -7,13 +7,11 @@ from utils import conectar_hoja, obtener_dataframe
 # --- FUNCIONES DE LÓGICA ---
 
 def consolidar_carrito(df_carrito):
-    """Agrupa los productos en el carrito para evitar duplicados en la visualización."""
     if df_carrito.empty:
         return df_carrito
     return df_carrito.groupby(["ID_Productos", "Descripcion", "Medida"], as_index=False)["Cantidad"].sum()
 
 def guardar_en_sheets(df_envio):
-    """Escribe los datos en la hoja Pedidos_Pendientes de Google Sheets."""
     try:
         ws = conectar_hoja("Pedidos_Pendientes")
         datos = df_envio.values.tolist()
@@ -23,27 +21,56 @@ def guardar_en_sheets(df_envio):
         st.error(f"Error al escribir en Google Sheets: {e}")
         return False
 
-def eliminar_pedido_procesado(id_pedido_a_borrar):
-    """Elimina únicamente las filas del pedido procesado y conserva el resto."""
+def procesar_pedido(id_pedido_a_procesar):
+    """Mueve el pedido de Pendientes a Histórico."""
     try:
-        ws = conectar_hoja("Pedidos_Pendientes")
+        ws_pendientes = conectar_hoja("Pedidos_Pendientes")
+        ws_historico = conectar_hoja("Pedidos_Historico")
         df_pendientes = obtener_dataframe("Pedidos_Pendientes")
         
         if not df_pendientes.empty:
-            # Filtramos para conservar todo lo que NO sea el pedido procesado
-            df_restantes = df_pendientes[df_pendientes['ID_Pedido'] != id_pedido_a_borrar]
+            df_a_mover = df_pendientes[df_pendientes['ID_Pedido'] == id_pedido_a_procesar]
+            df_restantes = df_pendientes[df_pendientes['ID_Pedido'] != id_pedido_a_procesar]
             
-            ws.clear()
-            # Escribir nuevamente los encabezados
-            encabezados = df_pendientes.columns.tolist()
-            ws.append_row(encabezados)
-            
-            # Escribir los pedidos restantes si los hay
-            if not df_restantes.empty:
-                ws.append_rows(df_restantes.values.tolist())
+            if not df_a_mover.empty:
+                # 1. Transferir al Histórico
+                ws_historico.append_rows(df_a_mover.values.tolist())
+                
+                # 2. Actualizar la bandeja de Pendientes
+                ws_pendientes.clear()
+                encabezados = df_pendientes.columns.tolist()
+                ws_pendientes.append_row(encabezados)
+                if not df_restantes.empty:
+                    ws_pendientes.append_rows(df_restantes.values.tolist())
         return True
     except Exception as e:
-        st.error(f"Error al actualizar la base de datos: {e}")
+        st.error(f"Error al procesar el pedido: {e}")
+        return False
+
+def restaurar_pedido(id_pedido_a_restaurar):
+    """Mueve el pedido de Histórico de vuelta a Pendientes."""
+    try:
+        ws_pendientes = conectar_hoja("Pedidos_Pendientes")
+        ws_historico = conectar_hoja("Pedidos_Historico")
+        df_historico = obtener_dataframe("Pedidos_Historico")
+        
+        if not df_historico.empty:
+            df_a_mover = df_historico[df_historico['ID_Pedido'] == id_pedido_a_restaurar]
+            df_restantes = df_historico[df_historico['ID_Pedido'] != id_pedido_a_restaurar]
+            
+            if not df_a_mover.empty:
+                # 1. Transferir a Pendientes
+                ws_pendientes.append_rows(df_a_mover.values.tolist())
+                
+                # 2. Actualizar el Histórico
+                ws_historico.clear()
+                encabezados = df_historico.columns.tolist()
+                ws_historico.append_row(encabezados)
+                if not df_restantes.empty:
+                    ws_historico.append_rows(df_restantes.values.tolist())
+        return True
+    except Exception as e:
+        st.error(f"Error al restaurar el pedido: {e}")
         return False
 
 # --- MÓDULO PRINCIPAL ---
@@ -58,15 +85,18 @@ def mostrar_modulo_pedidos():
         st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["ID_Productos", "Descripcion", "Medida", "Cantidad"])
 
     if rol_usuario in ["ADMIN", "BODEGUERO"]:
-        tabs = st.tabs(["🛍️ 1. Crear Pedido (Cajas)", "📦 2. Gestión de Bodega"])
-        tab_cajas, tab_bodega = tabs[0], tabs[1]
+        tabs = st.tabs(["🛍️ 1. Crear Pedido", "📦 2. Gestión de Bodega", "🕰️ 3. Histórico"])
+        tab_cajas = tabs[0]
+        tab_bodega = tabs[1]
+        tab_historico = tabs[2]
     else:
-        tabs = st.tabs(["🛍️ 1. Crear Pedido (Cajas)"])
+        tabs = st.tabs(["🛍️ 1. Crear Pedido"])
         tab_cajas = tabs[0]
         tab_bodega = None
+        tab_historico = None
 
     # --------------------------------------------------------
-    # PESTAÑA 1: VISTA DE CAJERAS (CREACIÓN DE PEDIDO)
+    # PESTAÑA 1: VISTA DE CAJERAS
     # --------------------------------------------------------
     with tab_cajas:
         st.info(f"📍 Estás ingresando pedido para el anexo: **{anexo_usuario}**")
@@ -136,7 +166,7 @@ def mostrar_modulo_pedidos():
                 st.subheader("🛒 Lista Preliminar de Pedido")
                 st.dataframe(st.session_state['carrito_pedidos'], use_container_width=True, hide_index=True)
                 
-                confirmar = st.checkbox("¿Estás segura de realizar este pedido?")
+                confirmar = st.checkbox("¿Confirmar el envío de este pedido?")
                 
                 col_env, col_can = st.columns([2, 1])
                 with col_env:
@@ -152,7 +182,7 @@ def mostrar_modulo_pedidos():
                             
                             if guardar_en_sheets(df_envio):
                                 st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["ID_Productos", "Descripcion", "Medida", "Cantidad"])
-                                st.session_state['msg_exito'] = f"Pedido {id_pedido} enviado correctamente a bodega."
+                                st.session_state['msg_exito'] = f"Pedido {id_pedido} enviado correctamente."
                                 st.rerun()
 
                 with col_can:
@@ -168,46 +198,42 @@ def mostrar_modulo_pedidos():
             st.error(f"Error en la carga: {e}")
 
     # --------------------------------------------------------
-    # PESTAÑA 2: VISTA DE BODEGUERO (PROCESAMIENTO)
+    # PESTAÑA 2: VISTA DE BODEGUERO
     # --------------------------------------------------------
     if tab_bodega is not None:
         with tab_bodega:
             col_titulo, col_recargar = st.columns([3, 1])
             with col_titulo:
-                st.subheader("📋 Pedidos Pendientes en Bodega")
+                st.subheader("📋 Pedidos Pendientes")
             with col_recargar:
-                if st.button("🔄 Recargar", use_container_width=True):
+                if st.button("🔄 Recargar", use_container_width=True, key="btn_recargar_pendientes"):
                     st.cache_data.clear()
             
             try:
                 df_pendientes = obtener_dataframe("Pedidos_Pendientes")
                 
                 if df_pendientes.empty:
-                    st.info("No hay pedidos pendientes de procesar en este momento.")
+                    st.info("No hay pedidos pendientes en la bandeja.")
                 else:
-                    # Agrupar pedidos únicos
                     pedidos_unicos = df_pendientes['ID_Pedido'].unique()
                     
-                    # Crear diccionario para mostrar "ID - Anexo" en el selector
                     opciones_selector = {}
                     for pid in pedidos_unicos:
                         anexo_val = df_pendientes[df_pendientes['ID_Pedido'] == pid]['Anexo'].iloc[0]
                         opciones_selector[pid] = f"{pid} - {anexo_val}"
                     
                     pedido_seleccionado = st.selectbox(
-                        "Selecciona un pedido para revisar:",
+                        "Seleccionar pedido a gestionar:",
                         options=pedidos_unicos,
                         format_func=lambda x: opciones_selector[x]
                     )
                     
-                    # Filtrar datos del pedido seleccionado
                     df_pedido_actual = df_pendientes[df_pendientes['ID_Pedido'] == pedido_seleccionado].copy()
                     anexo_actual = df_pedido_actual['Anexo'].iloc[0]
                     fecha_actual = df_pedido_actual['Fecha'].iloc[0]
                     
                     st.markdown(f"**Detalle del {opciones_selector[pedido_seleccionado]}**")
                     
-                    # Ocultar columnas operativas para el editor
                     df_editor = df_pedido_actual.drop(columns=['Fecha', 'ID_Pedido', 'Anexo'])
                     
                     pedido_editado = st.data_editor(
@@ -217,15 +243,12 @@ def mostrar_modulo_pedidos():
                         key=f"editor_{pedido_seleccionado}"
                     )
                     
-                    # Módulo para agregar productos por código Nexus
                     with st.expander("➕ Agregar producto adicional al pedido"):
                         df_cat_bod = obtener_dataframe("Catalogo_Materiales")
                         df_cat_bod.columns = ["Categoria", "SubCategoria", "Nombre_Amigable", "ID_Productos", "Descripcion", "Medida"] + list(df_cat_bod.columns[6:])
-                        
-                        # Crear columna de visualización combinada (Código - Descripción)
                         df_cat_bod['Display'] = df_cat_bod['ID_Productos'].astype(str) + " - " + df_cat_bod['Descripcion'].astype(str)
                         
-                        prod_add = st.selectbox("Buscar por Código o Descripción Nexus:", df_cat_bod['Display'].dropna().unique())
+                        prod_add = st.selectbox("Buscar por Código Nexus:", df_cat_bod['Display'].dropna().unique())
                         cant_add = st.number_input("Cantidad a agregar:", min_value=1, value=1, step=1)
                         
                         if st.button("Guardar en el pedido actual"):
@@ -241,12 +264,10 @@ def mostrar_modulo_pedidos():
                             }])
                             if guardar_en_sheets(df_nuevo_item):
                                 st.cache_data.clear()
-                                st.success("Producto agregado correctamente.")
+                                st.success("Producto añadido a la base de datos.")
                                 st.rerun()
 
                     st.markdown("---")
-                    
-                    # Procesamiento y Descarga
                     col_dl, col_del = st.columns([2, 1])
                     
                     with col_dl:
@@ -256,7 +277,7 @@ def mostrar_modulo_pedidos():
                         datos_excel = output.getvalue()
                         
                         st.download_button(
-                            label=f"⬇️ Aprobar y Descargar ({pedido_seleccionado})",
+                            label=f"⬇️ Aprobar y Descargar Archivo",
                             data=datos_excel,
                             file_name=f"{pedido_seleccionado}_{anexo_actual}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -265,10 +286,58 @@ def mostrar_modulo_pedidos():
                         
                     with col_del:
                         if st.button("✔️ Marcar como Procesado", type="secondary", use_container_width=True):
-                            if eliminar_pedido_procesado(pedido_seleccionado):
+                            if procesar_pedido(pedido_seleccionado):
                                 st.cache_data.clear()
-                                st.success(f"Pedido procesado y removido de la bandeja.")
+                                st.success("Pedido archivado en el Histórico.")
                                 st.rerun()
                             
             except Exception as e:
-                st.error(f"No se pudo leer la hoja de pedidos: {e}")
+                st.error(f"Error en la conexión: {e}")
+
+    # --------------------------------------------------------
+    # PESTAÑA 3: VISTA DE HISTÓRICO
+    # --------------------------------------------------------
+    if tab_historico is not None:
+        with tab_historico:
+            col_titulo_h, col_recargar_h = st.columns([3, 1])
+            with col_titulo_h:
+                st.subheader("🕰️ Histórico de Pedidos Procesados")
+            with col_recargar_h:
+                if st.button("🔄 Recargar", use_container_width=True, key="btn_recargar_historico"):
+                    st.cache_data.clear()
+            
+            try:
+                df_historico = obtener_dataframe("Pedidos_Historico")
+                
+                if df_historico.empty:
+                    st.info("No hay pedidos registrados en el histórico.")
+                else:
+                    pedidos_historicos = df_historico['ID_Pedido'].unique()
+                    
+                    opciones_selector_h = {}
+                    for pid in pedidos_historicos:
+                        anexo_val = df_historico[df_historico['ID_Pedido'] == pid]['Anexo'].iloc[0]
+                        fecha_val = df_historico[df_historico['ID_Pedido'] == pid]['Fecha'].iloc[0]
+                        opciones_selector_h[pid] = f"{pid} - {anexo_val} ({fecha_val})"
+                    
+                    pedido_hist_sel = st.selectbox(
+                        "Seleccionar pedido para consulta:",
+                        options=pedidos_historicos,
+                        format_func=lambda x: opciones_selector_h[x]
+                    )
+                    
+                    df_hist_actual = df_historico[df_historico['ID_Pedido'] == pedido_hist_sel]
+                    
+                    st.markdown("**Información del pedido:**")
+                    st.dataframe(df_hist_actual.drop(columns=['ID_Pedido', 'Anexo']), use_container_width=True, hide_index=True)
+                    
+                    st.markdown("---")
+                    st.warning("La restauración enviará este pedido nuevamente a la bandeja de pendientes y lo removerá del histórico.")
+                    if st.button("🔙 Restaurar a la Bandeja de Bodega", use_container_width=True):
+                        if restaurar_pedido(pedido_hist_sel):
+                            st.cache_data.clear()
+                            st.success("El pedido ha sido restaurado exitosamente.")
+                            st.rerun()
+
+            except Exception as e:
+                st.error(f"Error al consultar el historial: {e}")
