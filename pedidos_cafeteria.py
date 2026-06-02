@@ -14,6 +14,9 @@ def consolidar_carrito(df_carrito):
 def guardar_en_sheets(df_envio):
     try:
         ws = conectar_hoja("Pedidos_Pendientes")
+        if ws is None:
+            st.error("❌ No se encontró la pestaña 'Pedidos_Pendientes' en Google Sheets.")
+            return False
         datos = df_envio.values.tolist()
         ws.append_rows(datos)
         return True
@@ -26,6 +29,15 @@ def procesar_pedido(id_pedido_a_procesar):
     try:
         ws_pendientes = conectar_hoja("Pedidos_Pendientes")
         ws_historico = conectar_hoja("Pedidos_Historico")
+        
+        # Validación de seguridad
+        if ws_historico is None:
+            st.error("❌ No se encontró la pestaña 'Pedidos_Historico'. Por favor, créala en tu Google Sheets.")
+            return False
+        if ws_pendientes is None:
+            st.error("❌ No se encontró la pestaña 'Pedidos_Pendientes'.")
+            return False
+
         df_pendientes = obtener_dataframe("Pedidos_Pendientes")
         
         if not df_pendientes.empty:
@@ -52,6 +64,12 @@ def restaurar_pedido(id_pedido_a_restaurar):
     try:
         ws_pendientes = conectar_hoja("Pedidos_Pendientes")
         ws_historico = conectar_hoja("Pedidos_Historico")
+        
+        # Validación de seguridad
+        if ws_historico is None or ws_pendientes is None:
+            st.error("❌ Faltan las pestañas 'Pedidos_Pendientes' o 'Pedidos_Historico' en tu Google Sheets.")
+            return False
+
         df_historico = obtener_dataframe("Pedidos_Historico")
         
         if not df_historico.empty:
