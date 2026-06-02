@@ -281,9 +281,12 @@ def mostrar_modulo_pedidos():
                     col_dl, col_del = st.columns([2, 1])
                     
                     with col_dl:
+                        # Modificación de formato para Nexus: Eliminar 'Medida' y quitar encabezados
+                        df_exportar = pedido_editado.drop(columns=['Medida'], errors='ignore')
+                        
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            pedido_editado.to_excel(writer, index=False, sheet_name='Traslado_Nexus')
+                            df_exportar.to_excel(writer, index=False, header=False, sheet_name='Traslado_Nexus')
                         datos_excel = output.getvalue()
                         
                         st.download_button(
@@ -327,7 +330,8 @@ def mostrar_modulo_pedidos():
                     opciones_selector_h = {}
                     for pid in pedidos_historicos:
                         anexo_val = df_historico[df_historico['ID_Pedido'] == pid]['Anexo'].iloc[0]
-                        opciones_selector_h[pid] = f"{pid} - {anexo_val}"
+                        fecha_val = df_historico[df_historico['ID_Pedido'] == pid]['Fecha'].iloc[0]
+                        opciones_selector_h[pid] = f"{pid} - {anexo_val} ({fecha_val})"
                     
                     pedido_hist_sel = st.selectbox(
                         "Seleccionar pedido para consulta:",
