@@ -28,6 +28,9 @@ def mostrar_modulo_pedidos():
         # Usamos tu función para leer directamente la pestaña
         df_cat = obtener_dataframe("Catalogo_Materiales")
         
+        # Limpiamos los nombres de las columnas por si tienen espacios invisibles
+        df_cat.columns = df_cat.columns.str.strip()
+        
         st.subheader("1. Selección de Productos")
         
         col1, col2, col3 = st.columns(3)
@@ -39,10 +42,11 @@ def mostrar_modulo_pedidos():
         df_filtrado_1 = df_cat[df_cat['Categoria'] == cat_seleccionada]
         
         with col2:
-            subcategorias = df_filtrado_1['Sub_Categoria'].dropna().unique()
+            # CORREGIDO: Buscamos "Subcategoria" sin guion bajo
+            subcategorias = df_filtrado_1['Subcategoria'].dropna().unique()
             subcat_seleccionada = st.selectbox("Sub Categoría:", options=subcategorias)
             
-        df_filtrado_2 = df_filtrado_1[df_filtrado_1['Sub_Categoria'] == subcat_seleccionada]
+        df_filtrado_2 = df_filtrado_1[df_filtrado_1['Subcategoria'] == subcat_seleccionada]
         
         with col3:
             productos = df_filtrado_2['Nombre_Amigable'].dropna().unique()
