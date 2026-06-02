@@ -11,7 +11,8 @@ except ImportError:
 def consolidar_carrito(df_carrito):
     if df_carrito.empty:
         return df_carrito
-    df_agrupado = df_carrito.groupby(["Codigo_Nexus", "Descripcion_Nexus", "Unidad_Medida"], as_index=False)["Cantidad"].sum()
+    # Agrupamos usando TUS nombres de columnas
+    df_agrupado = df_carrito.groupby(["IdProducto", "Descripcion", "MEDIDA"], as_index=False)["Cantidad"].sum()
     return df_agrupado
 
 def mostrar_modulo_pedidos():
@@ -19,7 +20,7 @@ def mostrar_modulo_pedidos():
     st.info("Selecciona los productos para generar la solicitud de traslado de bodega.")
 
     if 'carrito_pedidos' not in st.session_state:
-        st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["Codigo_Nexus", "Descripcion_Nexus", "Unidad_Medida", "Cantidad"])
+        st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
 
     # ========================================================
     # 1. CARGA AUTOMÁTICA USANDO TU FUNCIÓN INTERNA
@@ -42,17 +43,18 @@ def mostrar_modulo_pedidos():
         df_filtrado_1 = df_cat[df_cat['Categoria'] == cat_seleccionada]
         
         with col2:
-            # CORREGIDO: Buscamos "Subcategoria" sin guion bajo
-            subcategorias = df_filtrado_1['Subcategoria'].dropna().unique()
+            # Buscamos "SubCategoria" exactamente como está en tu Excel
+            subcategorias = df_filtrado_1['SubCategoria'].dropna().unique()
             subcat_seleccionada = st.selectbox("Sub Categoría:", options=subcategorias)
             
-        df_filtrado_2 = df_filtrado_1[df_filtrado_1['Subcategoria'] == subcat_seleccionada]
+        df_filtrado_2 = df_filtrado_1[df_filtrado_1['SubCategoria'] == subcat_seleccionada]
         
         with col3:
-            productos = df_filtrado_2['Nombre_Amigable'].dropna().unique()
+            # Tu Excel usa "Nombre" para el nombre amigable (Columna C)
+            productos = df_filtrado_2['Nombre'].dropna().unique()
             prod_seleccionado = st.selectbox("Producto:", options=productos)
 
-        producto_final = df_filtrado_2[df_filtrado_2['Nombre_Amigable'] == prod_seleccionado].iloc[0]
+        producto_final = df_filtrado_2[df_filtrado_2['Nombre'] == prod_seleccionado].iloc[0]
         
         # ========================================================
         # 2. SELECCIÓN DE CANTIDAD Y BOTÓN DE AGREGAR
@@ -61,15 +63,16 @@ def mostrar_modulo_pedidos():
         col_cant, col_btn = st.columns([1, 2])
         
         with col_cant:
-            cantidad = st.number_input(f"Cantidad ({producto_final['Unidad_Medida']}):", min_value=1, value=1, step=1)
+            cantidad = st.number_input(f"Cantidad ({producto_final['MEDIDA']}):", min_value=1, value=1, step=1)
             
         with col_btn:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("➕ Agregar al Pedido", type="primary", use_container_width=True):
+                # OJO: Aquí asumo que renombraste la columna E a "Descripcion"
                 nueva_fila = pd.DataFrame({
-                    "Codigo_Nexus": [producto_final['Codigo_Nexus']],
-                    "Descripcion_Nexus": [producto_final['Descripcion_Nexus']],
-                    "Unidad_Medida": [producto_final['Unidad_Medida']],
+                    "IdProducto": [producto_final['IdProducto']],
+                    "Descripcion": [producto_final['Descripcion']],
+                    "MEDIDA": [producto_final['MEDIDA']],
                     "Cantidad": [cantidad]
                 })
                 
@@ -106,8 +109,8 @@ def mostrar_modulo_pedidos():
             
             with col_del:
                 if st.button("🗑️ Vaciar Pedido", use_container_width=True):
-                    st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["Codigo_Nexus", "Descripcion_Nexus", "Unidad_Medida", "Cantidad"])
+                    st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
                     st.rerun()
 
     except Exception as e:
-        st.error(f"Error de conexión con la base de datos. Verifica que la pestaña se llame exactamente 'Catalogo_Materiales' en tu Google Sheets. Detalle: {e}")
+        st.error(f"Error de conexión. Verifica que renombraste la columna E a 'Descripcion'. Detalle técnico: {e}")
