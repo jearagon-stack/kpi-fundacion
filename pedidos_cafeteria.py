@@ -2,6 +2,12 @@ import streamlit as st
 import pandas as pd
 import io
 
+# IMPORTAMOS TU FUNCIÓN DE CONEXIÓN YA EXISTENTE
+try:
+    from utils import obtener_dataframe
+except ImportError:
+    st.error("⚠️ Error: No se encontró el módulo 'utils' para conectar con la base de datos.")
+
 def consolidar_carrito(df_carrito):
     if df_carrito.empty:
         return df_carrito
@@ -16,14 +22,11 @@ def mostrar_modulo_pedidos():
         st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["Codigo_Nexus", "Descripcion_Nexus", "Unidad_Medida", "Cantidad"])
 
     # ========================================================
-    # 1. CARGA AUTOMÁTICA DEL CATÁLOGO DESDE GOOGLE SHEETS
+    # 1. CARGA AUTOMÁTICA USANDO TU FUNCIÓN INTERNA
     # ========================================================
-    # Reemplaza este enlace con tu link de "Publicar en la web" (formato CSV)
-    URL_GOOGLE_SHEETS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT_ejemplo_de_codigo_largo/pub?gid=123456789&single=true&output=csv"
-    
     try:
-        # El sistema lee el Excel de la nube silenciosamente
-        df_cat = pd.read_csv(URL_GOOGLE_SHEETS, dtype=str)
+        # Usamos tu función para leer directamente la pestaña
+        df_cat = obtener_dataframe("Catalogo_Materiales")
         
         st.subheader("1. Selección de Productos")
         
@@ -103,4 +106,4 @@ def mostrar_modulo_pedidos():
                     st.rerun()
 
     except Exception as e:
-        st.error(f"Error de conexión con Google Sheets. Verifica que pegaste el enlace CSV correcto en la variable URL_GOOGLE_SHEETS. Detalle: {e}")
+        st.error(f"Error de conexión con la base de datos. Verifica que la pestaña se llame exactamente 'Catalogo_Materiales' en tu Google Sheets. Detalle: {e}")
