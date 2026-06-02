@@ -83,6 +83,14 @@ def restaurar_pedido(id_pedido_a_restaurar):
         st.error(f"Error al restaurar el pedido: {e}")
         return False
 
+def limpiar_interfaz_cajera():
+    """Limpia el carrito y devuelve todas las casillas numéricas a 0"""
+    st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["ID_Productos", "Descripcion", "Medida", "Cantidad"])
+    # Recorremos la memoria para buscar las cajas de texto y las ponemos en 0
+    for key in st.session_state.keys():
+        if key.startswith("prod_"):
+            st.session_state[key] = 0
+
 # --- MÓDULO PRINCIPAL ---
 
 def mostrar_modulo_pedidos():
@@ -191,13 +199,13 @@ def mostrar_modulo_pedidos():
                             df_envio.insert(2, 'Anexo', anexo_usuario)
                             
                             if guardar_en_sheets(df_envio):
-                                st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["ID_Productos", "Descripcion", "Medida", "Cantidad"])
+                                limpiar_interfaz_cajera()
                                 st.session_state['msg_exito'] = f"Pedido {id_pedido} enviado correctamente."
                                 st.rerun()
 
                 with col_can:
                     if st.button("🗑️ Limpiar Lista", use_container_width=True):
-                        st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["ID_Productos", "Descripcion", "Medida", "Cantidad"])
+                        limpiar_interfaz_cajera()
                         st.rerun()
 
             if 'msg_exito' in st.session_state:
@@ -281,11 +289,12 @@ def mostrar_modulo_pedidos():
                     col_dl, col_del = st.columns([2, 1])
                     
                     with col_dl:
-                        # Modificación de formato para Nexus: Eliminar 'Medida' y quitar encabezados
-                        df_exportar = pedido_editado.drop(columns=['Medida'], errors='ignore')
+                        # Extraemos explícitamente solo las 3 columnas necesarias para Nexus
+                        df_exportar = pedido_editado[['ID_Productos', 'Descripcion', 'Cantidad']].copy()
                         
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            # index=False evita la columna de números, header=False elimina los títulos
                             df_exportar.to_excel(writer, index=False, header=False, sheet_name='Traslado_Nexus')
                         datos_excel = output.getvalue()
                         
