@@ -5,7 +5,7 @@ import io
 try:
     from utils import obtener_dataframe
 except ImportError:
-    st.error("Error: No se encontró el módulo 'utils' para conectar con la base de datos.")
+    st.error("⚠️ Error: No se encontró el módulo 'utils' para conectar con la base de datos.")
 
 def consolidar_carrito(df_carrito):
     if df_carrito.empty:
@@ -13,12 +13,45 @@ def consolidar_carrito(df_carrito):
     df_agrupado = df_carrito.groupby(["IdProducto", "Descripcion", "MEDIDA"], as_index=False)["Cantidad"].sum()
     return df_agrupado
 
+# ========================================================
+# FUNCIONES INFALIBLES (CALLBACKS) PARA BOTONES
+# ========================================================
+def enviar_pedido_bodega(anexo_usuario):
+    # Generamos el ID
+    num_correlativo = st.session_state['correlativo_pedido']
+    id_pedido = f"Pedido {num_correlativo:04d}"
+    
+    # Preparamos los datos
+    df_nuevo = st.session_state['carrito_pedidos'].copy()
+    df_nuevo['ID_Pedido'] = id_pedido
+    df_nuevo['Anexo'] = anexo_usuario
+    
+    # Guardamos en la bandeja del bodeguero
+    if st.session_state['pedidos_enviados'].empty:
+        st.session_state['pedidos_enviados'] = df_nuevo
+    else:
+        st.session_state['pedidos_enviados'] = pd.concat([st.session_state['pedidos_enviados'], df_nuevo], ignore_index=True)
+    
+    # Limpiamos el carrito y subimos el número de pedido
+    st.session_state['correlativo_pedido'] += 1
+    st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
+    st.session_state['msg_exito_pedido'] = f"✅ El {id_pedido} fue enviado exitosamente a la bodega."
+
+def vaciar_carrito():
+    st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
+
+def marcar_procesado(id_pedido):
+    # Borramos solo el pedido seleccionado de la bandeja
+    st.session_state['pedidos_enviados'] = st.session_state['pedidos_enviados'][st.session_state['pedidos_enviados']['ID_Pedido'] != id_pedido]
+# ========================================================
+
 def mostrar_modulo_pedidos():
-    st.title("Gestión de Pedidos - Cafetería")
+    st.title("🛒 Gestión de Pedidos - Cafetería")
     
     anexo_usuario = st.session_state.get('anexo_actual', 'Desconocido')
     rol_usuario = st.session_state.get('rol_actual', 'CAJERA')
 
+    # Inicialización de memorias
     if 'carrito_pedidos' not in st.session_state:
         st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
     
@@ -28,12 +61,13 @@ def mostrar_modulo_pedidos():
     if 'correlativo_pedido' not in st.session_state:
         st.session_state['correlativo_pedido'] = 1
 
+    # Permisos de Pestañas
     if rol_usuario in ["ADMIN", "BODEGUERO"]:
-        tabs = st.tabs(["1. Crear Pedido (Cajas)", "2. Gestión de Bodega"])
+        tabs = st.tabs(["🛍️ 1. Crear Pedido (Cajas)", "📦 2. Gestión de Bodega"])
         tab_cajas = tabs[0]
         tab_bodega = tabs[1]
     else:
-        tabs = st.tabs(["1. Crear Pedido (Cajas)"])
+        tabs = st.tabs(["🛍️ 1. Crear Pedido (Cajas)"])
         tab_cajas = tabs[0]
         tab_bodega = None
 
@@ -41,11 +75,12 @@ def mostrar_modulo_pedidos():
     # PESTAÑA 1: VISTA DE CAJERAS
     # --------------------------------------------------------
     with tab_cajas:
+        # Mostrar mensaje de éxito si existe
         if 'msg_exito_pedido' in st.session_state:
             st.success(st.session_state['msg_exito_pedido'])
-            del st.session_state['msg_exito_pedido']
+            del st.session_state['msg_exito_pedido'] # Lo borramos para que no salga siempre
             
-        st.info(f"Creando pedido para: {anexo_usuario}")
+        st.info(f"📍 Creando pedido para: **{anexo_usuario}**")
         try:
             df_cat = obtener_dataframe("Catalogo_Materiales")
             nombres_correctos = ["Categoria", "SubCategoria", "Nombre_Amigable", "IdProducto", "Descripcion", "MEDIDA"]
@@ -65,7 +100,7 @@ def mostrar_modulo_pedidos():
             df_filtrado_2 = df_filtrado_1[df_filtrado_1['SubCategoria'] == subcat_seleccionada]
             
             st.markdown("---")
-            st.subheader(f"Catálogo: {subcat_seleccionada}")
+            st.subheader(f"📦 Catálogo: {subcat_seleccionada}")
             cantidades_ingresadas = {}
             
             encabezado_prod, encabezado_cant = st.columns([3, 1])
@@ -73,6 +108,7 @@ def mostrar_modulo_pedidos():
             with encabezado_cant: st.markdown("**Cantidad**")
             st.divider()
 
+            # Mostramos los productos
             for idx, row in df_filtrado_2.iterrows():
                 c_prod, c_cant = st.columns([3, 1])
                 with c_prod:
@@ -84,7 +120,7 @@ def mostrar_modulo_pedidos():
                     )
 
             st.markdown("###")
-            if st.button("Agregar Seleccionados a la Lista", type="primary", use_container_width=True):
+            if st.button("➕ Agregar Seleccionados a la Lista", type="primary", use_container_width=True):
                 nuevas_filas = []
                 for idx, cant in cantidades_ingresadas.items():
                     if cant > 0:
@@ -101,52 +137,32 @@ def mostrar_modulo_pedidos():
                     carrito_actual = st.session_state['carrito_pedidos']
                     carrito_actual = pd.concat([carrito_actual, df_nuevas], ignore_index=True)
                     st.session_state['carrito_pedidos'] = consolidar_carrito(carrito_actual)
-                    st.success(f"Se agregaron {len(nuevas_filas)} productos a la lista preliminar.")
+                    st.success(f"✅ Se agregaron {len(nuevas_filas)} productos a la lista preliminar.")
 
+            # Si hay algo en la lista, mostramos opciones de envío
             if not st.session_state['carrito_pedidos'].empty:
                 st.markdown("---")
-                st.subheader("Lista Preliminar del Pedido")
+                st.subheader("🛒 Lista Preliminar del Pedido")
                 st.dataframe(st.session_state['carrito_pedidos'], use_container_width=True, hide_index=True)
                 
-                st.warning("¿Confirmar pedido? Una vez enviado a bodega no se podrán hacer cambios.")
-                confirmar_envio = st.checkbox("Sí, enviar pedido.")
+                st.warning("⚠️ Revisa tu pedido antes de enviarlo. No podrás hacer cambios desde esta pantalla después.")
                 
                 col_env, col_can = st.columns([2, 1])
                 with col_env:
-                    if confirmar_envio:
-                        if st.button("Enviar Pedido a Bodega", type="primary", use_container_width=True):
-                            num_correlativo = st.session_state['correlativo_pedido']
-                            id_pedido = f"Pedido {num_correlativo:04d}"
-                            
-                            df_nuevo_pedido = st.session_state['carrito_pedidos'].copy()
-                            df_nuevo_pedido['ID_Pedido'] = id_pedido
-                            df_nuevo_pedido['Anexo'] = anexo_usuario
-                            
-                            # Corrección de la concatenación para DataFrames vacíos
-                            if st.session_state['pedidos_enviados'].empty:
-                                st.session_state['pedidos_enviados'] = df_nuevo_pedido
-                            else:
-                                st.session_state['pedidos_enviados'] = pd.concat([st.session_state['pedidos_enviados'], df_nuevo_pedido], ignore_index=True)
-                            
-                            st.session_state['correlativo_pedido'] += 1
-                            st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
-                            
-                            st.session_state['msg_exito_pedido'] = f"El {id_pedido} fue enviado exitosamente a la bodega."
-                            st.rerun()
+                    # Usamos 'on_click' para garantizar que la función de guardado se ejecute
+                    st.button("🚀 Enviar Pedido a Bodega", type="primary", use_container_width=True, on_click=enviar_pedido_bodega, args=(anexo_usuario,))
                 with col_can:
-                    if st.button("Vaciar Lista", use_container_width=True):
-                        st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
-                        st.rerun()
+                    st.button("🗑️ Vaciar Lista", use_container_width=True, on_click=vaciar_carrito)
 
         except Exception as e:
-            st.error(f"Error en el sistema. Detalle: {e}")
+            st.error(f"Error técnico. Detalle: {e}")
 
     # --------------------------------------------------------
     # PESTAÑA 2: VISTA DE BODEGUERO
     # --------------------------------------------------------
     if tab_bodega is not None:
         with tab_bodega:
-            st.subheader("Pedidos Pendientes de Procesar")
+            st.subheader("📋 Pedidos Pendientes de Procesar")
             
             if st.session_state['pedidos_enviados'].empty:
                 st.info("No hay pedidos entrantes en este momento.")
@@ -158,7 +174,7 @@ def mostrar_modulo_pedidos():
                 anexo_del_pedido = df_pedido_actual['Anexo'].iloc[0]
                 
                 st.markdown(f"**Origen:** {anexo_del_pedido}")
-                st.markdown("Revisa el pedido. Puedes hacer doble clic en la tabla para editar cantidades o agregar filas.")
+                st.markdown("Revisa el pedido. Puedes hacer doble clic en la tabla para **editar cantidades** o agregar filas nuevas si es necesario.")
                 
                 df_editor = df_pedido_actual.drop(columns=['ID_Pedido', 'Anexo'])
                 
@@ -181,7 +197,7 @@ def mostrar_modulo_pedidos():
                     datos_excel = output.getvalue()
                     
                     st.download_button(
-                        label=f"Aprobar y Descargar ({nombre_archivo})",
+                        label=f"⬇️ Aprobar y Descargar ({nombre_archivo})",
                         data=datos_excel,
                         file_name=nombre_archivo,
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
@@ -189,6 +205,4 @@ def mostrar_modulo_pedidos():
                     )
                 
                 with col_del:
-                    if st.button("Marcar como Procesado", use_container_width=True):
-                        st.session_state['pedidos_enviados'] = st.session_state['pedidos_enviados'][st.session_state['pedidos_enviados']['ID_Pedido'] != pedido_seleccionado]
-                        st.rerun()
+                    st.button("✔️ Marcar como Procesado", use_container_width=True, on_click=marcar_procesado, args=(pedido_seleccionado,))
