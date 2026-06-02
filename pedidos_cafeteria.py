@@ -19,7 +19,7 @@ def mostrar_modulo_pedidos():
     # 1. CARGA AUTOMÁTICA DEL CATÁLOGO DESDE GOOGLE SHEETS
     # ========================================================
     # Reemplaza este enlace con tu link de "Publicar en la web" (formato CSV)
-    URL_GOOGLE_SHEETS = "https://docs.google.com/spreadsheets/d/TU_ID_AQUI/pub?gid=TU_GID_AQUI&single=true&output=csv"
+    URL_GOOGLE_SHEETS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT_ejemplo_de_codigo_largo/pub?gid=123456789&single=true&output=csv"
     
     try:
         # El sistema lee el Excel de la nube silenciosamente
