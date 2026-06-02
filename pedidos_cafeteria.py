@@ -83,14 +83,6 @@ def restaurar_pedido(id_pedido_a_restaurar):
         st.error(f"Error al restaurar el pedido: {e}")
         return False
 
-def limpiar_interfaz_cajera():
-    """Limpia el carrito y devuelve todas las casillas numéricas a 0"""
-    st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["ID_Productos", "Descripcion", "Medida", "Cantidad"])
-    # Recorremos la memoria para buscar las cajas de texto y las ponemos en 0
-    for key in st.session_state.keys():
-        if key.startswith("prod_"):
-            st.session_state[key] = 0
-
 # --- MÓDULO PRINCIPAL ---
 
 def mostrar_modulo_pedidos():
@@ -99,8 +91,13 @@ def mostrar_modulo_pedidos():
     anexo_usuario = st.session_state.get('anexo_actual', 'Desconocido')
     rol_usuario = st.session_state.get('rol_actual', 'CAJERA')
 
+    # Memorias de sesión
     if 'carrito_pedidos' not in st.session_state:
         st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["ID_Productos", "Descripcion", "Medida", "Cantidad"])
+    
+    # Truco de llave dinámica para forzar la limpieza de las casillas
+    if 'form_key' not in st.session_state:
+        st.session_state['form_key'] = 0
 
     if rol_usuario in ["ADMIN", "BODEGUERO"]:
         tabs = st.tabs(["🛍️ 1. Crear Pedido", "📦 2. Gestión de Bodega", "🕰️ 3. Histórico"])
@@ -152,9 +149,11 @@ def mostrar_modulo_pedidos():
                     st.markdown(f"**{row['Nombre_Amigable']}**")
                     st.caption(f"Medida: {row['Medida']}")
                 with c_cant:
+                    # Agregamos la llave dinámica al nombre interno de la casilla
                     cantidades_ingresadas[idx] = st.number_input(
                         "Cant", min_value=0, value=0, step=1,
-                        key=f"prod_{row['ID_Productos']}_{idx}", label_visibility="collapsed"
+                        key=f"prod_{row['ID_Productos']}_{idx}_{st.session_state['form_key']}", 
+                        label_visibility="collapsed"
                     )
 
             st.markdown("###")
@@ -199,13 +198,17 @@ def mostrar_modulo_pedidos():
                             df_envio.insert(2, 'Anexo', anexo_usuario)
                             
                             if guardar_en_sheets(df_envio):
-                                limpiar_interfaz_cajera()
+                                # Limpiamos el carrito y forzamos el reseteo de las casillas a 0 sumando 1 a la llave
+                                st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["ID_Productos", "Descripcion", "Medida", "Cantidad"])
+                                st.session_state['form_key'] += 1
                                 st.session_state['msg_exito'] = f"Pedido {id_pedido} enviado correctamente."
                                 st.rerun()
 
                 with col_can:
                     if st.button("🗑️ Limpiar Lista", use_container_width=True):
-                        limpiar_interfaz_cajera()
+                        # Limpiamos el carrito y forzamos el reseteo de las casillas a 0
+                        st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["ID_Productos", "Descripcion", "Medida", "Cantidad"])
+                        st.session_state['form_key'] += 1
                         st.rerun()
 
             if 'msg_exito' in st.session_state:
@@ -294,7 +297,6 @@ def mostrar_modulo_pedidos():
                         
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                            # index=False evita la columna de números, header=False elimina los títulos
                             df_exportar.to_excel(writer, index=False, header=False, sheet_name='Traslado_Nexus')
                         datos_excel = output.getvalue()
                         
