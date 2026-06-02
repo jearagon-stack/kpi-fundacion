@@ -64,7 +64,7 @@ def mostrar_modulo_auditoria():
 
                     df_ops['_Cat_Upper'] = df_ops[col_cat_ops].astype(str).str.upper().str.strip()
 
-                    permitidas = ['MATERIA PRIMA', 'PRODUCTO TERMINADO', 'EMPAQUE', 'LIMPIEZA']
+                    permitidas = ['MATERIA PRIMA', 'PRODUCTO TERMINADO', 'EMPAQUE', 'LIMPIEZA', 'REPUESTO']
                     ignorar_silencio = ['SERVICIO']
                     
                     def es_ilegal(cat_str):
@@ -202,6 +202,7 @@ def mostrar_modulo_auditoria():
                         '110603': 'PRODUCTO TERMINADO',
                         '110608': 'LIMPIEZA',
                         '110609': 'EMPAQUE'
+                        '110609': 'REPUESTO'
                     }
                     
                     df_acc['Cuenta_Limpia'] = df_acc[col_cta_acc].astype(str).str.strip().apply(lambda c: c[:-2] if c.endswith('.0') else c)
