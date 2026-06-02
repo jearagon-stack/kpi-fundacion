@@ -124,6 +124,8 @@ elif opcion == "CONTABILIDAD DE COSTOS":
     costos.mostrar_modulo_costos()
 elif opcion == "VALIDACIÓN DE COSTOS":
     validacion.mostrar_modulo_validacion()  
+elif opcion == "PEDIDOS CAFETERIA":
+    validacion.mostrar_modulo_validacion()  
 elif opcion == "PRODUCCIÓN":
     try:
         from costs_produccion import mostrar_modulo_produccion
@@ -139,12 +141,12 @@ elif opcion == "AUDITORÍA DE CUENTAS":
     except ImportError:
         st.warning("⚠️ El archivo 'audit_cuentas.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
 
-elif opcion == "PEDIDOS CAFETERÍA":
-    try:
-        from pedidos_cafeteria import mostrar_modulo_pedidos
-        mostrar_modulo_pedidos()
-    except ImportError:
-        st.warning("⚠️ El archivo 'pedidos_cafeteria.py' aún no ha sido creado...")
+elif opcion == "CONFIGURACIÓN":
+    st.title("⚙️ Configuración del Sistema")
+    st.markdown("Desde aquí puedes administrar los accesos a la plataforma de forma rápida.")
+    
+    st.subheader("👥 Gestión de Usuarios")
+    with st.expander("➕ Agregar nuevo usuario", expanded=False):
         with st.form("form_nuevo_usuario"):
             st.write("Completa los datos para registrar a una nueva persona:")
             col_n1, col_n2 = st.columns(2)
