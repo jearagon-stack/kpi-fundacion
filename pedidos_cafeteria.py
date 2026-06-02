@@ -15,7 +15,7 @@ def guardar_en_sheets(df_envio):
     try:
         ws = conectar_hoja("Pedidos_Pendientes")
         if ws is None:
-            st.error("❌ No se encontró la pestaña 'Pedidos_Pendientes' en Google Sheets.")
+            st.error("No se encontró la pestaña 'Pedidos_Pendientes' en Google Sheets.")
             return False
         datos = df_envio.values.tolist()
         ws.append_rows(datos)
@@ -25,17 +25,15 @@ def guardar_en_sheets(df_envio):
         return False
 
 def procesar_pedido(id_pedido_a_procesar):
-    """Mueve el pedido de Pendientes a Histórico."""
     try:
         ws_pendientes = conectar_hoja("Pedidos_Pendientes")
         ws_historico = conectar_hoja("Pedidos_Historico")
         
-        # Validación de seguridad
         if ws_historico is None:
-            st.error("❌ No se encontró la pestaña 'Pedidos_Historico'. Por favor, créala en tu Google Sheets.")
+            st.error("No se encontró la pestaña 'Pedidos_Historico'. Por favor, créala en tu Google Sheets.")
             return False
         if ws_pendientes is None:
-            st.error("❌ No se encontró la pestaña 'Pedidos_Pendientes'.")
+            st.error("No se encontró la pestaña 'Pedidos_Pendientes'.")
             return False
 
         df_pendientes = obtener_dataframe("Pedidos_Pendientes")
@@ -45,10 +43,8 @@ def procesar_pedido(id_pedido_a_procesar):
             df_restantes = df_pendientes[df_pendientes['ID_Pedido'] != id_pedido_a_procesar]
             
             if not df_a_mover.empty:
-                # 1. Transferir al Histórico
                 ws_historico.append_rows(df_a_mover.values.tolist())
                 
-                # 2. Actualizar la bandeja de Pendientes
                 ws_pendientes.clear()
                 encabezados = df_pendientes.columns.tolist()
                 ws_pendientes.append_row(encabezados)
@@ -60,14 +56,12 @@ def procesar_pedido(id_pedido_a_procesar):
         return False
 
 def restaurar_pedido(id_pedido_a_restaurar):
-    """Mueve el pedido de Histórico de vuelta a Pendientes."""
     try:
         ws_pendientes = conectar_hoja("Pedidos_Pendientes")
         ws_historico = conectar_hoja("Pedidos_Historico")
         
-        # Validación de seguridad
         if ws_historico is None or ws_pendientes is None:
-            st.error("❌ Faltan las pestañas 'Pedidos_Pendientes' o 'Pedidos_Historico' en tu Google Sheets.")
+            st.error("Faltan las pestañas 'Pedidos_Pendientes' o 'Pedidos_Historico' en tu Google Sheets.")
             return False
 
         df_historico = obtener_dataframe("Pedidos_Historico")
@@ -77,10 +71,8 @@ def restaurar_pedido(id_pedido_a_restaurar):
             df_restantes = df_historico[df_historico['ID_Pedido'] != id_pedido_a_restaurar]
             
             if not df_a_mover.empty:
-                # 1. Transferir a Pendientes
                 ws_pendientes.append_rows(df_a_mover.values.tolist())
                 
-                # 2. Actualizar el Histórico
                 ws_historico.clear()
                 encabezados = df_historico.columns.tolist()
                 ws_historico.append_row(encabezados)
@@ -335,8 +327,7 @@ def mostrar_modulo_pedidos():
                     opciones_selector_h = {}
                     for pid in pedidos_historicos:
                         anexo_val = df_historico[df_historico['ID_Pedido'] == pid]['Anexo'].iloc[0]
-                        fecha_val = df_historico[df_historico['ID_Pedido'] == pid]['Fecha'].iloc[0]
-                        opciones_selector_h[pid] = f"{pid} - {anexo_val} ({fecha_val})"
+                        opciones_selector_h[pid] = f"{pid} - {anexo_val}"
                     
                     pedido_hist_sel = st.selectbox(
                         "Seleccionar pedido para consulta:",
@@ -347,7 +338,7 @@ def mostrar_modulo_pedidos():
                     df_hist_actual = df_historico[df_historico['ID_Pedido'] == pedido_hist_sel]
                     
                     st.markdown("**Información del pedido:**")
-                    st.dataframe(df_hist_actual.drop(columns=['ID_Pedido', 'Anexo']), use_container_width=True, hide_index=True)
+                    st.dataframe(df_hist_actual.drop(columns=['Fecha', 'ID_Pedido', 'Anexo']), use_container_width=True, hide_index=True)
                     
                     st.markdown("---")
                     st.warning("La restauración enviará este pedido nuevamente a la bandeja de pendientes y lo removerá del histórico.")
