@@ -139,6 +139,13 @@ elif opcion == "AUDITORÍA DE CUENTAS":
     except ImportError:
         st.warning("⚠️ El archivo 'audit_cuentas.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
 
+elif unidad == "Pedidos Cafetería":
+    try:
+        from pedidos_cafeteria import mostrar_modulo_pedidos
+        mostrar_modulo_pedidos()
+    except ImportError:
+        st.warning("⚠️ El archivo 'pedidos_cafeteria.py' aún no ha sido creado...")
+
 elif opcion == "CONFIGURACIÓN":
     st.title("⚙️ Configuración del Sistema")
     st.markdown("Desde aquí puedes administrar los accesos a la plataforma de forma rápida.")
