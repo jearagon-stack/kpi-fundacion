@@ -78,8 +78,8 @@ if not st.session_state.logged_in:
 # --- Sidebar y Menú ---
 with st.sidebar:
     st.title("Menú Principal")
-    # --- SE AGREGÓ "AUDITORÍA DE CUENTAS" AL MENÚ ---
-    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS"]
+    # --- SE AGREGÓ "PEDIDOS CAFETERÍA" AL MENÚ ---
+    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS", "PEDIDOS CAFETERÍA"]
     
     if st.session_state.rol_actual == "ADMIN":
         opciones_menu.append("CONFIGURACIÓN")
@@ -124,22 +124,26 @@ elif opcion == "CONTABILIDAD DE COSTOS":
     costos.mostrar_modulo_costos()
 elif opcion == "VALIDACIÓN DE COSTOS":
     validacion.mostrar_modulo_validacion()  
-elif opcion == "PEDIDOS CAFETERIA":
-    validacion.mostrar_modulo_validacion()  
 elif opcion == "PRODUCCIÓN":
     try:
         from costs_produccion import mostrar_modulo_produccion
         mostrar_modulo_produccion()
     except ImportError:
         st.warning("⚠️ El archivo 'costs_produccion.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
-
-# --- NUEVO ENRUTADOR DE AUDITORÍA ---
 elif opcion == "AUDITORÍA DE CUENTAS":
     try:
         from audit_cuentas import mostrar_modulo_auditoria
         mostrar_modulo_auditoria()
     except ImportError:
         st.warning("⚠️ El archivo 'audit_cuentas.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
+
+# --- ENRUTADOR PEDIDOS CAFETERÍA ---
+elif opcion == "PEDIDOS CAFETERÍA":
+    try:
+        from pedidos_cafeteria import mostrar_modulo_pedidos
+        mostrar_modulo_pedidos()
+    except ImportError:
+        st.warning("⚠️ El archivo 'pedidos_cafeteria.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
 
 elif opcion == "CONFIGURACIÓN":
     st.title("⚙️ Configuración del Sistema")
@@ -173,7 +177,6 @@ elif opcion == "CONFIGURACIÓN":
             def_limp = float(df_params[df_params['Criterio'] == 'LIMPIEZA']['Valor_Tope'].iloc[0])
             def_emp = float(df_params[df_params['Criterio'] == 'EMPAQUE']['Valor_Tope'].iloc[0])
             def_mat = float(df_params[df_params['Criterio'] == 'MATERIA_PRIMA']['Valor_Tope'].iloc[0])
-            # Soporte para el nombre con o sin guion bajo
             val_prod = df_params[df_params['Criterio'].isin(['PRODUCTO_TERMINADO', 'PRODUCTO TERMINADO'])]['Valor_Tope']
             if not val_prod.empty: def_prod = float(val_prod.iloc[0])
         except:
