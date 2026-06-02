@@ -67,36 +67,19 @@ if not st.session_state.logged_in:
             contrasena = st.text_input("Contraseña", type="password")
             btn_ingresar = st.form_submit_button("Ingresar", use_container_width=True)
 
-            if btn_ingresar:
-                usuario_limpio = usuario.strip().upper()
-                if usuario_limpio in usuarios_validos and contrasena.strip() == usuarios_validos[usuario_limpio]["Contrasena"]:
-                    st.session_state.logged_in = True
-                    st.session_state.usuario_actual = usuario_limpio
-                    st.session_state.rol_actual = usuarios_validos[usuario_limpio].get("Rol", "USUARIO")
-                    st.session_state.anexo_actual = usuarios_validos[usuario_limpio].get("Anexo", "General")
-                    
-                    modulos_permitidos = usuarios_validos[usuario_limpio].get("Modulos", "PEDIDOS CAFETERÍA")
-                    st.session_state.modulos_permitidos = [m.strip() for m in modulos_permitidos.split(",")]
-                    
-                    st.session_state.last_activity = datetime.now()
-                    st.query_params["auth"] = urllib.parse.quote(usuario_limpio)
-                    st.rerun()
-                else:
-                    st.error("Usuario o contraseña incorrectos.")
-    st.stop() 
-
-# --- Sidebar y Menú ---
+            # --- Sidebar y Menú ---
 with st.sidebar:
     st.title("Menú Principal")
     
     todos_los_modulos = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS", "PEDIDOS CAFETERÍA"]
-    opciones_menu = [mod for mod in todos_los_modulos if mod in st.session_state.get("modulos_permitidos", [])]
     
+    # Lógica de asignación de módulos mejorada
     if st.session_state.rol_actual == "ADMIN":
-        if "CONFIGURACIÓN" not in opciones_menu:
-            opciones_menu.append("CONFIGURACIÓN")
-        if len(opciones_menu) == 1: 
-            opciones_menu = todos_los_modulos + ["CONFIGURACIÓN"]
+        # El Administrador tiene acceso total por defecto
+        opciones_menu = todos_los_modulos + ["CONFIGURACIÓN"]
+    else:
+        # Los demás usuarios se filtran estrictamente por sus permisos en la base
+        opciones_menu = [mod for mod in todos_los_modulos if mod in st.session_state.get("modulos_permitidos", [])]
             
     if "menu_opcion" not in st.session_state:
         st.session_state.menu_opcion = st.query_params.get("modulo", opciones_menu[0] if opciones_menu else "")
@@ -133,37 +116,3 @@ with st.sidebar:
         if "menu_opcion" in st.session_state:
             del st.session_state["menu_opcion"]
         st.rerun()
-
-# --- Lógica de Navegación ---
-if opcion == "KPI DE REGISTROS":
-    gastos.mostrar_modulo_gastos()
-elif opcion == "KPI DE VENTAS":
-    ventas.mostrar_modulo_ventas()
-elif opcion == "CONTABILIDAD DE COSTOS":
-    costos.mostrar_modulo_costos()
-elif opcion == "VALIDACIÓN DE COSTOS":
-    validacion.mostrar_modulo_validacion()  
-elif opcion == "PRODUCCIÓN":
-    try:
-        from costs_produccion import mostrar_modulo_produccion
-        mostrar_modulo_produccion()
-    except ImportError:
-        st.warning("El archivo 'costs_produccion.py' aún no ha sido creado.")
-elif opcion == "AUDITORÍA DE CUENTAS":
-    try:
-        from audit_cuentas import mostrar_modulo_auditoria
-        mostrar_modulo_auditoria()
-    except ImportError:
-        st.warning("El archivo 'audit_cuentas.py' aún no ha sido creado.")
-elif opcion == "PEDIDOS CAFETERÍA":
-    try:
-        from pedidos_cafeteria import mostrar_modulo_pedidos
-        mostrar_modulo_pedidos()
-    except ImportError:
-        st.warning("El archivo 'pedidos_cafeteria.py' aún no ha sido creado.")
-elif opcion == "CONFIGURACIÓN":
-    try:
-        from configuracion import mostrar_modulo_configuracion
-        mostrar_modulo_configuracion()
-    except ImportError:
-        st.warning("El archivo 'configuracion.py' aún no ha sido creado.")
