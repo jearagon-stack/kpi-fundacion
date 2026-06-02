@@ -10,54 +10,67 @@ st.set_page_config(page_title="Auditoría DTE Pro", layout="wide")
 # --- INYECCIÓN DE DISEÑO (CSS) ---
 estilo_personalizado = """
     <style>
-    /* Importar fuente de Google Fonts (Nunito) */
+    /* 1. Importar fuente moderna y amigable (Nunito) */
     @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700&display=swap');
 
-    /* Aplicar la fuente a la interfaz */
+    /* 2. Aplicar la fuente a toda la aplicación */
     html, body, [class*="css"], [class*="st-"] {
         font-family: 'Nunito', sans-serif !important;
     }
 
-    /* Fondo animado (Gradiente en movimiento) */
-    .stApp {
-        background: linear-gradient(-45deg, #f0f2f6, #e2e8f0, #cbd5e1, #f8fafc);
-        background-size: 400% 400%;
-        animation: moverFondo 15s ease infinite;
+    /* 3. Animación sutil de "vida" (Barra de carga de gradiente en la parte superior) */
+    .stApp::before {
+        content: "";
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 5px;
+        background: linear-gradient(90deg, #ff4b4b, #ff8a00, #e52e71, #ff4b4b);
+        background-size: 300% 100%;
+        animation: moverGradiente 4s linear infinite;
+        z-index: 99999;
     }
 
-    @keyframes moverFondo {
-        0% { background-position: 0% 50%; }
-        50% { background-position: 100% 50%; }
-        100% { background-position: 0% 50%; }
+    @keyframes moverGradiente {
+        0% { background-position: 100% 0; }
+        100% { background-position: 0 0; }
     }
 
-    /* Estilización de botones */
-    .stButton>button {
+    /* 4. Botones principales (Cuidando de NO romper el File Uploader) */
+    div.stButton > button {
         border-radius: 20px !important;
         font-weight: 600 !important;
+        border: 1px solid rgba(128, 128, 128, 0.3) !important;
+        transition: all 0.3s ease !important;
+    }
+    
+    div.stButton > button:hover {
+        transform: translateY(-2px) !important;
+        box-shadow: 0 6px 12px rgba(0, 0, 0, 0.2) !important;
+    }
+
+    /* 5. Cajas de texto y combos de selección suaves */
+    input {
+        border-radius: 8px !important;
+    }
+    div[data-baseweb="select"] > div {
+        border-radius: 8px !important;
+    }
+
+    /* 6. Efecto de "Tarjeta Flotante" para formularios y expansores */
+    div[data-testid="stForm"], div[data-testid="stExpander"] {
+        border-radius: 15px !important;
+        border: 1px solid rgba(128, 128, 128, 0.2) !important;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1) !important;
         transition: all 0.3s ease;
     }
     
-    .stButton>button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
+    div[data-testid="stForm"]:hover, div[data-testid="stExpander"]:hover {
+        box-shadow: 0 8px 15px rgba(0,0,0,0.2) !important;
     }
 
-    /* Suavizar los bordes de los formularios */
-    div[data-testid="stForm"] {
-        border-radius: 15px !important;
-        border: 1px solid rgba(0, 0, 0, 0.05) !important;
-        padding: 20px !important;
-        background-color: rgba(255, 255, 255, 0.8) !important; /* Fondo semitransparente para resaltar sobre el fondo animado */
-    }
-
-    /* Estilizar las pestañas */
-    button[data-baseweb="tab"] {
-        font-family: 'Nunito', sans-serif !important;
-        font-weight: 600 !important;
-    }
-
-    /* Ocultar elementos predeterminados de Streamlit */
+    /* 7. Limpieza visual (Ocultar logo de Streamlit y menús nativos) */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
