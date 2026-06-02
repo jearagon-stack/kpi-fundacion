@@ -10,41 +10,54 @@ st.set_page_config(page_title="Auditoría DTE Pro", layout="wide")
 # --- INYECCIÓN DE DISEÑO (CSS) ---
 estilo_personalizado = """
     <style>
-    /* 1. Importar fuente de Google Fonts (Nunito) */
+    /* Importar fuente de Google Fonts (Nunito) */
     @import url('https://fonts.googleapis.com/css2?family=Nunito:wght@300;400;600;700&display=swap');
 
-    /* 2. Aplicar la fuente a absolutamente todo */
+    /* Aplicar la fuente a la interfaz */
     html, body, [class*="css"], [class*="st-"] {
         font-family: 'Nunito', sans-serif !important;
     }
 
-    /* 3. Estilizar los botones para hacerlos más amigables (redondeados) */
+    /* Fondo animado (Gradiente en movimiento) */
+    .stApp {
+        background: linear-gradient(-45deg, #f0f2f6, #e2e8f0, #cbd5e1, #f8fafc);
+        background-size: 400% 400%;
+        animation: moverFondo 15s ease infinite;
+    }
+
+    @keyframes moverFondo {
+        0% { background-position: 0% 50%; }
+        50% { background-position: 100% 50%; }
+        100% { background-position: 0% 50%; }
+    }
+
+    /* Estilización de botones */
     .stButton>button {
         border-radius: 20px !important;
         font-weight: 600 !important;
-        transition: all 0.3s ease; /* Animación suave al pasar el mouse */
+        transition: all 0.3s ease;
     }
     
-    /* Efecto al pasar el mouse sobre los botones */
     .stButton>button:hover {
         transform: translateY(-2px);
-        box-shadow: 0 4px 8px rgba(255, 255, 255, 0.1);
+        box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1);
     }
 
-    /* 4. Suavizar los bordes de los formularios y contenedores */
+    /* Suavizar los bordes de los formularios */
     div[data-testid="stForm"] {
         border-radius: 15px !important;
-        border: 1px solid rgba(250, 250, 250, 0.1) !important;
+        border: 1px solid rgba(0, 0, 0, 0.05) !important;
         padding: 20px !important;
+        background-color: rgba(255, 255, 255, 0.8) !important; /* Fondo semitransparente para resaltar sobre el fondo animado */
     }
 
-    /* 5. Estilizar las pestañas (Tabs) */
+    /* Estilizar las pestañas */
     button[data-baseweb="tab"] {
         font-family: 'Nunito', sans-serif !important;
         font-weight: 600 !important;
     }
 
-    /* Ocultar elementos innecesarios por defecto de Streamlit */
+    /* Ocultar elementos predeterminados de Streamlit */
     #MainMenu {visibility: hidden;}
     header {visibility: hidden;}
     footer {visibility: hidden;}
