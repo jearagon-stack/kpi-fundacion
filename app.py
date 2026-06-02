@@ -34,6 +34,11 @@ if usuario_url:
         st.session_state.logged_in = True
         st.session_state.usuario_actual = usuario_url
         st.session_state.rol_actual = usuarios_validos[usuario_url].get("Rol", "USUARIO")
+        st.session_state.anexo_actual = usuarios_validos[usuario_url].get("Anexo", "General")
+        
+        modulos_permitidos = usuarios_validos[usuario_url].get("Modulos", "PEDIDOS CAFETERÍA")
+        st.session_state.modulos_permitidos = [m.strip() for m in modulos_permitidos.split(",")]
+        
         if st.session_state.last_activity is None:
             st.session_state.last_activity = datetime.now()
 
@@ -44,7 +49,7 @@ if st.session_state.logged_in:
         st.query_params.clear() 
         st.session_state.usuario_actual = ""
         st.session_state.rol_actual = ""
-        st.session_state.mensaje_login = "⏳ Tu sesión ha expirado. Por favor, inicia sesión nuevamente."
+        st.session_state.mensaje_login = "Tu sesión ha expirado. Por favor, inicia sesión nuevamente."
         st.rerun()
     else:
         st.session_state.last_activity = datetime.now()
@@ -68,42 +73,56 @@ if not st.session_state.logged_in:
                     st.session_state.logged_in = True
                     st.session_state.usuario_actual = usuario_limpio
                     st.session_state.rol_actual = usuarios_validos[usuario_limpio].get("Rol", "USUARIO")
+                    st.session_state.anexo_actual = usuarios_validos[usuario_limpio].get("Anexo", "General")
+                    
+                    modulos_permitidos = usuarios_validos[usuario_limpio].get("Modulos", "PEDIDOS CAFETERÍA")
+                    st.session_state.modulos_permitidos = [m.strip() for m in modulos_permitidos.split(",")]
+                    
                     st.session_state.last_activity = datetime.now()
                     st.query_params["auth"] = urllib.parse.quote(usuario_limpio)
                     st.rerun()
                 else:
-                    st.error("❌ Usuario o contraseña incorrectos.")
+                    st.error("Usuario o contraseña incorrectos.")
     st.stop() 
 
 # --- Sidebar y Menú ---
 with st.sidebar:
     st.title("Menú Principal")
-    # --- SE AGREGÓ "PEDIDOS CAFETERÍA" AL MENÚ ---
-    opciones_menu = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS", "PEDIDOS CAFETERÍA"]
+    
+    todos_los_modulos = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS", "PEDIDOS CAFETERÍA"]
+    opciones_menu = [mod for mod in todos_los_modulos if mod in st.session_state.get("modulos_permitidos", [])]
     
     if st.session_state.rol_actual == "ADMIN":
-        opciones_menu.append("CONFIGURACIÓN")
-        
+        if "CONFIGURACIÓN" not in opciones_menu:
+            opciones_menu.append("CONFIGURACIÓN")
+        if len(opciones_menu) == 1: 
+            opciones_menu = todos_los_modulos + ["CONFIGURACIÓN"]
+            
     if "menu_opcion" not in st.session_state:
-        st.session_state.menu_opcion = st.query_params.get("modulo", opciones_menu[0])
+        st.session_state.menu_opcion = st.query_params.get("modulo", opciones_menu[0] if opciones_menu else "")
         
-    if st.session_state.menu_opcion not in opciones_menu:
+    if st.session_state.menu_opcion not in opciones_menu and opciones_menu:
         st.session_state.menu_opcion = opciones_menu[0]
         
     def actualizar_url_modulo():
         st.query_params["modulo"] = st.session_state.menu_radio
         st.session_state.menu_opcion = st.session_state.menu_radio
         
-    opcion = st.radio(
-        "Módulos disponibles:", 
-        opciones_menu,
-        index=opciones_menu.index(st.session_state.menu_opcion),
-        key="menu_radio",
-        on_change=actualizar_url_modulo
-    )
+    if opciones_menu:
+        opcion = st.radio(
+            "Módulos disponibles:", 
+            opciones_menu,
+            index=opciones_menu.index(st.session_state.menu_opcion) if st.session_state.menu_opcion in opciones_menu else 0,
+            key="menu_radio",
+            on_change=actualizar_url_modulo
+        )
+    else:
+        st.warning("No tienes módulos asignados.")
+        opcion = None
     
     st.divider()
     st.markdown(f"👤 Usuario: **{st.session_state.usuario_actual}**")
+    st.markdown(f"📍 Anexo: **{st.session_state.get('anexo_actual', 'No asignado')}**")
     st.markdown(f"🛡️ Rol: **{st.session_state.rol_actual}**")
     
     if st.button("Cerrar Sesión", use_container_width=True):
@@ -129,79 +148,22 @@ elif opcion == "PRODUCCIÓN":
         from costs_produccion import mostrar_modulo_produccion
         mostrar_modulo_produccion()
     except ImportError:
-        st.warning("⚠️ El archivo 'costs_produccion.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
+        st.warning("El archivo 'costs_produccion.py' aún no ha sido creado.")
 elif opcion == "AUDITORÍA DE CUENTAS":
     try:
         from audit_cuentas import mostrar_modulo_auditoria
         mostrar_modulo_auditoria()
     except ImportError:
-        st.warning("⚠️ El archivo 'audit_cuentas.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
-
-# --- ENRUTADOR PEDIDOS CAFETERÍA ---
+        st.warning("El archivo 'audit_cuentas.py' aún no ha sido creado.")
 elif opcion == "PEDIDOS CAFETERÍA":
     try:
         from pedidos_cafeteria import mostrar_modulo_pedidos
         mostrar_modulo_pedidos()
     except ImportError:
-        st.warning("⚠️ El archivo 'pedidos_cafeteria.py' aún no ha sido creado o subido a la nube. Módulo en construcción.")
-
+        st.warning("El archivo 'pedidos_cafeteria.py' aún no ha sido creado.")
 elif opcion == "CONFIGURACIÓN":
-    st.title("⚙️ Configuración del Sistema")
-    st.markdown("Desde aquí puedes administrar los accesos a la plataforma de forma rápida.")
-    
-    st.subheader("👥 Gestión de Usuarios")
-    with st.expander("➕ Agregar nuevo usuario", expanded=False):
-        with st.form("form_nuevo_usuario"):
-            st.write("Completa los datos para registrar a una nueva persona:")
-            col_n1, col_n2 = st.columns(2)
-            with col_n1: nuevo_nombre = st.text_input("Nombre de Usuario").upper()
-            with col_n2: nuevo_rol = st.selectbox("Nivel de Acceso (Rol)", ["USUARIO", "ADMIN"])
-            nueva_pass = st.text_input("Contraseña")
-            btn_crear = st.form_submit_button("Guardar Usuario")
-            
-    # --- PARÁMETROS DE AUDITORÍA ---
-    st.divider()
-    st.subheader("⚙️ Configuración de Parámetros de Auditoría")
-    
     try:
-        df_params = obtener_dataframe("Parametros_Auditoria")
-    except:
-        df_params = pd.DataFrame() 
-    
-    # Valores por defecto
-    def_var, def_limp, def_emp, def_mat, def_prod = 0.01, 3000.0, 5000.0, 10000.0, 8000.0
-    
-    if not df_params.empty:
-        try:
-            def_var = float(df_params[df_params['Criterio'] == 'VARIACION_MAX_PERMITIDA']['Valor_Tope'].iloc[0])
-            def_limp = float(df_params[df_params['Criterio'] == 'LIMPIEZA']['Valor_Tope'].iloc[0])
-            def_emp = float(df_params[df_params['Criterio'] == 'EMPAQUE']['Valor_Tope'].iloc[0])
-            def_mat = float(df_params[df_params['Criterio'] == 'MATERIA_PRIMA']['Valor_Tope'].iloc[0])
-            val_prod = df_params[df_params['Criterio'].isin(['PRODUCTO_TERMINADO', 'PRODUCTO TERMINADO'])]['Valor_Tope']
-            if not val_prod.empty: def_prod = float(val_prod.iloc[0])
-        except:
-            pass 
-
-    with st.form("form_parametros_auditoria"):
-        c1, c2 = st.columns(2)
-        new_var = c1.number_input("Variación Máx. Costo (Ej: 0.01 para 1%)", value=def_var, format="%.4f")
-        new_limp = c2.number_input("Tope Inventario Limpieza ($)", value=def_limp)
-        new_emp = c1.number_input("Tope Inventario Empaque ($)", value=def_emp)
-        new_mat = c2.number_input("Tope Inventario Materia Prima ($)", value=def_mat)
-        new_prod = c1.number_input("Tope Inventario Producto Terminado ($)", value=def_prod)
-        
-        if st.form_submit_button("💾 Guardar Configuración de Auditoría"):
-            ws_p = conectar_hoja("Parametros_Auditoria")
-            ws_p.clear() 
-            headers = ["Variable", "Criterio", "Valor_Tope", "Descripcion"]
-            filas = [
-                headers,
-                ["AUDIT_COSTO", "VARIACION_MAX_PERMITIDA", new_var, "Variación costo inicial vs final"],
-                ["TOPE_CATEGORIA", "LIMPIEZA", new_limp, "Límite inversión limpieza"],
-                ["TOPE_CATEGORIA", "EMPAQUE", new_emp, "Límite inversión empaque"],
-                ["TOPE_CATEGORIA", "MATERIA_PRIMA", new_mat, "Límite inversión materia prima"],
-                ["TOPE_CATEGORIA", "PRODUCTO_TERMINADO", new_prod, "Límite inversión producto terminado"]
-            ]
-            ws_p.update("A1", filas)
-            st.cache_data.clear()
-            st.success("✅ Parámetros de auditoría actualizados correctamente.")
+        from configuracion import mostrar_modulo_configuracion
+        mostrar_modulo_configuracion()
+    except ImportError:
+        st.warning("El archivo 'configuracion.py' aún no ha sido creado.")

@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import io
 
-# IMPORTAMOS TU FUNCIÓN DE CONEXIÓN YA EXISTENTE
 try:
     from utils import obtener_dataframe
 except ImportError:
@@ -17,27 +16,34 @@ def consolidar_carrito(df_carrito):
 def mostrar_modulo_pedidos():
     st.title("🛒 Gestión de Pedidos - Cafetería")
     
-    # ========================================================
-    # INICIALIZACIÓN DE MEMORIA (ESTADOS)
-    # ========================================================
-    # Carrito temporal de la cajera
+    anexo_usuario = st.session_state.get('anexo_actual', 'Desconocido')
+    rol_usuario = st.session_state.get('rol_actual', 'CAJERA')
+
     if 'carrito_pedidos' not in st.session_state:
         st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
     
-    # Bandeja de entrada del bodeguero
     if 'pedidos_enviados' not in st.session_state:
-        st.session_state['pedidos_enviados'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
+        st.session_state['pedidos_enviados'] = pd.DataFrame(columns=["ID_Pedido", "Anexo", "IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
+        
+    if 'correlativo_pedido' not in st.session_state:
+        st.session_state['correlativo_pedido'] = 1
 
-    # ========================================================
-    # CREACIÓN DE PESTAÑAS (TABS) POR ROL
-    # ========================================================
-    tab_cajas, tab_bodega = st.tabs(["🛍️ 1. Crear Pedido (Cajas)", "📦 2. Gestión de Bodega"])
+    # Definir la estructura de pestañas según el rol
+    if rol_usuario in ["ADMIN", "BODEGUERO"]:
+        tabs = st.tabs(["🛍️ 1. Crear Pedido (Cajas)", "📦 2. Gestión de Bodega"])
+        tab_cajas = tabs[0]
+        tab_bodega = tabs[1]
+    else:
+        # La cajera solo ve una pestaña
+        tabs = st.tabs(["🛍️ 1. Crear Pedido (Cajas)"])
+        tab_cajas = tabs[0]
+        tab_bodega = None
 
     # --------------------------------------------------------
     # PESTAÑA 1: VISTA DE CAJERAS
     # --------------------------------------------------------
     with tab_cajas:
-        st.info("Selecciona la categoría e ingresa las cantidades de los productos que necesites pedir.")
+        st.info(f"📍 Creando pedido para: **{anexo_usuario}**")
         try:
             df_cat = obtener_dataframe("Catalogo_Materiales")
             nombres_correctos = ["Categoria", "SubCategoria", "Nombre_Amigable", "IdProducto", "Descripcion", "MEDIDA"]
@@ -58,13 +64,11 @@ def mostrar_modulo_pedidos():
             
             st.markdown("---")
             st.subheader(f"📦 Catálogo: {subcat_seleccionada}")
-            
             cantidades_ingresadas = {}
             
             encabezado_prod, encabezado_cant = st.columns([3, 1])
             with encabezado_prod: st.markdown("**Nombre del Producto**")
             with encabezado_cant: st.markdown("**Cantidad**")
-                
             st.divider()
 
             for idx, row in df_filtrado_2.iterrows():
@@ -96,10 +100,7 @@ def mostrar_modulo_pedidos():
                     carrito_actual = pd.concat([carrito_actual, df_nuevas], ignore_index=True)
                     st.session_state['carrito_pedidos'] = consolidar_carrito(carrito_actual)
                     st.success(f"✅ Se agregaron {len(nuevas_filas)} productos a la lista preliminar.")
-                else:
-                    st.warning("⚠️ No ingresaste ninguna cantidad mayor a 0.")
 
-            # RESUMEN Y CONFIRMACIÓN DE ENVÍO (Cajas)
             if not st.session_state['carrito_pedidos'].empty:
                 st.markdown("---")
                 st.subheader("🛒 Lista Preliminar del Pedido")
@@ -112,14 +113,22 @@ def mostrar_modulo_pedidos():
                 with col_env:
                     if confirmar_envio:
                         if st.button("🚀 Enviar Pedido a Bodega", type="primary", use_container_width=True):
-                            # Pasar los datos a la bandeja del bodeguero
-                            df_historico = st.session_state['pedidos_enviados']
-                            df_consolidado = pd.concat([df_historico, st.session_state['carrito_pedidos']], ignore_index=True)
-                            st.session_state['pedidos_enviados'] = consolidar_carrito(df_consolidado)
+                            # Generación del ID de Pedido
+                            num_correlativo = st.session_state['correlativo_pedido']
+                            id_pedido = f"Pedido {num_correlativo:04d}"
                             
-                            # Limpiar la pantalla de la cajera
+                            df_nuevo_pedido = st.session_state['carrito_pedidos'].copy()
+                            df_nuevo_pedido['ID_Pedido'] = id_pedido
+                            df_nuevo_pedido['Anexo'] = anexo_usuario
+                            
+                            # Pasar a bandeja del bodeguero
+                            st.session_state['pedidos_enviados'] = pd.concat([st.session_state['pedidos_enviados'], df_nuevo_pedido], ignore_index=True)
+                            
+                            # Actualizar correlativo y limpiar carrito
+                            st.session_state['correlativo_pedido'] += 1
                             st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
-                            st.success("✅ El pedido fue enviado exitosamente a la bodega.")
+                            
+                            st.success(f"✅ El {id_pedido} fue enviado exitosamente a la bodega.")
                             st.rerun()
                 with col_can:
                     if st.button("🗑️ Vaciar Lista", use_container_width=True):
@@ -130,42 +139,58 @@ def mostrar_modulo_pedidos():
             st.error(f"Error técnico. Detalle: {e}")
 
     # --------------------------------------------------------
-    # PESTAÑA 2: VISTA DE BODEGUERO
+    # PESTAÑA 2: VISTA DE BODEGUERO (Aislada por Rol)
     # --------------------------------------------------------
-    with tab_bodega:
-        st.subheader("📋 Pedidos Pendientes de Procesar")
-        
-        if st.session_state['pedidos_enviados'].empty:
-            st.info("No hay pedidos entrantes en este momento.")
-        else:
-            st.markdown("Revisa el pedido. Puedes hacer doble clic en la tabla para **editar cantidades** o agregar filas nuevas si es necesario.")
+    if tab_bodega is not None:
+        with tab_bodega:
+            st.subheader("📋 Pedidos Pendientes de Procesar")
             
-            # Tabla editable para el bodeguero
-            pedido_editado = st.data_editor(
-                st.session_state['pedidos_enviados'],
-                num_rows="dynamic", # Permite agregar filas nuevas manualmente
-                use_container_width=True,
-                key="editor_bodega"
-            )
-            
-            st.markdown("---")
-            col_dl, col_del = st.columns([2, 1])
-            
-            with col_dl:
-                output = io.BytesIO()
-                with pd.ExcelWriter(output, engine='openpyxl') as writer:
-                    pedido_editado.to_excel(writer, index=False, sheet_name='Traslado_Nexus')
-                datos_excel = output.getvalue()
+            if st.session_state['pedidos_enviados'].empty:
+                st.info("No hay pedidos entrantes en este momento.")
+            else:
+                # Agrupar los pedidos disponibles
+                lista_pedidos = st.session_state['pedidos_enviados']['ID_Pedido'].unique()
+                pedido_seleccionado = st.selectbox("Seleccionar Pedido a Revisar:", lista_pedidos)
                 
-                st.download_button(
-                    label="⬇️ Aprobar y Descargar Archivo para Nexus",
-                    data=datos_excel,
-                    file_name="Pedido_Bodega_Aprobado.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True
+                # Filtrar datos del pedido seleccionado
+                df_pedido_actual = st.session_state['pedidos_enviados'][st.session_state['pedidos_enviados']['ID_Pedido'] == pedido_seleccionado].copy()
+                anexo_del_pedido = df_pedido_actual['Anexo'].iloc[0]
+                
+                st.markdown(f"**Origen:** {anexo_del_pedido}")
+                st.markdown("Revisa el pedido. Puedes hacer doble clic en la tabla para **editar cantidades** o agregar filas nuevas si es necesario.")
+                
+                # Ocultamos el ID y el Anexo en la vista de edición para no interferir con la estructura de Nexus
+                df_editor = df_pedido_actual.drop(columns=['ID_Pedido', 'Anexo'])
+                
+                pedido_editado = st.data_editor(
+                    df_editor,
+                    num_rows="dynamic",
+                    use_container_width=True,
+                    key=f"editor_{pedido_seleccionado}"
                 )
-            
-            with col_del:
-                if st.button("✔️ Marcar como Procesado (Limpiar Bandeja)", use_container_width=True):
-                    st.session_state['pedidos_enviados'] = pd.DataFrame(columns=["IdProducto", "Descripcion", "MEDIDA", "Cantidad"])
-                    st.rerun()
+                
+                st.markdown("---")
+                col_dl, col_del = st.columns([2, 1])
+                
+                # Generación de nombre de archivo dinámico
+                nombre_archivo = f"{pedido_seleccionado} {anexo_del_pedido}.xlsx"
+                
+                with col_dl:
+                    output = io.BytesIO()
+                    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                        pedido_editado.to_excel(writer, index=False, sheet_name='Traslado_Nexus')
+                    datos_excel = output.getvalue()
+                    
+                    st.download_button(
+                        label=f"⬇️ Aprobar y Descargar ({nombre_archivo})",
+                        data=datos_excel,
+                        file_name=nombre_archivo,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        use_container_width=True
+                    )
+                
+                with col_del:
+                    if st.button("✔️ Marcar como Procesado", use_container_width=True):
+                        # Eliminar únicamente el pedido actual de la bandeja
+                        st.session_state['pedidos_enviados'] = st.session_state['pedidos_enviados'][st.session_state['pedidos_enviados']['ID_Pedido'] != pedido_seleccionado]
+                        st.rerun()
