@@ -11,7 +11,6 @@ except ImportError:
 def consolidar_carrito(df_carrito):
     if df_carrito.empty:
         return df_carrito
-    # Agrupamos usando TUS nombres de columnas
     df_agrupado = df_carrito.groupby(["IdProducto", "Descripcion", "MEDIDA"], as_index=False)["Cantidad"].sum()
     return df_agrupado
 
@@ -26,11 +25,16 @@ def mostrar_modulo_pedidos():
     # 1. CARGA AUTOMÁTICA USANDO TU FUNCIÓN INTERNA
     # ========================================================
     try:
-        # Usamos tu función para leer directamente la pestaña
+        # 1. Leer datos
         df_cat = obtener_dataframe("Catalogo_Materiales")
         
-        # Limpiamos los nombres de las columnas por si tienen espacios invisibles
-        df_cat.columns = df_cat.columns.str.strip()
+        # 2. EL TRUCO MÁGICO: Forzamos los nombres de las primeras 6 columnas 
+        # basándonos en el orden de tu Excel, ignorando cómo se llamen realmente.
+        nombres_correctos = ["Categoria", "SubCategoria", "Nombre_Amigable", "IdProducto", "Descripcion", "MEDIDA"]
+        
+        # Si el excel tiene más columnas de las que necesitamos, las dejamos igual, 
+        # pero las primeras 6 las renombramos a la fuerza.
+        df_cat.columns = nombres_correctos + list(df_cat.columns[6:])
         
         st.subheader("1. Selección de Productos")
         
@@ -43,18 +47,18 @@ def mostrar_modulo_pedidos():
         df_filtrado_1 = df_cat[df_cat['Categoria'] == cat_seleccionada]
         
         with col2:
-            # Buscamos "SubCategoria" exactamente como está en tu Excel
             subcategorias = df_filtrado_1['SubCategoria'].dropna().unique()
             subcat_seleccionada = st.selectbox("Sub Categoría:", options=subcategorias)
             
         df_filtrado_2 = df_filtrado_1[df_filtrado_1['SubCategoria'] == subcat_seleccionada]
         
         with col3:
-            # Tu Excel usa "Nombre" para el nombre amigable (Columna C)
-            productos = df_filtrado_2['Nombre'].dropna().unique()
+            # Ahora usamos "Nombre_Amigable" obligatoriamente, evitando el error del duplicado
+            productos = df_filtrado_2['Nombre_Amigable'].dropna().unique()
             prod_seleccionado = st.selectbox("Producto:", options=productos)
 
-        producto_final = df_filtrado_2[df_filtrado_2['Nombre'] == prod_seleccionado].iloc[0]
+        # Obtenemos la fila seleccionada
+        producto_final = df_filtrado_2[df_filtrado_2['Nombre_Amigable'] == prod_seleccionado].iloc[0]
         
         # ========================================================
         # 2. SELECCIÓN DE CANTIDAD Y BOTÓN DE AGREGAR
@@ -68,7 +72,6 @@ def mostrar_modulo_pedidos():
         with col_btn:
             st.markdown("<br>", unsafe_allow_html=True)
             if st.button("➕ Agregar al Pedido", type="primary", use_container_width=True):
-                # OJO: Aquí asumo que renombraste la columna E a "Descripcion"
                 nueva_fila = pd.DataFrame({
                     "IdProducto": [producto_final['IdProducto']],
                     "Descripcion": [producto_final['Descripcion']],
@@ -113,4 +116,4 @@ def mostrar_modulo_pedidos():
                     st.rerun()
 
     except Exception as e:
-        st.error(f"Error de conexión. Verifica que renombraste la columna E a 'Descripcion'. Detalle técnico: {e}")
+        st.error(f"Error técnico inesperado. Detalle: {e}")
