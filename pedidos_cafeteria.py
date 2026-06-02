@@ -15,12 +15,14 @@ def mostrar_modulo_pedidos():
     if 'carrito_pedidos' not in st.session_state:
         st.session_state['carrito_pedidos'] = pd.DataFrame(columns=["Codigo_Nexus", "Descripcion_Nexus", "Unidad_Medida", "Cantidad"])
 
+    # ========================================================
     # 1. CARGA AUTOMÁTICA DEL CATÁLOGO DESDE GOOGLE SHEETS
-    # Reemplaza el enlace de abajo con el tuyo de "Publicar en la web" (formato CSV)
+    # ========================================================
+    # Reemplaza este enlace con tu link de "Publicar en la web" (formato CSV)
     URL_GOOGLE_SHEETS = "https://docs.google.com/spreadsheets/d/TU_ID_AQUI/pub?gid=TU_GID_AQUI&single=true&output=csv"
     
     try:
-        # Se lee el CSV directamente desde internet
+        # El sistema lee el Excel de la nube silenciosamente
         df_cat = pd.read_csv(URL_GOOGLE_SHEETS, dtype=str)
         
         st.subheader("1. Selección de Productos")
@@ -45,7 +47,9 @@ def mostrar_modulo_pedidos():
 
         producto_final = df_filtrado_2[df_filtrado_2['Nombre_Amigable'] == prod_seleccionado].iloc[0]
         
+        # ========================================================
         # 2. SELECCIÓN DE CANTIDAD Y BOTÓN DE AGREGAR
+        # ========================================================
         st.markdown("###")
         col_cant, col_btn = st.columns([1, 2])
         
@@ -68,7 +72,9 @@ def mostrar_modulo_pedidos():
                 
                 st.success(f"✅ Se agregaron {cantidad}x {prod_seleccionado}.")
 
+        # ========================================================
         # 3. VISUALIZACIÓN DEL CARRITO Y DESCARGA
+        # ========================================================
         if not st.session_state['carrito_pedidos'].empty:
             st.markdown("---")
             st.subheader("🛒 Pedido Actual")
@@ -97,4 +103,4 @@ def mostrar_modulo_pedidos():
                     st.rerun()
 
     except Exception as e:
-        st.error(f"Error al leer el catálogo de Google Sheets. Verifica que el enlace sea público (CSV) y tenga las columnas correctas. Detalle: {e}")
+        st.error(f"Error de conexión con Google Sheets. Verifica que pegaste el enlace CSV correcto en la variable URL_GOOGLE_SHEETS. Detalle: {e}")
