@@ -600,12 +600,13 @@ def mostrar_modulo_costos():
                                     ordenes_facturadas.append(ord_limpia)
                                     mapa_facturas[ord_limpia] = num_factura
                                     
-                    # BLINDAJE FINAL CON MEMORIA DE ESTADOS
+                    # BLINDAJE FINAL CON MEMORIA DE ESTADOS 
                     todas_las_ordenes = set()
                     todas_las_ordenes.update(costos_mo_por_orden.keys())
                     todas_las_ordenes.update(costos_mp_por_orden.keys())
                     todas_las_ordenes.update(ordenes_facturadas)
                     todas_las_ordenes.update(historial_saldos.keys())
+                    todas_las_ordenes.update(historial_estados.keys()) # <-- AQUÍ ESTÁ LA MAGIA QUE FALTABA
                     todas_las_ordenes.update(ordenes_manuales)
                     
                     fecha_str = date.today().strftime("%d/%m/%Y")
@@ -622,13 +623,17 @@ def mostrar_modulo_costos():
                         
                         hist_anterior = historial_total.get(ord_cln, 0.0)
                         hist_acu = hist_anterior + nuevo_mo + nuevo_mp
-                        estado_anterior = historial_estados.get(ord_cln, "")
+                        
+                        # Limpieza para que no confunda vacíos con 'NAN'
+                        estado_anterior = str(historial_estados.get(ord_cln, "")).strip()
+                        if estado_anterior.upper() == "NAN":
+                            estado_anterior = ""
                         
                         # LOGICA DE ESTADOS ACTUALIZADA
                         if ord_cln in ordenes_facturadas or ord_cln in ordenes_manuales:
                             estado = "Liquidado a Costo de Ventas"
                         elif nuevo_mo == 0 and nuevo_mp == 0:
-                            if estado_anterior != "" and estado_anterior != "NAN":
+                            if estado_anterior != "":
                                 estado = estado_anterior
                             elif saldo_anterior == 0 and hist_anterior > 0:
                                 estado = "Liquidado Anteriormente"
@@ -651,7 +656,7 @@ def mostrar_modulo_costos():
                             total_liq_cv += saldo_acumulado
                             saldo_acumulado = 0.0
                         elif estado != "Pendiente":
-                            # Cualquier estado personalizado o manual significa que el proceso de costo fue culminado por el usuario
+                            # Cualquier estado personalizado significa que el usuario ya sacó el dinero contablemente
                             saldo_acumulado = 0.0
                             
                         filas_wip.append({
