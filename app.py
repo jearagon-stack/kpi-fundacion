@@ -165,7 +165,7 @@ elif opcion == "CONFIGURACIÓN":
         mostrar_modulo_configuracion()
     except ImportError:
         st.warning("El archivo 'configuracion.py' aún no ha sido creado.")
-        elif opcion == "CONTABILIDAD":
+elif opcion == "CONTABILIDAD":
     try:
         from contabilidad import mostrar_modulo_contabilidad
         mostrar_modulo_contabilidad()
