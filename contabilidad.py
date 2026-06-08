@@ -80,7 +80,6 @@ def mostrar_modulo_contabilidad():
                         df_map[c_map_cta] = df_map[c_map_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                         df_map[c_map_tipo] = df_map[c_map_tipo].apply(limpiar_texto)
                         
-                        # Filtrar mapa base para la matriz (ignorar cuentas sin impacto)
                         df_map_valido = df_map[~df_map[c_map_tipo].isin(["NO APLICA", "CUENTA DE MAYOR", ""])].copy()
                         df_matriz = df_map_valido.copy()
                         
@@ -104,12 +103,10 @@ def mostrar_modulo_contabilidad():
                             
                             df_agrup = df_temp.groupby(c_arch_cta, as_index=False)[c_arch_sld].sum()
                             
-                            # Preparar datos para el consolidado global
                             df_temp_cons = df_agrup.copy()
                             df_temp_cons.rename(columns={c_arch_sld: "SALDO_FINAL_GLOBAL"}, inplace=True)
                             dfs_cons.append(df_temp_cons)
                             
-                            # Preparar datos para la matriz (Pestaña 4)
                             unidad_col = info["unidad"]
                             if unidad_col in unidades_procesadas:
                                 unidad_col = f"{unidad_col} ({nombre_arch})"
@@ -121,13 +118,11 @@ def mostrar_modulo_contabilidad():
                             if c_arch_cta in df_matriz.columns and c_arch_cta != c_map_cta:
                                 df_matriz.drop(columns=[c_arch_cta], inplace=True)
 
-                        # Procesamiento Consolidado
                         df_total = pd.concat(dfs_cons, ignore_index=True)
                         df_total_agrup = df_total.groupby(c_arch_cta, as_index=False)["SALDO_FINAL_GLOBAL"].sum()
                         
                         df_final = pd.merge(df_map_valido, df_total_agrup, left_on=c_map_cta, right_on=c_arch_cta, how="inner")
                         
-                        # Guardar en sesión
                         st.session_state['cont_df'] = df_final
                         st.session_state['cont_matriz'] = df_matriz
                         st.session_state['unidades_procesadas'] = unidades_procesadas
@@ -135,6 +130,7 @@ def mostrar_modulo_contabilidad():
                             'cta': c_map_cta, 'tipo': c_map_tipo, 'est': c_map_est, 
                             'cat': c_map_cat, 'sld': "SALDO_FINAL_GLOBAL"
                         }
+                        st.session_state['sync_flag'] = True # Bandera para resetear el simulador
                         
                         st.success("✅ Procesamiento completado. Revisa las pestañas de Simulador y Matriz.")
                     except Exception as e:
@@ -148,14 +144,41 @@ def mostrar_modulo_contabilidad():
             df = st.session_state['cont_df']
             cd = st.session_state['cols_dict']
             
+            # Inicializar la base maestra del simulador
+            if 'df_master' not in st.session_state or st.session_state.get('sync_flag', False):
+                st.session_state['df_master'] = df[[cd['cta'], cd['est'], cd['cat'], cd['tipo'], cd['sld']]].copy()
+                st.session_state['sync_flag'] = False
+                
             st.subheader("🎛️ Simulador Financiero en Tiempo Real")
-            st.write("Modifica los montos en la columna de Saldo o reclasifica el Tipo de costo en la tabla. El Punto de Equilibrio y el Dashboard se recalcularán automáticamente basándose en tus cambios.")
             
-            # Se eliminó la columna 'nom' (Nombre) para evitar el error '[nan] not in index'
-            df_editable = df[[cd['cta'], cd['est'], cd['cat'], cd['tipo'], cd['sld']]].copy()
+            # --- SECCIÓN DE FILTROS ---
+            with st.expander("🔍 Filtrar cuentas para editar", expanded=True):
+                col_f1, col_f2 = st.columns(2)
+                with col_f1:
+                    tipos_disp = st.session_state['df_master'][cd['tipo']].unique().tolist()
+                    filtro_tipo = st.multiselect("Filtrar por Tipo:", options=tipos_disp)
+                with col_f2:
+                    busqueda = st.text_input("Buscar por ID, Estado o Categoría:")
             
-            edited_df = st.data_editor(
-                df_editable,
+            # Aplicar filtros a la vista
+            df_view = st.session_state['df_master'].copy()
+            
+            if filtro_tipo:
+                df_view = df_view[df_view[cd['tipo']].isin(filtro_tipo)]
+                
+            if busqueda:
+                termino = str(busqueda).upper()
+                mask = (
+                    df_view[cd['cta']].astype(str).str.upper().str.contains(termino) |
+                    df_view[cd['est']].astype(str).str.upper().str.contains(termino) |
+                    df_view[cd['cat']].astype(str).str.upper().str.contains(termino)
+                )
+                df_view = df_view[mask]
+            
+            # --- TABLA EDITABLE ---
+            st.caption(f"Mostrando {len(df_view)} cuentas. Los cambios afectarán los resultados inferiores.")
+            edited_view = st.data_editor(
+                df_view,
                 column_config={
                     cd['tipo']: st.column_config.SelectboxColumn("Tipo de Costo", options=["COSTO FIJO", "COSTO VARIABLE", "INGRESOS", "INGRESO"]),
                     cd['sld']: st.column_config.NumberColumn("Monto ($)", format="$ %.2f", min_value=0)
@@ -165,12 +188,15 @@ def mostrar_modulo_contabilidad():
                 key="editor_escenarios"
             )
             
-            st.session_state['edited_df'] = edited_df
+            # Actualizar la base maestra con los cambios realizados en la vista filtrada
+            st.session_state['df_master'].update(edited_view)
             
-            # Cálculos en tiempo real
-            ventas = edited_df[edited_df[cd['tipo']].isin(["INGRESOS", "INGRESO"])][cd['sld']].abs().sum()
-            cf = edited_df[edited_df[cd['tipo']] == "COSTO FIJO"][cd['sld']].abs().sum()
-            cv = edited_df[edited_df[cd['tipo']] == "COSTO VARIABLE"][cd['sld']].abs().sum()
+            df_math = st.session_state['df_master']
+            
+            # --- CÁLCULOS ---
+            ventas = df_math[df_math[cd['tipo']].isin(["INGRESOS", "INGRESO"])][cd['sld']].abs().sum()
+            cf = df_math[df_math[cd['tipo']] == "COSTO FIJO"][cd['sld']].abs().sum()
+            cv = df_math[df_math[cd['tipo']] == "COSTO VARIABLE"][cd['sld']].abs().sum()
             
             margen_pct = (1 - (cv / ventas)) if ventas > 0 else 0
             pe = (cf / margen_pct) if margen_pct > 0 else 0
@@ -200,8 +226,8 @@ def mostrar_modulo_contabilidad():
     # PESTAÑA 3: DASHBOARD ANALÍTICO
     # ==========================================
     with tab_dash:
-        if 'edited_df' in st.session_state:
-            df_dash = st.session_state['edited_df']
+        if 'df_master' in st.session_state:
+            df_dash = st.session_state['df_master']
             cd = st.session_state['cols_dict']
             
             st.subheader("📊 Desglose basado en la Simulación")
@@ -221,12 +247,12 @@ def mostrar_modulo_contabilidad():
                     
                 st.divider()
                 tipos_existentes = df_gastos[cd['tipo']].unique().tolist()
-                tipo_filtro = st.selectbox("Filtrar estado por:", tipos_existentes)
+                tipo_filtro_dash = st.selectbox("Filtrar estado por:", tipos_existentes)
                 
-                df_filtro = df_gastos[df_gastos[cd['tipo']] == tipo_filtro]
-                if not df_filtro.empty:
-                    df_estado = df_filtro.groupby(cd['est'], as_index=False)[cd['sld']].sum().sort_values(by=cd['sld'], ascending=False)
-                    fig_est = px.bar(df_estado, y=cd['est'], x=cd['sld'], orientation='h', text_auto='.2s', title=f"Detalle de {tipo_filtro}")
+                df_filtro_dash = df_gastos[df_gastos[cd['tipo']] == tipo_filtro_dash]
+                if not df_filtro_dash.empty:
+                    df_estado = df_filtro_dash.groupby(cd['est'], as_index=False)[cd['sld']].sum().sort_values(by=cd['sld'], ascending=False)
+                    fig_est = px.bar(df_estado, y=cd['est'], x=cd['sld'], orientation='h', text_auto='.2s', title=f"Detalle de {tipo_filtro_dash}")
                     st.plotly_chart(fig_est, use_container_width=True)
             else:
                 st.write("No hay gastos registrados en la simulación.")
@@ -243,10 +269,8 @@ def mostrar_modulo_contabilidad():
             
             st.subheader("📑 Reporte de Junta: Matriz por Unidad")
             
-            # Calcular columna Total Consolidado
             df_matriz['TOTAL CONSOLIDADO'] = df_matriz[unidades].sum(axis=1)
             
-            # Aplicar formato de moneda para la visualización en pantalla
             columnas_numericas = unidades + ['TOTAL CONSOLIDADO']
             df_display = df_matriz.copy()
             for col in columnas_numericas:
