@@ -38,11 +38,11 @@ def mostrar_modulo_contabilidad():
         with col1:
             mes_desde = st.selectbox("Mes Desde:", meses, index=0)
         with col2:
-            anio_desde = st.number_input("Año Desde:", min_value=2024, max_value=2030, value=2025)
+            anio_desde = st.number_input("Año Desde:", min_value=2024, max_value=2030, value=2026)
         with col3:
             mes_hasta = st.selectbox("Mes Hasta:", meses, index=11)
         with col4:
-            anio_hasta = st.number_input("Año Hasta:", min_value=2024, max_value=2030, value=2025)
+            anio_hasta = st.number_input("Año Hasta:", min_value=2024, max_value=2030, value=2026)
             
         st.markdown("---")
         archivos_subidos = st.file_uploader("Sube los archivos Excel mensuales:", type=["xlsx", "xls"], accept_multiple_files=True)
@@ -76,12 +76,11 @@ def mostrar_modulo_contabilidad():
                         c_map_tipo = buscar_columna(df_map, ["TIPO"])
                         c_map_est = buscar_columna(df_map, ["ESTADO"])
                         c_map_cat = buscar_columna(df_map, ["CATEGOR"])
-                        c_map_nom = buscar_columna(df_map, ["NOMBRE", "DESCRIP"])
                         
                         df_map[c_map_cta] = df_map[c_map_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                         df_map[c_map_tipo] = df_map[c_map_tipo].apply(limpiar_texto)
                         
-                        # Filtrar mapa base para la matriz
+                        # Filtrar mapa base para la matriz (ignorar cuentas sin impacto)
                         df_map_valido = df_map[~df_map[c_map_tipo].isin(["NO APLICA", "CUENTA DE MAYOR", ""])].copy()
                         df_matriz = df_map_valido.copy()
                         
@@ -105,14 +104,13 @@ def mostrar_modulo_contabilidad():
                             
                             df_agrup = df_temp.groupby(c_arch_cta, as_index=False)[c_arch_sld].sum()
                             
-                            # Para el consolidado total (Pestañas 2 y 3)
+                            # Preparar datos para el consolidado global
                             df_temp_cons = df_agrup.copy()
                             df_temp_cons.rename(columns={c_arch_sld: "SALDO_FINAL_GLOBAL"}, inplace=True)
                             dfs_cons.append(df_temp_cons)
                             
-                            # Para la matriz separada (Pestaña 4)
+                            # Preparar datos para la matriz (Pestaña 4)
                             unidad_col = info["unidad"]
-                            # Si se suben varios de la misma unidad, agrupar nombres
                             if unidad_col in unidades_procesadas:
                                 unidad_col = f"{unidad_col} ({nombre_arch})"
                             unidades_procesadas.append(unidad_col)
@@ -129,13 +127,13 @@ def mostrar_modulo_contabilidad():
                         
                         df_final = pd.merge(df_map_valido, df_total_agrup, left_on=c_map_cta, right_on=c_arch_cta, how="inner")
                         
-                        # Almacenamiento en sesión
+                        # Guardar en sesión
                         st.session_state['cont_df'] = df_final
                         st.session_state['cont_matriz'] = df_matriz
                         st.session_state['unidades_procesadas'] = unidades_procesadas
                         st.session_state['cols_dict'] = {
                             'cta': c_map_cta, 'tipo': c_map_tipo, 'est': c_map_est, 
-                            'cat': c_map_cat, 'nom': c_map_nom, 'sld': "SALDO_FINAL_GLOBAL"
+                            'cat': c_map_cat, 'sld': "SALDO_FINAL_GLOBAL"
                         }
                         
                         st.success("✅ Procesamiento completado. Revisa las pestañas de Simulador y Matriz.")
@@ -151,9 +149,10 @@ def mostrar_modulo_contabilidad():
             cd = st.session_state['cols_dict']
             
             st.subheader("🎛️ Simulador Financiero en Tiempo Real")
-            st.write("Modifica los saldos o reclasifica el tipo de cuenta en la tabla inferior. El Punto de Equilibrio y el Dashboard se recalcularán automáticamente basándose en estos cambios.")
+            st.write("Modifica los montos en la columna de Saldo o reclasifica el Tipo de costo en la tabla. El Punto de Equilibrio y el Dashboard se recalcularán automáticamente basándose en tus cambios.")
             
-            df_editable = df[[cd['cta'], cd['nom'], cd['est'], cd['cat'], cd['tipo'], cd['sld']]].copy()
+            # Se eliminó la columna 'nom' (Nombre) para evitar el error '[nan] not in index'
+            df_editable = df[[cd['cta'], cd['est'], cd['cat'], cd['tipo'], cd['sld']]].copy()
             
             edited_df = st.data_editor(
                 df_editable,
@@ -168,7 +167,7 @@ def mostrar_modulo_contabilidad():
             
             st.session_state['edited_df'] = edited_df
             
-            # Cálculos usando los datos editados
+            # Cálculos en tiempo real
             ventas = edited_df[edited_df[cd['tipo']].isin(["INGRESOS", "INGRESO"])][cd['sld']].abs().sum()
             cf = edited_df[edited_df[cd['tipo']] == "COSTO FIJO"][cd['sld']].abs().sum()
             cv = edited_df[edited_df[cd['tipo']] == "COSTO VARIABLE"][cd['sld']].abs().sum()
@@ -195,7 +194,7 @@ def mostrar_modulo_contabilidad():
                     st.error("### Punto de Equilibrio ($)")
                     st.markdown("<h3 style='text-align: center;'>Incalculable</h3>", unsafe_allow_html=True)
         else:
-            st.info("👈 Realiza la sincronización en la Pestaña 1.")
+            st.info("👈 Realiza la sincronización en la Pestaña 1 primero.")
 
     # ==========================================
     # PESTAÑA 3: DASHBOARD ANALÍTICO
@@ -232,7 +231,7 @@ def mostrar_modulo_contabilidad():
             else:
                 st.write("No hay gastos registrados en la simulación.")
         else:
-            st.info("👈 Realiza la sincronización en la Pestaña 1.")
+            st.info("👈 Realiza la sincronización en la Pestaña 1 primero.")
 
     # ==========================================
     # PESTAÑA 4: MATRIZ DE UNIDADES
@@ -244,10 +243,10 @@ def mostrar_modulo_contabilidad():
             
             st.subheader("📑 Reporte de Junta: Matriz por Unidad")
             
-            # Calcular columna Total
+            # Calcular columna Total Consolidado
             df_matriz['TOTAL CONSOLIDADO'] = df_matriz[unidades].sum(axis=1)
             
-            # Formato moneda para visualización
+            # Aplicar formato de moneda para la visualización en pantalla
             columnas_numericas = unidades + ['TOTAL CONSOLIDADO']
             df_display = df_matriz.copy()
             for col in columnas_numericas:
@@ -259,8 +258,8 @@ def mostrar_modulo_contabilidad():
             st.download_button(
                 label="📥 Descargar Matriz (CSV para Excel)",
                 data=csv_matriz,
-                file_name='matriz_unidades.csv',
+                file_name='matriz_unidades_consolidada.csv',
                 mime='text/csv',
             )
         else:
-            st.info("👈 Realiza la sincronización en la Pestaña 1.")
+            st.info("👈 Realiza la sincronización en la Pestaña 1 primero.")
