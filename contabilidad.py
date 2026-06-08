@@ -7,11 +7,17 @@ from utils import obtener_dataframe
 def limpiar_texto(texto):
     return str(texto).strip().upper()
 
-def buscar_columna(df, palabras_clave):
+def buscar_columna(df, palabras_clave, todas=False):
     """Busca una columna en el DataFrame basada en palabras clave."""
     for col in df.columns:
-        if any(p in str(col).upper() for p in palabras_clave):
-            return col
+        if todas:
+            # Exige que todas las palabras clave estén en el nombre de la columna
+            if all(p in str(col).upper() for p in palabras_clave):
+                return col
+        else:
+            # Funciona si al menos una palabra clave coincide
+            if any(p in str(col).upper() for p in palabras_clave):
+                return col
     return None
 
 def mostrar_modulo_contabilidad():
@@ -81,21 +87,27 @@ def mostrar_modulo_contabilidad():
                         df_cons = pd.concat(dfs, ignore_index=True)
                         
                         c_arch_cta = buscar_columna(df_cons, ["CUENTA", "ID"])
-                        c_arch_sld = buscar_columna(df_cons, ["SALDO", "FINAL"])
+                        
+                        # CORRECCIÓN: Exigir que la columna contenga tanto "SALDO" como "FINAL"
+                        c_arch_sld = buscar_columna(df_cons, ["SALDO", "FINAL"], todas=True)
+
+                        if c_arch_sld is None:
+                            st.error("No se encontró la columna de 'Saldo Final'. Verifica los nombres en el archivo Excel.")
+                            st.stop()
 
                         # Limpiar IDs del Excel (quitar .0 fantasma)
                         df_cons[c_arch_cta] = df_cons[c_arch_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
-                        # Limpieza extrema de Moneda
+                        # Limpieza de Moneda
                         df_cons[c_arch_sld] = df_cons[c_arch_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True)
                         df_cons[c_arch_sld] = pd.to_numeric(df_cons[c_arch_sld], errors='coerce').fillna(0)
                         
                         df_agrupado = df_cons.groupby(c_arch_cta, as_index=False)[c_arch_sld].sum()
 
-                        # Cruce Maestro (Inner Join) - Descartando silenciosamente todo lo que no esté en el diccionario
+                        # Cruce Maestro (Inner Join) - Descartando silenciosamente lo que no esté en el diccionario
                         df_final = pd.merge(df_agrupado, df_map, left_on=c_arch_cta, right_on=c_map_cta, how="inner")
                         
-                        # Limpiar y filtrar Tipo (Ignorar "No Aplica" y "Cuenta de Mayor")
+                        # Limpiar y filtrar Tipo
                         df_final[c_map_tipo] = df_final[c_map_tipo].apply(limpiar_texto)
                         df_final = df_final[~df_final[c_map_tipo].isin(["NO APLICA", "CUENTA DE MAYOR", ""])]
                         
@@ -155,7 +167,7 @@ def mostrar_modulo_contabilidad():
                     
             st.divider()
             st.subheader("🕵️ Auditoría de Datos")
-            st.write("Descarga el detalle exacto de las cuentas y montos que el sistema ha procesado para estas sumas.")
+            st.write("Descarga el detalle exacto de las cuentas y montos procesados en estas sumas.")
             
             csv = df.to_csv(index=False).encode('utf-8-sig')
             st.download_button(
