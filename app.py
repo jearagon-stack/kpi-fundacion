@@ -89,7 +89,7 @@ if not st.session_state.logged_in:
 with st.sidebar:
     st.title("Menú Principal")
     
-    todos_los_modulos = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS", "PEDIDOS CAFETERÍA"]
+    todos_los_modulos = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS", "PEDIDOS CAFETERÍA", "CONTABILIDAD"]
     
     if st.session_state.rol_actual == "ADMIN":
         opciones_menu = todos_los_modulos + ["CONFIGURACIÓN"]

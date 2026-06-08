@@ -600,13 +600,13 @@ def mostrar_modulo_costos():
                                     ordenes_facturadas.append(ord_limpia)
                                     mapa_facturas[ord_limpia] = num_factura
                                     
-                    # BLINDAJE FINAL CON MEMORIA DE ESTADOS 
+                    # BLINDAJE FINAL CON MEMORIA DE ESTADOS Y LIQUIDACIÓN HISTÓRICA
                     todas_las_ordenes = set()
                     todas_las_ordenes.update(costos_mo_por_orden.keys())
                     todas_las_ordenes.update(costos_mp_por_orden.keys())
                     todas_las_ordenes.update(ordenes_facturadas)
                     todas_las_ordenes.update(historial_saldos.keys())
-                    todas_las_ordenes.update(historial_estados.keys()) # <-- AQUÍ ESTÁ LA MAGIA QUE FALTABA
+                    todas_las_ordenes.update(historial_estados.keys()) 
                     todas_las_ordenes.update(ordenes_manuales)
                     
                     fecha_str = date.today().strftime("%d/%m/%Y")
@@ -628,14 +628,17 @@ def mostrar_modulo_costos():
                         estado_anterior = str(historial_estados.get(ord_cln, "")).strip()
                         if estado_anterior.upper() == "NAN":
                             estado_anterior = ""
+                            
+                        estado_anterior_cln = estado_anterior.upper()
                         
-                        # LOGICA DE ESTADOS ACTUALIZADA
+                        # === LOGICA DE ESTADOS ACTUALIZADA ===
                         if ord_cln in ordenes_facturadas or ord_cln in ordenes_manuales:
                             estado = "Liquidado a Costo de Ventas"
+                        elif estado_anterior != "":
+                            # Respeta intacto cualquier estado manual que el usuario haya escrito en el excel viejo
+                            estado = estado_anterior
                         elif nuevo_mo == 0 and nuevo_mp == 0:
-                            if estado_anterior != "":
-                                estado = estado_anterior
-                            elif saldo_anterior == 0 and hist_anterior > 0:
+                            if saldo_anterior == 0 and hist_anterior > 0:
                                 estado = "Liquidado Anteriormente"
                             else:
                                 estado = "Pendiente"
@@ -652,11 +655,21 @@ def mostrar_modulo_costos():
                         if nuevo_mp > 0: 
                             filas_kardex.append({"Fecha": fecha_str, "Orden": ord_cln, "Factura": factura_asignada, "Tipo_Costo": "Materia Prima", "Monto": nuevo_mp, "Estado": estado})
 
+                        # === LOGICA DE PARTIDA 5 (COSTO DE VENTAS) Y SALDO WIP ===
                         if ord_cln in ordenes_facturadas or ord_cln in ordenes_manuales:
+                            # 1. Facturación normal del mes: Manda TODO (anterior + nuevo) a Partida 5
                             total_liq_cv += saldo_acumulado
                             saldo_acumulado = 0.0
+                        elif estado_anterior != "":
+                            # 2. Tiene estado manual. Revisar si es de "Liquidación/Ventas"
+                            if "LIQUID" in estado_anterior_cln or "VENTA" in estado_anterior_cln:
+                                # Manda a Partida 5 SOLO lo nuevo, respeta (ignora) el saldo_anterior
+                                total_liq_cv += (nuevo_mo + nuevo_mp)
+                            
+                            # Para cualquier estado manual (sea liquidado o traslado), el WIP del mes queda en 0
+                            saldo_acumulado = 0.0
                         elif estado != "Pendiente":
-                            # Cualquier estado personalizado significa que el usuario ya sacó el dinero contablemente
+                            # Liquidado anteriormente de forma automática, sin nuevos costos
                             saldo_acumulado = 0.0
                             
                         filas_wip.append({
