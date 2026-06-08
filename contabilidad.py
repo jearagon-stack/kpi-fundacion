@@ -130,7 +130,7 @@ def mostrar_modulo_contabilidad():
                             'cta': c_map_cta, 'tipo': c_map_tipo, 'est': c_map_est, 
                             'cat': c_map_cat, 'sld': "SALDO_FINAL_GLOBAL"
                         }
-                        st.session_state['sync_flag'] = True # Bandera para resetear el simulador
+                        st.session_state['sync_flag'] = True 
                         
                         st.success("✅ Procesamiento completado. Revisa las pestañas de Simulador y Matriz.")
                     except Exception as e:
@@ -144,56 +144,80 @@ def mostrar_modulo_contabilidad():
             df = st.session_state['cont_df']
             cd = st.session_state['cols_dict']
             
-            # Inicializar la base maestra del simulador
             if 'df_master' not in st.session_state or st.session_state.get('sync_flag', False):
                 st.session_state['df_master'] = df[[cd['cta'], cd['est'], cd['cat'], cd['tipo'], cd['sld']]].copy()
                 st.session_state['sync_flag'] = False
                 
-            st.subheader("🎛️ Simulador Financiero en Tiempo Real")
+            st.subheader("🎛️ Simulador Financiero")
+            st.write("Utiliza los filtros para ubicar una cuenta y proyectar un escenario. Los cálculos inferiores se actualizarán al aplicar el cambio.")
             
-            # --- SECCIÓN DE FILTROS ---
-            with st.expander("🔍 Filtrar cuentas para editar", expanded=True):
-                col_f1, col_f2 = st.columns(2)
-                with col_f1:
-                    tipos_disp = st.session_state['df_master'][cd['tipo']].unique().tolist()
-                    filtro_tipo = st.multiselect("Filtrar por Tipo:", options=tipos_disp)
-                with col_f2:
-                    busqueda = st.text_input("Buscar por ID, Estado o Categoría:")
+            # --- PANEL DE BÚSQUEDA EN CASCADA ---
+            st.markdown("#### 1. Buscar Cuenta")
+            col_f1, col_f2, col_f3 = st.columns(3)
             
-            # Aplicar filtros a la vista
-            df_view = st.session_state['df_master'].copy()
-            
-            if filtro_tipo:
-                df_view = df_view[df_view[cd['tipo']].isin(filtro_tipo)]
+            with col_f1:
+                tipos_disp = st.session_state['df_master'][cd['tipo']].unique().tolist()
+                filtro_tipo = st.selectbox("A. Filtrar por Tipo:", options=["Todos"] + tipos_disp)
                 
-            if busqueda:
-                termino = str(busqueda).upper()
-                mask = (
-                    df_view[cd['cta']].astype(str).str.upper().str.contains(termino) |
-                    df_view[cd['est']].astype(str).str.upper().str.contains(termino) |
-                    df_view[cd['cat']].astype(str).str.upper().str.contains(termino)
-                )
-                df_view = df_view[mask]
+            df_filtro = st.session_state['df_master'].copy()
+            if filtro_tipo != "Todos":
+                df_filtro = df_filtro[df_filtro[cd['tipo']] == filtro_tipo]
+                
+            with col_f2:
+                cat_disp = df_filtro[cd['cat']].unique().tolist()
+                filtro_cat = st.selectbox("B. Filtrar por Categoría:", options=["Todas"] + cat_disp)
+                
+            if filtro_cat != "Todas":
+                df_filtro = df_filtro[df_filtro[cd['cat']] == filtro_cat]
+                
+            with col_f3:
+                # Crear formato visual amigable "ID - Nombre de cuenta"
+                df_filtro['display_name'] = df_filtro[cd['cta']].astype(str) + " - " + df_filtro[cd['est']]
+                opciones_cuentas = df_filtro['display_name'].tolist()
+                cuenta_seleccionada = st.selectbox("C. Seleccionar Cuenta:", options=["Seleccione una cuenta..."] + opciones_cuentas)
+
+            # --- PANEL DE EDICIÓN INDIVIDUAL ---
+            if cuenta_seleccionada != "Seleccione una cuenta...":
+                st.markdown("#### 2. Configurar Escenario")
+                
+                # Extraer ID y ubicar la fila exacta
+                id_cuenta_sel = cuenta_seleccionada.split(" - ")[0]
+                idx = st.session_state['df_master'].index[st.session_state['df_master'][cd['cta']].astype(str) == id_cuenta_sel].tolist()[0]
+                
+                tipo_actual = st.session_state['df_master'].at[idx, cd['tipo']]
+                monto_actual = float(st.session_state['df_master'].at[idx, cd['sld']])
+                nombre_cuenta = st.session_state['df_master'].at[idx, cd['est']]
+                
+                st.info(f"**Cuenta seleccionada:** {nombre_cuenta} (ID: {id_cuenta_sel})")
+                
+                col_ed1, col_ed2, col_ed3 = st.columns([2, 2, 1])
+                with col_ed1:
+                    opciones_tipo = ["COSTO FIJO", "COSTO VARIABLE", "INGRESOS", "INGRESO"]
+                    if tipo_actual not in opciones_tipo:
+                        opciones_tipo.append(tipo_actual)
+                        
+                    nuevo_tipo = st.selectbox(
+                        "Reclasificar Tipo:", 
+                        options=opciones_tipo, 
+                        index=opciones_tipo.index(tipo_actual),
+                        key="edit_tipo"
+                    )
+                with col_ed2:
+                    nuevo_monto = st.number_input("Proyectar Nuevo Monto ($):", value=monto_actual, min_value=0.0, format="%.2f", key="edit_monto")
+                
+                with col_ed3:
+                    st.write("") # Espaciador para alinear el botón
+                    st.write("")
+                    if st.button("✅ Aplicar Cambio", type="primary", use_container_width=True):
+                        st.session_state['df_master'].at[idx, cd['tipo']] = nuevo_tipo
+                        st.session_state['df_master'].at[idx, cd['sld']] = nuevo_monto
+                        st.rerun() # Fuerza la recarga para actualizar las matemáticas
+
+            st.divider()
             
-            # --- TABLA EDITABLE ---
-            st.caption(f"Mostrando {len(df_view)} cuentas. Los cambios afectarán los resultados inferiores.")
-            edited_view = st.data_editor(
-                df_view,
-                column_config={
-                    cd['tipo']: st.column_config.SelectboxColumn("Tipo de Costo", options=["COSTO FIJO", "COSTO VARIABLE", "INGRESOS", "INGRESO"]),
-                    cd['sld']: st.column_config.NumberColumn("Monto ($)", format="$ %.2f", min_value=0)
-                },
-                use_container_width=True,
-                hide_index=True,
-                key="editor_escenarios"
-            )
-            
-            # Actualizar la base maestra con los cambios realizados en la vista filtrada
-            st.session_state['df_master'].update(edited_view)
-            
+            # --- CÁLCULOS MATEMÁTICOS ---
             df_math = st.session_state['df_master']
             
-            # --- CÁLCULOS ---
             ventas = df_math[df_math[cd['tipo']].isin(["INGRESOS", "INGRESO"])][cd['sld']].abs().sum()
             cf = df_math[df_math[cd['tipo']] == "COSTO FIJO"][cd['sld']].abs().sum()
             cv = df_math[df_math[cd['tipo']] == "COSTO VARIABLE"][cd['sld']].abs().sum()
@@ -201,7 +225,6 @@ def mostrar_modulo_contabilidad():
             margen_pct = (1 - (cv / ventas)) if ventas > 0 else 0
             pe = (cf / margen_pct) if margen_pct > 0 else 0
             
-            st.divider()
             c1, c2, c3 = st.columns(3)
             c1.metric("Ingresos Proyectados", f"${ventas:,.2f}")
             c2.metric("Costos Variables (CV)", f"${cv:,.2f}")
@@ -219,6 +242,10 @@ def mostrar_modulo_contabilidad():
                 else:
                     st.error("### Punto de Equilibrio ($)")
                     st.markdown("<h3 style='text-align: center;'>Incalculable</h3>", unsafe_allow_html=True)
+                    
+            with st.expander("Ver tabla completa de saldos proyectados"):
+                st.dataframe(df_math, use_container_width=True, hide_index=True)
+                
         else:
             st.info("👈 Realiza la sincronización en la Pestaña 1 primero.")
 
