@@ -169,5 +169,5 @@ elif opcion == "CONTABILIDAD":
     try:
         from contabilidad import mostrar_modulo_contabilidad
         mostrar_modulo_contabilidad()
-    except ImportError:
-        st.warning("El archivo 'contabilidad.py' aún no ha sido creado o tiene un error.")
+    except Exception as e:
+        st.error(f"Error técnico al cargar el módulo contabilidad: {e}")
