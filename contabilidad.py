@@ -198,6 +198,15 @@ def mostrar_modulo_contabilidad():
                 if margen_pct > 0:
                     st.success("### Punto de Equilibrio ($)")
                     st.markdown(f"<h1 style='text-align: center;'>${pe:,.2f}</h1>", unsafe_allow_html=True)
+                    
+                    # --- INDICADOR DE DISTANCIA A LA META ---
+                    diferencia_monto = ventas - pe
+                    diferencia_pct = (diferencia_monto / pe) * 100 if pe > 0 else 0
+                    
+                    if diferencia_monto >= 0:
+                        st.markdown(f"<div style='text-align: center; padding-top: 10px;'><span style='background-color: #d4edda; color: #155724; padding: 5px 10px; border-radius: 5px; font-weight: bold;'>▲ Superávit: +${diferencia_monto:,.2f} (+{diferencia_pct:.2f}%)</span></div>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"<div style='text-align: center; padding-top: 10px;'><span style='background-color: #f8d7da; color: #721c24; padding: 5px 10px; border-radius: 5px; font-weight: bold;'>▼ Déficit: -${abs(diferencia_monto):,.2f} ({diferencia_pct:.2f}%)</span></div>", unsafe_allow_html=True)
                 else:
                     st.error("### Punto de Equilibrio ($)")
                     st.markdown("<h3 style='text-align: center;'>Incalculable</h3>", unsafe_allow_html=True)
@@ -281,10 +290,8 @@ def mostrar_modulo_contabilidad():
                         df_map_m[cm_cta] = df_map_m[cm_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                         df_map_m[cm_tipo] = df_map_m[cm_tipo].apply(limpiar_texto)
                         
-                        # Base de la matriz con todas las cuentas válidas
                         df_base_matriz = df_map_m[~df_map_m[cm_tipo].isin(["NO APLICA", "CUENTA DE MAYOR", ""])].copy()
                         
-                        # Crear columnas para las unidades con valor 0 inicial
                         for u in unidades_oficiales:
                             df_base_matriz[u] = 0.0
 
@@ -304,7 +311,6 @@ def mostrar_modulo_contabilidad():
                             
                             df_agrup_m = df_temp_m.groupby(c_arch_cta_m, as_index=False)[c_arch_sld_m].sum()
                             
-                            # Sumar los valores a la columna correspondiente de la unidad oficial
                             unidad_obj = info["unidad"]
                             for _, row in df_agrup_m.iterrows():
                                 cuenta = row[c_arch_cta_m]
@@ -313,10 +319,7 @@ def mostrar_modulo_contabilidad():
                                 if not idx_cuenta.empty:
                                     df_base_matriz.loc[idx_cuenta, unidad_obj] += monto
 
-                        # Calcular Total Consolidado
                         df_base_matriz['TOTAL CONSOLIDADO'] = df_base_matriz[unidades_oficiales].sum(axis=1)
-                        
-                        # Quitar filas que quedaron en cero en todas las unidades (opcional para no ver sábanas vacías)
                         df_base_matriz = df_base_matriz[df_base_matriz['TOTAL CONSOLIDADO'] != 0].copy()
                         
                         st.session_state['matriz_final'] = df_base_matriz
@@ -327,14 +330,12 @@ def mostrar_modulo_contabilidad():
         if 'matriz_final' in st.session_state:
             df_mostrar = st.session_state['matriz_final'].copy()
             
-            # Formato visual en pantalla
             cols_num = unidades_oficiales + ['TOTAL CONSOLIDADO']
             for col in cols_num:
                 df_mostrar[col] = df_mostrar[col].apply(lambda x: f"${x:,.2f}")
                 
             st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
             
-            # Exportar en Excel Nativo
             excel_matriz = generar_excel(st.session_state['matriz_final'])
             st.download_button(
                 label="📥 Descargar Matriz en Excel (.xlsx)",
