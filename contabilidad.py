@@ -1,4 +1,6 @@
 import streamlit as st
+st.write("¡El archivo contabilidad.py SÍ está siendo detectado!")
+import streamlit as st
 import pandas as pd
 import plotly.express as px
 from utils import obtener_dataframe
