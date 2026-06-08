@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
+import io
 from utils import obtener_dataframe
 
 # --- FUNCIONES AUXILIARES ---
@@ -17,21 +18,29 @@ def buscar_columna(df, palabras_clave, todas=False):
                 return col
     return None
 
+def generar_excel(df):
+    """Convierte un DataFrame a un archivo Excel en memoria listo para descargar."""
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Reporte')
+    return output.getvalue()
+
 def mostrar_modulo_contabilidad():
     st.title("📊 Análisis Financiero y Punto de Equilibrio")
     
     tab_carga, tab_pe, tab_dash, tab_matriz = st.tabs([
-        "📥 1. Carga", 
+        "📥 1. Carga General", 
         "🎛️ 2. Simulador y PE", 
         "📊 3. Dashboard",
         "📑 4. Matriz (Junta)"
     ])
 
     # ==========================================
-    # PESTAÑA 1: CARGA DE ARCHIVOS
+    # PESTAÑA 1: CARGA GENERAL (SIMULADOR)
     # ==========================================
     with tab_carga:
-        st.subheader("Configuración del Periodo y Archivos")
+        st.subheader("Configuración para el Simulador Global")
+        st.write("Sube aquí los archivos para tu análisis de escenarios. (La matriz de Junta se arma en la pestaña 4).")
         
         col1, col2, col3, col4 = st.columns(4)
         meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
@@ -45,21 +54,9 @@ def mostrar_modulo_contabilidad():
             anio_hasta = st.number_input("Año Hasta:", min_value=2024, max_value=2030, value=2026)
             
         st.markdown("---")
-        archivos_subidos = st.file_uploader("Sube los archivos Excel mensuales:", type=["xlsx", "xls"], accept_multiple_files=True)
+        archivos_subidos = st.file_uploader("Sube los archivos Excel para el análisis global:", type=["xlsx", "xls"], accept_multiple_files=True, key="up_general")
 
-        mapeo_archivos = {}
-        if archivos_subidos:
-            st.write("**Clasificación de Archivos**")
-            st.write("Asigna la unidad de negocio correspondiente a cada archivo subido para construir la matriz:")
-            for arch in archivos_subidos:
-                unidad = st.selectbox(
-                    f"Unidad para el archivo '{arch.name}':", 
-                    ["Cafetería", "Talleres", "Librería", "Proyectos", "Global", "Otros"], 
-                    key=arch.name
-                )
-                mapeo_archivos[arch.name] = {"file": arch, "unidad": unidad}
-
-        if st.button("🔄 Procesar y Sincronizar", type="primary", use_container_width=True):
+        if st.button("🔄 Procesar Consolidado Global", type="primary", use_container_width=True):
             if not archivos_subidos:
                 st.warning("⚠️ Sube al menos un archivo.")
             else:
@@ -71,7 +68,6 @@ def mostrar_modulo_contabilidad():
                             st.stop()
                         
                         df_map.columns = df_map.columns.str.strip().str.upper()
-                        
                         c_map_cta = buscar_columna(df_map, ["CUENTA", "ID"])
                         c_map_tipo = buscar_columna(df_map, ["TIPO"])
                         c_map_est = buscar_columna(df_map, ["ESTADO"])
@@ -81,42 +77,25 @@ def mostrar_modulo_contabilidad():
                         df_map[c_map_tipo] = df_map[c_map_tipo].apply(limpiar_texto)
                         
                         df_map_valido = df_map[~df_map[c_map_tipo].isin(["NO APLICA", "CUENTA DE MAYOR", ""])].copy()
-                        df_matriz = df_map_valido.copy()
                         
                         dfs_cons = []
-                        unidades_procesadas = []
-
-                        for nombre_arch, info in mapeo_archivos.items():
-                            df_temp = pd.read_excel(info["file"], dtype=str)
+                        for arch in archivos_subidos:
+                            df_temp = pd.read_excel(arch, dtype=str)
                             df_temp.columns = df_temp.columns.str.strip().str.upper()
                             
                             c_arch_cta = buscar_columna(df_temp, ["CUENTA", "ID"])
                             c_arch_sld = buscar_columna(df_temp, ["SALDO", "FINAL"], todas=True)
                             
                             if not c_arch_sld or not c_arch_cta:
-                                st.error(f"Error en {nombre_arch}: No se encontraron las columnas de Cuenta o Saldo Final.")
-                                st.stop()
+                                continue
 
                             df_temp[c_arch_cta] = df_temp[c_arch_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                             df_temp[c_arch_sld] = df_temp[c_arch_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True)
                             df_temp[c_arch_sld] = pd.to_numeric(df_temp[c_arch_sld], errors='coerce').fillna(0)
                             
                             df_agrup = df_temp.groupby(c_arch_cta, as_index=False)[c_arch_sld].sum()
-                            
-                            df_temp_cons = df_agrup.copy()
-                            df_temp_cons.rename(columns={c_arch_sld: "SALDO_FINAL_GLOBAL"}, inplace=True)
-                            dfs_cons.append(df_temp_cons)
-                            
-                            unidad_col = info["unidad"]
-                            if unidad_col in unidades_procesadas:
-                                unidad_col = f"{unidad_col} ({nombre_arch})"
-                            unidades_procesadas.append(unidad_col)
-                            
-                            df_agrup.rename(columns={c_arch_sld: unidad_col}, inplace=True)
-                            df_matriz = pd.merge(df_matriz, df_agrup[[c_arch_cta, unidad_col]], left_on=c_map_cta, right_on=c_arch_cta, how="left")
-                            df_matriz[unidad_col] = df_matriz[unidad_col].fillna(0)
-                            if c_arch_cta in df_matriz.columns and c_arch_cta != c_map_cta:
-                                df_matriz.drop(columns=[c_arch_cta], inplace=True)
+                            df_agrup.rename(columns={c_arch_sld: "SALDO_FINAL_GLOBAL"}, inplace=True)
+                            dfs_cons.append(df_agrup)
 
                         df_total = pd.concat(dfs_cons, ignore_index=True)
                         df_total_agrup = df_total.groupby(c_arch_cta, as_index=False)["SALDO_FINAL_GLOBAL"].sum()
@@ -124,15 +103,13 @@ def mostrar_modulo_contabilidad():
                         df_final = pd.merge(df_map_valido, df_total_agrup, left_on=c_map_cta, right_on=c_arch_cta, how="inner")
                         
                         st.session_state['cont_df'] = df_final
-                        st.session_state['cont_matriz'] = df_matriz
-                        st.session_state['unidades_procesadas'] = unidades_procesadas
                         st.session_state['cols_dict'] = {
                             'cta': c_map_cta, 'tipo': c_map_tipo, 'est': c_map_est, 
                             'cat': c_map_cat, 'sld': "SALDO_FINAL_GLOBAL"
                         }
                         st.session_state['sync_flag'] = True 
                         
-                        st.success("✅ Procesamiento completado. Revisa las pestañas de Simulador y Matriz.")
+                        st.success("✅ Procesamiento completado. Revisa el Simulador (Pestaña 2).")
                     except Exception as e:
                         st.error(f"Error técnico: {e}")
 
@@ -149,9 +126,7 @@ def mostrar_modulo_contabilidad():
                 st.session_state['sync_flag'] = False
                 
             st.subheader("🎛️ Simulador Financiero")
-            st.write("Utiliza los filtros para ubicar una cuenta y proyectar un escenario. Los cálculos inferiores se actualizarán al aplicar el cambio.")
             
-            # --- PANEL DE BÚSQUEDA EN CASCADA ---
             st.markdown("#### 1. Buscar Cuenta")
             col_f1, col_f2, col_f3 = st.columns(3)
             
@@ -171,16 +146,12 @@ def mostrar_modulo_contabilidad():
                 df_filtro = df_filtro[df_filtro[cd['cat']] == filtro_cat]
                 
             with col_f3:
-                # Crear formato visual amigable "ID - Nombre de cuenta"
                 df_filtro['display_name'] = df_filtro[cd['cta']].astype(str) + " - " + df_filtro[cd['est']]
                 opciones_cuentas = df_filtro['display_name'].tolist()
                 cuenta_seleccionada = st.selectbox("C. Seleccionar Cuenta:", options=["Seleccione una cuenta..."] + opciones_cuentas)
 
-            # --- PANEL DE EDICIÓN INDIVIDUAL ---
             if cuenta_seleccionada != "Seleccione una cuenta...":
                 st.markdown("#### 2. Configurar Escenario")
-                
-                # Extraer ID y ubicar la fila exacta
                 id_cuenta_sel = cuenta_seleccionada.split(" - ")[0]
                 idx = st.session_state['df_master'].index[st.session_state['df_master'][cd['cta']].astype(str) == id_cuenta_sel].tolist()[0]
                 
@@ -188,36 +159,25 @@ def mostrar_modulo_contabilidad():
                 monto_actual = float(st.session_state['df_master'].at[idx, cd['sld']])
                 nombre_cuenta = st.session_state['df_master'].at[idx, cd['est']]
                 
-                st.info(f"**Cuenta seleccionada:** {nombre_cuenta} (ID: {id_cuenta_sel})")
-                
                 col_ed1, col_ed2, col_ed3 = st.columns([2, 2, 1])
                 with col_ed1:
                     opciones_tipo = ["COSTO FIJO", "COSTO VARIABLE", "INGRESOS", "INGRESO"]
                     if tipo_actual not in opciones_tipo:
                         opciones_tipo.append(tipo_actual)
-                        
-                    nuevo_tipo = st.selectbox(
-                        "Reclasificar Tipo:", 
-                        options=opciones_tipo, 
-                        index=opciones_tipo.index(tipo_actual),
-                        key="edit_tipo"
-                    )
+                    nuevo_tipo = st.selectbox("Reclasificar Tipo:", options=opciones_tipo, index=opciones_tipo.index(tipo_actual))
                 with col_ed2:
-                    nuevo_monto = st.number_input("Proyectar Nuevo Monto ($):", value=monto_actual, min_value=0.0, format="%.2f", key="edit_monto")
-                
+                    nuevo_monto = st.number_input("Proyectar Nuevo Monto ($):", value=monto_actual, min_value=0.0, format="%.2f")
                 with col_ed3:
-                    st.write("") # Espaciador para alinear el botón
+                    st.write("")
                     st.write("")
                     if st.button("✅ Aplicar Cambio", type="primary", use_container_width=True):
                         st.session_state['df_master'].at[idx, cd['tipo']] = nuevo_tipo
                         st.session_state['df_master'].at[idx, cd['sld']] = nuevo_monto
-                        st.rerun() # Fuerza la recarga para actualizar las matemáticas
+                        st.rerun()
 
             st.divider()
             
-            # --- CÁLCULOS MATEMÁTICOS ---
             df_math = st.session_state['df_master']
-            
             ventas = df_math[df_math[cd['tipo']].isin(["INGRESOS", "INGRESO"])][cd['sld']].abs().sum()
             cf = df_math[df_math[cd['tipo']] == "COSTO FIJO"][cd['sld']].abs().sum()
             cv = df_math[df_math[cd['tipo']] == "COSTO VARIABLE"][cd['sld']].abs().sum()
@@ -234,7 +194,6 @@ def mostrar_modulo_contabilidad():
             with col_m:
                 st.info("### Margen de Contribución")
                 st.markdown(f"<h1 style='text-align: center; color: #4CAF50;'>{margen_pct * 100:.2f}%</h1>", unsafe_allow_html=True)
-                
             with col_p:
                 if margen_pct > 0:
                     st.success("### Punto de Equilibrio ($)")
@@ -243,9 +202,15 @@ def mostrar_modulo_contabilidad():
                     st.error("### Punto de Equilibrio ($)")
                     st.markdown("<h3 style='text-align: center;'>Incalculable</h3>", unsafe_allow_html=True)
                     
-            with st.expander("Ver tabla completa de saldos proyectados"):
-                st.dataframe(df_math, use_container_width=True, hide_index=True)
-                
+            st.divider()
+            st.subheader("🕵️ Exportar Escenario Actual")
+            excel_sim = generar_excel(df_math)
+            st.download_button(
+                label="📥 Descargar Detalle en Excel (.xlsx)",
+                data=excel_sim,
+                file_name='auditoria_simulador.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            )
         else:
             st.info("👈 Realiza la sincronización en la Pestaña 1 primero.")
 
@@ -258,7 +223,6 @@ def mostrar_modulo_contabilidad():
             cd = st.session_state['cols_dict']
             
             st.subheader("📊 Desglose basado en la Simulación")
-            
             df_gastos = df_dash[df_dash[cd['tipo']].isin(["COSTO FIJO", "COSTO VARIABLE"])]
             
             if not df_gastos.empty:
@@ -266,7 +230,6 @@ def mostrar_modulo_contabilidad():
                 with col_g1:
                     fig_tipo = px.pie(df_gastos, values=cd['sld'], names=cd['tipo'], hole=0.4, title="Proporción de Gastos")
                     st.plotly_chart(fig_tipo, use_container_width=True)
-                    
                 with col_g2:
                     df_cat = df_gastos.groupby(cd['cat'], as_index=False)[cd['sld']].sum().sort_values(by=cd['sld'], ascending=False)
                     fig_cat = px.bar(df_cat, x=cd['cat'], y=cd['sld'], text_auto='.2s', title="Top Gastos por Categoría")
@@ -275,7 +238,6 @@ def mostrar_modulo_contabilidad():
                 st.divider()
                 tipos_existentes = df_gastos[cd['tipo']].unique().tolist()
                 tipo_filtro_dash = st.selectbox("Filtrar estado por:", tipos_existentes)
-                
                 df_filtro_dash = df_gastos[df_gastos[cd['tipo']] == tipo_filtro_dash]
                 if not df_filtro_dash.empty:
                     df_estado = df_filtro_dash.groupby(cd['est'], as_index=False)[cd['sld']].sum().sort_values(by=cd['sld'], ascending=False)
@@ -287,30 +249,96 @@ def mostrar_modulo_contabilidad():
             st.info("👈 Realiza la sincronización en la Pestaña 1 primero.")
 
     # ==========================================
-    # PESTAÑA 4: MATRIZ DE UNIDADES
+    # PESTAÑA 4: MATRIZ DE UNIDADES (INDEPENDIENTE)
     # ==========================================
     with tab_matriz:
-        if 'cont_matriz' in st.session_state:
-            df_matriz = st.session_state['cont_matriz']
-            unidades = st.session_state['unidades_procesadas']
-            
-            st.subheader("📑 Reporte de Junta: Matriz por Unidad")
-            
-            df_matriz['TOTAL CONSOLIDADO'] = df_matriz[unidades].sum(axis=1)
-            
-            columnas_numericas = unidades + ['TOTAL CONSOLIDADO']
-            df_display = df_matriz.copy()
-            for col in columnas_numericas:
-                df_display[col] = df_display[col].apply(lambda x: f"${x:,.2f}")
+        st.subheader("📑 Reporte de Junta: Matriz Independiente")
+        st.write("Sube los archivos correspondientes y clasifícalos en las 9 unidades oficiales. Esta sección no mezcla datos con el simulador.")
+        
+        archivos_matriz = st.file_uploader("Sube los archivos Excel para armar la matriz:", type=["xlsx", "xls"], accept_multiple_files=True, key="up_matriz")
+        
+        unidades_oficiales = ["Cafetería", "Librería", "Centro Soho", "CID Campus", "Talleres Gráfico", "Despensa", "Terraza", "Servicios Generales", "Gerencias"]
+        mapeo_matriz = {}
+        
+        if archivos_matriz:
+            st.write("**Clasifica los archivos subidos:**")
+            for arch in archivos_matriz:
+                unidad_sel = st.selectbox(f"Unidad para '{arch.name}':", unidades_oficiales, key=f"sel_{arch.name}")
+                mapeo_matriz[arch.name] = {"file": arch, "unidad": unidad_sel}
                 
-            st.dataframe(df_display, use_container_width=True, hide_index=True)
+            if st.button("🔄 Armar Matriz de Junta", type="primary"):
+                with st.spinner("Construyendo matriz por unidades..."):
+                    try:
+                        df_map_m = obtener_dataframe("Balance_Mapeado")
+                        if df_map_m is None:
+                            st.error("Error al conectar con 'Balance_Mapeado'.")
+                            st.stop()
+                            
+                        df_map_m.columns = df_map_m.columns.str.strip().str.upper()
+                        cm_cta = buscar_columna(df_map_m, ["CUENTA", "ID"])
+                        cm_tipo = buscar_columna(df_map_m, ["TIPO"])
+                        
+                        df_map_m[cm_cta] = df_map_m[cm_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                        df_map_m[cm_tipo] = df_map_m[cm_tipo].apply(limpiar_texto)
+                        
+                        # Base de la matriz con todas las cuentas válidas
+                        df_base_matriz = df_map_m[~df_map_m[cm_tipo].isin(["NO APLICA", "CUENTA DE MAYOR", ""])].copy()
+                        
+                        # Crear columnas para las unidades con valor 0 inicial
+                        for u in unidades_oficiales:
+                            df_base_matriz[u] = 0.0
+
+                        for nombre_arch, info in mapeo_matriz.items():
+                            df_temp_m = pd.read_excel(info["file"], dtype=str)
+                            df_temp_m.columns = df_temp_m.columns.str.strip().str.upper()
+                            
+                            c_arch_cta_m = buscar_columna(df_temp_m, ["CUENTA", "ID"])
+                            c_arch_sld_m = buscar_columna(df_temp_m, ["SALDO", "FINAL"], todas=True)
+                            
+                            if not c_arch_sld_m or not c_arch_cta_m:
+                                continue
+                                
+                            df_temp_m[c_arch_cta_m] = df_temp_m[c_arch_cta_m].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                            df_temp_m[c_arch_sld_m] = df_temp_m[c_arch_sld_m].astype(str).str.replace(r'[^\d\.\-]', '', regex=True)
+                            df_temp_m[c_arch_sld_m] = pd.to_numeric(df_temp_m[c_arch_sld_m], errors='coerce').fillna(0)
+                            
+                            df_agrup_m = df_temp_m.groupby(c_arch_cta_m, as_index=False)[c_arch_sld_m].sum()
+                            
+                            # Sumar los valores a la columna correspondiente de la unidad oficial
+                            unidad_obj = info["unidad"]
+                            for _, row in df_agrup_m.iterrows():
+                                cuenta = row[c_arch_cta_m]
+                                monto = row[c_arch_sld_m]
+                                idx_cuenta = df_base_matriz[df_base_matriz[cm_cta] == cuenta].index
+                                if not idx_cuenta.empty:
+                                    df_base_matriz.loc[idx_cuenta, unidad_obj] += monto
+
+                        # Calcular Total Consolidado
+                        df_base_matriz['TOTAL CONSOLIDADO'] = df_base_matriz[unidades_oficiales].sum(axis=1)
+                        
+                        # Quitar filas que quedaron en cero en todas las unidades (opcional para no ver sábanas vacías)
+                        df_base_matriz = df_base_matriz[df_base_matriz['TOTAL CONSOLIDADO'] != 0].copy()
+                        
+                        st.session_state['matriz_final'] = df_base_matriz
+                        st.success("✅ Matriz construida con éxito.")
+                    except Exception as e:
+                        st.error(f"Error técnico en la matriz: {e}")
+
+        if 'matriz_final' in st.session_state:
+            df_mostrar = st.session_state['matriz_final'].copy()
             
-            csv_matriz = df_matriz.to_csv(index=False).encode('utf-8-sig')
+            # Formato visual en pantalla
+            cols_num = unidades_oficiales + ['TOTAL CONSOLIDADO']
+            for col in cols_num:
+                df_mostrar[col] = df_mostrar[col].apply(lambda x: f"${x:,.2f}")
+                
+            st.dataframe(df_mostrar, use_container_width=True, hide_index=True)
+            
+            # Exportar en Excel Nativo
+            excel_matriz = generar_excel(st.session_state['matriz_final'])
             st.download_button(
-                label="📥 Descargar Matriz (CSV para Excel)",
-                data=csv_matriz,
-                file_name='matriz_unidades_consolidada.csv',
-                mime='text/csv',
+                label="📥 Descargar Matriz en Excel (.xlsx)",
+                data=excel_matriz,
+                file_name='matriz_junta.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
             )
-        else:
-            st.info("👈 Realiza la sincronización en la Pestaña 1 primero.")
