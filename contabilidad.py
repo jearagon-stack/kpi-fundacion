@@ -29,7 +29,6 @@ def mostrar_modulo_contabilidad():
     with tab_carga:
         st.subheader("Configuración del Periodo y Unidad")
         
-        # 1. Periodo Desde / Hasta
         col1, col2, col3, col4 = st.columns(4)
         meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
         with col1:
@@ -41,7 +40,6 @@ def mostrar_modulo_contabilidad():
         with col4:
             anio_hasta = st.number_input("Año Hasta:", min_value=2024, max_value=2030, value=2025)
             
-        # 2. Selector de Unidades
         st.markdown("---")
         unidades_seleccionadas = st.multiselect(
             "Selecciona la(s) unidad(es) a analizar (Consolidado):", 
@@ -51,31 +49,29 @@ def mostrar_modulo_contabilidad():
         st.session_state['unidades_analisis'] = unidades_seleccionadas
 
         st.markdown("---")
-        archivos_subidos = st.file_uploader("Sube los archivos Excel de las unidades seleccionadas:", type=["xlsx", "xls"], accept_multiple_files=True)
+        archivos_subidos = st.file_uploader("Sube los archivos Excel de las unidades:", type=["xlsx", "xls"], accept_multiple_files=True)
 
         if st.button("🔄 Sincronizar con Diccionario y Calcular", type="primary", use_container_width=True):
-            if not archivos_subidos:
-                st.warning("⚠️ Debes subir al menos un archivo de Excel para proceder.")
-            elif not unidades_seleccionadas:
-                st.warning("⚠️ Debes seleccionar al menos una unidad de negocio.")
+            if not archivos_subidos or not unidades_seleccionadas:
+                st.warning("⚠️ Sube al menos un archivo y selecciona una unidad.")
             else:
-                with st.spinner("Procesando datos y sincronizando con Google Sheets..."):
+                with st.spinner("Limpiando formatos de moneda y cruzando bases..."):
                     try:
-                        # 1. Leer Diccionario Maestro
                         df_map = obtener_dataframe("Balance_Mapeado")
                         if df_map is None:
-                            st.error("Error: No se pudo conectar a la hoja 'Balance_Mapeado'.")
+                            st.error("Error al conectar con 'Balance_Mapeado'.")
                             st.stop()
                         
                         df_map.columns = df_map.columns.str.strip().str.upper()
                         
-                        # Columnas esperadas
                         c_map_cta = buscar_columna(df_map, ["CUENTA", "ID"])
                         c_map_tipo = buscar_columna(df_map, ["TIPO"])
                         c_map_est = buscar_columna(df_map, ["ESTADO"])
                         c_map_cat = buscar_columna(df_map, ["CATEGOR"])
                         
-                        # 2. Procesar Archivos Subidos
+                        # Limpiar IDs del Diccionario (quitar .0 fantasma)
+                        df_map[c_map_cta] = df_map[c_map_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                        
                         dfs = []
                         for arch in archivos_subidos:
                             df_temp = pd.read_excel(arch, dtype=str)
@@ -84,18 +80,31 @@ def mostrar_modulo_contabilidad():
                         
                         df_cons = pd.concat(dfs, ignore_index=True)
                         
-                        # Búsqueda dinámica de columnas en los archivos subidos
                         c_arch_cta = buscar_columna(df_cons, ["CUENTA", "ID"])
                         c_arch_sld = buscar_columna(df_cons, ["SALDO", "FINAL"])
 
-                        # Limpieza numérica
-                        df_cons[c_arch_sld] = pd.to_numeric(df_cons[c_arch_sld].astype(str).str.replace(',', ''), errors='coerce').fillna(0)
+                        # Limpiar IDs del Excel (quitar .0 fantasma)
+                        df_cons[c_arch_cta] = df_cons[c_arch_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+
+                        # Limpieza extrema de Moneda (quitar $, comas, espacios)
+                        df_cons[c_arch_sld] = df_cons[c_arch_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True)
+                        df_cons[c_arch_sld] = pd.to_numeric(df_cons[c_arch_sld], errors='coerce').fillna(0)
+                        
                         df_agrupado = df_cons.groupby(c_arch_cta, as_index=False)[c_arch_sld].sum()
 
-                        # 3. Cruce Maestro (Inner Join)
+                        # 🚨 DETECTOR DE CUENTAS FALTANTES EN GOOGLE SHEETS 🚨
+                        cuentas_huerfanas = df_agrupado[~df_agrupado[c_arch_cta].isin(df_map[c_map_cta])]
+                        suma_perdida = cuentas_huerfanas[c_arch_sld].sum()
+                        
+                        if abs(suma_perdida) > 0:
+                            st.warning(f"⚠️ Alerta de Auditoría: El archivo Excel contiene ${abs(suma_perdida):,.2f} en saldos de cuentas que **NO EXISTEN** en tu hoja 'Balance_Mapeado'. Estos montos no se reflejarán en el cálculo final hasta que las agregues al diccionario.")
+                            with st.expander("Ver cuentas faltantes"):
+                                st.dataframe(cuentas_huerfanas[cuentas_huerfanas[c_arch_sld] != 0])
+
+                        # Cruce Maestro (Inner Join)
                         df_final = pd.merge(df_agrupado, df_map, left_on=c_arch_cta, right_on=c_map_cta, how="inner")
                         
-                        # Limpiar tipo de dato y descartar lo que no aplica
+                        # Limpiar y filtrar Tipo (Ignorar "No Aplica")
                         df_final[c_map_tipo] = df_final[c_map_tipo].apply(limpiar_texto)
                         df_final = df_final[~df_final[c_map_tipo].isin(["NO APLICA", "CUENTA DE MAYOR", ""])]
                         
@@ -105,9 +114,9 @@ def mostrar_modulo_contabilidad():
                         st.session_state['c_cat'] = c_map_cat
                         st.session_state['c_sld'] = c_arch_sld
                         
-                        st.success(f"✅ ¡Datos procesados! Se analizarán las cuentas para: {', '.join(unidades_seleccionadas)}")
+                        st.success(f"✅ ¡Cálculos exactos completados para {', '.join(unidades_seleccionadas)}!")
                     except Exception as e:
-                        st.error(f"Error técnico en el proceso: {e}")
+                        st.error(f"Error técnico: {e}")
 
     # ==========================================
     # PESTAÑA 2: PUNTO DE EQUILIBRIO
@@ -121,7 +130,7 @@ def mostrar_modulo_contabilidad():
             
             st.subheader(f"⚖️ Punto de Equilibrio: {', '.join(unidades)}")
             
-            # Cálculo usando expresiones regulares para detectar "Ingresos", "Ventas", "Fijos", "Variables"
+            # Filtro robusto con Regex
             ventas = df[df[c_t].str.contains("INGRESO|VENTA", na=False)][c_s].abs().sum()
             cf = df[df[c_t].str.contains("FIJO", na=False)][c_s].abs().sum()
             cv = df[df[c_t].str.contains("VARIABLE", na=False)][c_s].abs().sum()
@@ -151,7 +160,7 @@ def mostrar_modulo_contabilidad():
                 else:
                     st.error("### Punto de Equilibrio ($)")
                     st.markdown("<h3 style='text-align: center;'>Incalculable</h3>", unsafe_allow_html=True)
-                    st.caption("Los costos variables superan a los ingresos, o no hay ingresos registrados.")
+                    st.caption("Los costos variables superan a los ingresos, o no hay ingresos.")
         else:
             st.info("👈 Por favor, realiza la sincronización en la Pestaña 1.")
 
@@ -173,9 +182,8 @@ def mostrar_modulo_contabilidad():
             
             if not df_gastos.empty:
                 col_g1, col_g2 = st.columns(2)
-                
                 with col_g1:
-                    st.markdown("**Proporción de Gastos (Fijo vs Variable)**")
+                    st.markdown("**Proporción de Gastos**")
                     fig_tipo = px.pie(df_gastos, values=c_s, names=c_t, hole=0.4)
                     st.plotly_chart(fig_tipo, use_container_width=True)
                     
@@ -188,7 +196,6 @@ def mostrar_modulo_contabilidad():
                 st.divider()
                 st.markdown("**Análisis Profundo por Estado de Cuenta**")
                 
-                # Usar selectbox en lugar de radio para evitar errores si no hay algún tipo
                 tipos_existentes = df_gastos[c_t].unique().tolist()
                 tipo_filtro = st.selectbox("Filtrar desglose por:", tipos_existentes)
                 
