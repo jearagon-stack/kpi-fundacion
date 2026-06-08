@@ -55,7 +55,7 @@ def mostrar_modulo_contabilidad():
             if not archivos_subidos or not unidades_seleccionadas:
                 st.warning("⚠️ Sube al menos un archivo y selecciona una unidad.")
             else:
-                with st.spinner("Limpiando formatos de moneda y cruzando bases..."):
+                with st.spinner("Procesando y cruzando bases..."):
                     try:
                         df_map = obtener_dataframe("Balance_Mapeado")
                         if df_map is None:
@@ -86,25 +86,16 @@ def mostrar_modulo_contabilidad():
                         # Limpiar IDs del Excel (quitar .0 fantasma)
                         df_cons[c_arch_cta] = df_cons[c_arch_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
 
-                        # Limpieza extrema de Moneda (quitar $, comas, espacios)
+                        # Limpieza extrema de Moneda
                         df_cons[c_arch_sld] = df_cons[c_arch_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True)
                         df_cons[c_arch_sld] = pd.to_numeric(df_cons[c_arch_sld], errors='coerce').fillna(0)
                         
                         df_agrupado = df_cons.groupby(c_arch_cta, as_index=False)[c_arch_sld].sum()
 
-                        # 🚨 DETECTOR DE CUENTAS FALTANTES EN GOOGLE SHEETS 🚨
-                        cuentas_huerfanas = df_agrupado[~df_agrupado[c_arch_cta].isin(df_map[c_map_cta])]
-                        suma_perdida = cuentas_huerfanas[c_arch_sld].sum()
-                        
-                        if abs(suma_perdida) > 0:
-                            st.warning(f"⚠️ Alerta de Auditoría: El archivo Excel contiene ${abs(suma_perdida):,.2f} en saldos de cuentas que **NO EXISTEN** en tu hoja 'Balance_Mapeado'. Estos montos no se reflejarán en el cálculo final hasta que las agregues al diccionario.")
-                            with st.expander("Ver cuentas faltantes"):
-                                st.dataframe(cuentas_huerfanas[cuentas_huerfanas[c_arch_sld] != 0])
-
-                        # Cruce Maestro (Inner Join)
+                        # Cruce Maestro (Inner Join) - Descartando silenciosamente todo lo que no esté en el diccionario
                         df_final = pd.merge(df_agrupado, df_map, left_on=c_arch_cta, right_on=c_map_cta, how="inner")
                         
-                        # Limpiar y filtrar Tipo (Ignorar "No Aplica")
+                        # Limpiar y filtrar Tipo (Ignorar "No Aplica" y "Cuenta de Mayor")
                         df_final[c_map_tipo] = df_final[c_map_tipo].apply(limpiar_texto)
                         df_final = df_final[~df_final[c_map_tipo].isin(["NO APLICA", "CUENTA DE MAYOR", ""])]
                         
@@ -114,7 +105,7 @@ def mostrar_modulo_contabilidad():
                         st.session_state['c_cat'] = c_map_cat
                         st.session_state['c_sld'] = c_arch_sld
                         
-                        st.success(f"✅ ¡Cálculos exactos completados para {', '.join(unidades_seleccionadas)}!")
+                        st.success(f"✅ ¡Cálculos completados para {', '.join(unidades_seleccionadas)}!")
                     except Exception as e:
                         st.error(f"Error técnico: {e}")
 
@@ -130,10 +121,10 @@ def mostrar_modulo_contabilidad():
             
             st.subheader(f"⚖️ Punto de Equilibrio: {', '.join(unidades)}")
             
-            # Filtro robusto con Regex
-            ventas = df[df[c_t].str.contains("INGRESO|VENTA", na=False)][c_s].abs().sum()
-            cf = df[df[c_t].str.contains("FIJO", na=False)][c_s].abs().sum()
-            cv = df[df[c_t].str.contains("VARIABLE", na=False)][c_s].abs().sum()
+            # Filtro exacto
+            ventas = df[df[c_t].isin(["INGRESOS", "INGRESO"])][c_s].abs().sum()
+            cf = df[df[c_t] == "COSTO FIJO"][c_s].abs().sum()
+            cv = df[df[c_t] == "COSTO VARIABLE"][c_s].abs().sum()
             
             # Fórmulas
             margen_pct = (1 - (cv / ventas)) if ventas > 0 else 0
@@ -161,6 +152,18 @@ def mostrar_modulo_contabilidad():
                     st.error("### Punto de Equilibrio ($)")
                     st.markdown("<h3 style='text-align: center;'>Incalculable</h3>", unsafe_allow_html=True)
                     st.caption("Los costos variables superan a los ingresos, o no hay ingresos.")
+                    
+            st.divider()
+            st.subheader("🕵️ Auditoría de Datos")
+            st.write("Descarga el detalle exacto de las cuentas y montos que el sistema ha procesado para estas sumas.")
+            
+            csv = df.to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label="📥 Descargar Detalle (CSV)",
+                data=csv,
+                file_name='auditoria_pe.csv',
+                mime='text/csv',
+            )
         else:
             st.info("👈 Por favor, realiza la sincronización en la Pestaña 1.")
 
@@ -178,7 +181,7 @@ def mostrar_modulo_contabilidad():
             
             st.subheader(f"📊 Desglose Analítico: {', '.join(unidades)}")
             
-            df_gastos = df[df[c_t].str.contains("FIJO|VARIABLE", na=False)]
+            df_gastos = df[df[c_t].isin(["COSTO FIJO", "COSTO VARIABLE"])]
             
             if not df_gastos.empty:
                 col_g1, col_g2 = st.columns(2)
