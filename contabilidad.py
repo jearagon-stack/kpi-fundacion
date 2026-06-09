@@ -33,7 +33,7 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
     """
     df_res = df_base.copy()
     
-    # 1. Calcular Ingresos por Unidad (TODAS)
+    # 1. Calcular Ingresos por Unidad (TODAS, incluyendo Gerencias)
     ventas = {}
     total_ventas = 0
     for u in unidades_oficiales:
@@ -92,7 +92,7 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
     fila_cif = crear_fila("GASTO ADM. ASIGNADO (GERENCIAS)")
     tot_cif = 0
     for u in unidades_oficiales:
-        cif_asignado = gasto_gerencia * pct_ventas[u]
+        cif_asignado = gasto_gerencia * pct_ventas[u] # Gerencias absorberá su propia parte aquí
         fila_cif[u] = cif_asignado
         tot_cif += cif_asignado
     fila_cif['TOTAL CONSOLIDADO'] = tot_cif
@@ -291,7 +291,7 @@ def mostrar_modulo_contabilidad():
                     df_map_m[cm_cta] = df_map_m[cm_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                     df_map_m[cm_tipo] = df_map_m[cm_tipo].apply(limpiar_texto)
                     
-                    # Matriz Cruda sin filtros estructurales
+                    # 1. Matriz Cruda sin filtros estructurales (TOMA TODO EL CATÁLOGO)
                     df_base_m4 = df_map_m.copy()
                     
                     for u in unidades_oficiales: df_base_m4[u] = 0.0
@@ -315,7 +315,7 @@ def mostrar_modulo_contabilidad():
                     df_base_m4['TOTAL CONSOLIDADO'] = df_base_m4[unidades_oficiales].sum(axis=1)
                     st.session_state['matriz_2025_cruda'] = df_base_m4.copy()
                     
-                    # Filtrado de cuentas estructurales para el cálculo de Rentabilidad y PE
+                    # 2. Filtrado de cuentas estructurales para el cálculo de Rentabilidad y PE (La pestaña principal)
                     mask_excluir = (
                         df_base_m4[cm_tipo].str.upper().isin(["NO APLICA", ""]) |
                         df_base_m4[cm_est].str.upper().isin(["CUENTA DE MAYOR", "CUENTA DE MENOR", "CUENTA GENERAL"])
@@ -339,6 +339,7 @@ def mostrar_modulo_contabilidad():
                 "Prorrateo y PE": st.session_state['matriz_2025_prorrateada']
             }
             
+            # EL BOTÓN AHORA DESCARGA EL EXCEL CON LAS 2 PESTAÑAS
             st.download_button(
                 label="📥 Descargar Reporte Completo 2025 (Excel 2 Pestañas)", 
                 data=generar_excel_multi(dict_export_2025), 
@@ -399,7 +400,6 @@ def mostrar_modulo_contabilidad():
                         
                         if not idx_c.empty:
                             if aj["Unidad"] == "Todas las operativas (Prorrateo)":
-                                # Distribución preliminar para aplicar ajustes macro
                                 mask_temp = (
                                     df_proy_cruda[st.session_state['cols_matriz']['tipo']].str.upper().isin(["NO APLICA", ""]) |
                                     df_proy_cruda[st.session_state['cols_matriz']['est']].str.upper().isin(["CUENTA DE MAYOR", "CUENTA DE MENOR", "CUENTA GENERAL"])
