@@ -15,7 +15,11 @@ def limpiar_codigo_cuenta(c):
 
 def generar_excel_auditoria(df, nombre_hoja="Auditoria_Cuentas"):
     output = io.BytesIO()
-    df_descarga = df.drop(columns=['Categoria_Original'], errors='ignore')
+    df_descarga = df.copy()
+    # Corrección: Solo intentamos borrar la columna si realmente existe en la tabla
+    if 'Categoria_Original' in df_descarga.columns:
+        df_descarga = df_descarga.drop(columns=['Categoria_Original'])
+        
     with pd.ExcelWriter(output, engine='openpyxl') as writer:
         df_descarga.to_excel(writer, index=False, sheet_name=nombre_hoja[:31])
     return output.getvalue()
@@ -71,14 +75,13 @@ def extraer_factura_conta(concepto):
     """Extrae el correlativo de la factura, remueve puntos de venta (-P0001) y detecta FSE."""
     c = str(concepto).upper()
     
-    # Si contiene FSE, marcar para exclusión inmediata
     if 'FSE' in c:
         return "FSE_EXCLUIDO"
         
     match = re.search(r'(CCF|FCF|CFE)[\-\s]*([A-Z0-9\-]+)', c)
     if match:
         doc_num = f"{match.group(1)}-{match.group(2)}"
-        doc_num = re.sub(r'-P\d+$', '', doc_num)  # Remueve -P001, -P0001, etc. al final
+        doc_num = re.sub(r'-P\d+$', '', doc_num)  # Remueve -P001, -P0001, etc.
         return doc_num
         
     match2 = re.search(r'NO\.?\s*([A-Z0-9\-]+)', c)
@@ -239,8 +242,8 @@ def mostrar_modulo_auditoria():
                                 prov_op = str(op_row[col_p_ops]).upper().strip() if col_p_ops else ""
 
                                 match_desc = (desc_op in concepto_acc) or (concepto_acc in desc_op)
-                                if (fecha_acc && fecha_op && fecha_acc != fecha_op): continue
-                                if (prov_acc && prov_op && prov_op not in prov_acc && prov_acc not in prov_op): continue
+                                if (fecha_acc and fecha_op and fecha_acc != fecha_op): continue
+                                if (prov_acc and prov_op and prov_op not in prov_acc and prov_acc not in prov_op): continue
                                 if match_desc: posibles_docs.append(op_row['Documento'])
                             
                             if len(set(posibles_docs)) == 1: return posibles_docs[0]
@@ -344,8 +347,61 @@ def mostrar_modulo_auditoria():
 
         if st.session_state.get('audit_ejecutado', False):
             df_final = st.session_state['audit_cruce_df']
+            errores_cuenta = len(df_final[df_final['Estado de Auditoría'].str.contains('ERROR DE CUENTA')])
+            no_conta = len(df_final[df_final['Estado de Auditoría'].str.contains('NO CONTABILIZADO')])
+            dif_monto = len(df_final[df_final['Estado de Auditoría'].str.contains('DIFERENCIA')])
+            cuadrados = len(df_final[df_final['Estado de Auditoría'].str.contains('CUADRADO')])
+            
             st.success("✅ Auditoría completada con éxito.")
-            st.dataframe(df_final.drop(columns=['Categoria_Original'], errors='ignore'), use_container_width=True, hide_index=True)
+            st.markdown("---")
+            
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Errores de Cuenta", errores_cuenta)
+            c2.metric("Falta Contabilizar", no_conta)
+            c3.metric("Diferencias de Monto", dif_monto)
+            c4.metric("Documentos Cuadrados", cuadrados)
+            
+            st.subheader("📋 Matriz de Validación de Cuentas")
+            st.dataframe(
+                df_final.drop(columns=['Categoria_Original'], errors='ignore'),
+                column_config={
+                    "Partida Contable (Conta)": st.column_config.TextColumn("Partida"),
+                    "Tipo Doc (Ops)": st.column_config.TextColumn("Tipo"),
+                    "Documento": st.column_config.TextColumn("Documento Fiscal"),
+                    "Categoria Operativa": st.column_config.TextColumn("Categoría Operativa"),
+                    "Cuenta Contable (Conta)": st.column_config.TextColumn("Cuenta Detectada"),
+                    "Monto_Ops": st.column_config.NumberColumn("Monto Ops ($)", format="$ %.2f"),
+                    "Monto_Conta": st.column_config.NumberColumn("Monto Conta ($)", format="$ %.2f"),
+                    "Diferencia ($)": st.column_config.NumberColumn("Diferencia ($)", format="$ %.2f"),
+                    "Estado de Auditoría": st.column_config.TextColumn("Estado de Auditoría")
+                },
+                use_container_width=True, hide_index=True
+            )
+            
+            st.markdown("---")
+            st.subheader("📊 Resumen Macro por Categoría")
+            st.info("Este panel suma los dólares exactos de las columnas de arriba para asegurar que los grandes totales coincidan.")
+            
+            df_resumen = df_final.groupby('Categoria_Original')[['Monto_Ops', 'Monto_Conta', 'Diferencia ($)']].sum().reset_index()
+            df_resumen.rename(columns={'Categoria_Original': 'Categoría General'}, inplace=True)
+            
+            st.dataframe(
+                df_resumen,
+                column_config={
+                    "Categoría General": st.column_config.TextColumn("Categoría General"),
+                    "Monto_Ops": st.column_config.NumberColumn("Total Operaciones ($)", format="$ %.2f"),
+                    "Monto_Conta": st.column_config.NumberColumn("Total Contabilidad ($)", format="$ %.2f"),
+                    "Diferencia ($)": st.column_config.NumberColumn("Descuadre Global ($)", format="$ %.2f")
+                },
+                use_container_width=True, hide_index=True
+            )
+
+            st.download_button(
+                label="📥 Descargar Reporte de Auditoría Detallado (.xlsx)",
+                data=generar_excel_auditoria(df_final),
+                file_name=f"Auditoria_Cuentas_{date.today().strftime('%d_%m_%Y')}.xlsx",
+                type="primary", use_container_width=True
+            )
 
     # ==========================================
     # PESTAÑA 2: MÓDULO DE INVENTARIOS (CORREGIDO)
@@ -482,10 +538,33 @@ def mostrar_modulo_auditoria():
             st.success("✅ Cruce de Inventarios ejecutado con éxito.")
             
             st.subheader("📊 1. Resumen Macro General por Categoría")
-            st.dataframe(st.session_state['inv_macro_df'], use_container_width=True, hide_index=True)
+            st.dataframe(
+                st.session_state['inv_macro_df'],
+                column_config={
+                    "Categoria": st.column_config.TextColumn("Categoría de Inventario"),
+                    "Descargado en Contabilidad ($)": st.column_config.NumberColumn("Descargado en Contabilidad (Haber)", format="$ %.2f"),
+                    "Salidas en Kardex ($)": st.column_config.NumberColumn("Salidas en Kardex (Costo Ventas)", format="$ %.2f"),
+                    "Diferencia Neta ($)": st.column_config.NumberColumn("Diferencia Neta ($)", format="$ %.2f"),
+                    "Acción Recomendada": st.column_config.TextColumn("Recomendación de Ajuste")
+                },
+                use_container_width=True, hide_index=True
+            )
             
             st.subheader("📋 2. Desglose Analítico Documento por Documento")
-            st.dataframe(st.session_state['inv_docs_df'], use_container_width=True, hide_index=True)
+            st.info("Esta tabla consolida todas las series sumándolas independientemente del punto de venta para rastrear el origen exacto del descuadre.")
+            st.dataframe(
+                st.session_state['inv_docs_df'],
+                column_config={
+                    "Factura_Limpia": st.column_config.TextColumn("Correlativo Factura"),
+                    "Categoria": st.column_config.TextColumn("Categoría"),
+                    "Cuentas Detectadas": st.column_config.TextColumn("Cuenta Contable"),
+                    "Monto Conta ($)": st.column_config.NumberColumn("Monto Conta ($)", format="$ %.2f"),
+                    "Monto Kardex ($)": st.column_config.NumberColumn("Monto Kardex ($)", format="$ %.2f"),
+                    "Diferencia ($)": st.column_config.NumberColumn("Descuadre ($)", format="$ %.2f"),
+                    "Estado": st.column_config.TextColumn("Estado del Documento")
+                },
+                use_container_width=True, hide_index=True
+            )
 
             dict_excel_inventarios = {
                 "Resumen_Macro": st.session_state['inv_macro_df'],
