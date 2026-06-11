@@ -47,17 +47,17 @@ def mostrar_modulo_auditoria():
         st.markdown("##### 📥 Carga de Reportes")
         col1, col2 = st.columns(2)
         with col1:
-            arch_ops = st.file_uploader("1. Reporte de Compras (Operaciones)", type=["xlsx", "xls"], key="audit_ops")
+            arch_ops = st.file_uploader("1. Reporte de Compras (Operaciones)", type=["xlsx", "xls", "csv"], key="audit_ops")
         with col2:
-            arch_acc = st.file_uploader("2. Reporte de Movimientos (Contabilidad)", type=["xlsx", "xls"], key="audit_acc")
+            arch_acc = st.file_uploader("2. Reporte de Movimientos (Contabilidad)", type=["xlsx", "xls", "csv"], key="audit_acc")
 
         if arch_ops and arch_acc:
             if st.button("🚀 Ejecutar Cruce de Auditoría", type="primary", use_container_width=True):
                 
                 with st.spinner("Triangulando documentos y desglosando cuentas..."):
                     try:
-                        df_ops = pd.read_excel(arch_ops, dtype=str)
-                        df_acc = pd.read_excel(arch_acc, dtype=str)
+                        df_ops = leer_archivo_mixto(arch_ops)
+                        df_acc = leer_archivo_mixto(arch_acc)
 
                         df_ops.columns = df_ops.columns.str.strip()
                         df_acc.columns = df_acc.columns.str.strip()
@@ -422,8 +422,11 @@ def mostrar_modulo_auditoria():
                             '110608': 'LIMPIEZA',
                             '110609': 'EMPAQUE'
                         }
-                        df_acc_inv_filt['Cuenta_Limpia'] = df_acc_inv_filt[col_cta_acc_inv].astype(str).str.strip().apply(lambda c: c[:-2] if c.endswith('.0') else c)
-                        df_acc_inv_filt['Categoria'] = df_acc_inv_filt['Cuenta_Limpia'].map(mapa_cuentas_inv).fillna('OTRA CUENTA (' + df_acc_inv_filt['Cuenta_Limpia'] + ')')
+                        
+                        df_acc_inv_filt['Cuenta_Limpia'] = df_acc_inv_filt[col_cta_acc_inv].astype(str).str.strip()
+                        # NUEVA LÍNEA CLAVE: Extraemos solo los primeros 6 dígitos para ignorar los subniveles como .02
+                        df_acc_inv_filt['Cuenta_Base'] = df_acc_inv_filt['Cuenta_Limpia'].str[:6]
+                        df_acc_inv_filt['Categoria'] = df_acc_inv_filt['Cuenta_Base'].map(mapa_cuentas_inv).fillna('OTRA CUENTA (' + df_acc_inv_filt['Cuenta_Limpia'] + ')')
                         
                         # Agrupar saldos contables
                         df_acc_grouped = df_acc_inv_filt.groupby('Categoria')['Haber_Num'].sum().reset_index()
@@ -464,8 +467,10 @@ def mostrar_modulo_auditoria():
                         # --- FASE 3: CRUCE Y MATRIZ DE DIFERENCIAS ---
                         df_cruce_inv = pd.merge(df_acc_grouped, df_kar_grouped, on='Categoria', how='outer').fillna(0)
                         
+                        # Cálculo: Conta (Lo que se registró que salió) - Kardex (Lo que realmente salió en ventas)
                         df_cruce_inv['Diferencia Neta ($)'] = df_cruce_inv['Descargado en Contabilidad ($)'] - df_cruce_inv['Salidas en Kardex ($)']
                         
+                        # Columna de Acción Recomendada
                         def accion_recomendada(dif):
                             if dif > 0.05: return "⬇️ Conta tiene más salidas (Ajustar sobrante)"
                             elif dif < -0.05: return "⬆️ Conta tiene menos salidas (Ajustar faltante)"
