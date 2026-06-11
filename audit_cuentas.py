@@ -39,7 +39,7 @@ def mostrar_modulo_auditoria():
     ])
 
     # ==========================================
-    # PESTAÑA 1: CÓDIGO ORIGINAL INTACTO
+    # PESTAÑA 1: TU CÓDIGO ORIGINAL INTACTO
     # ==========================================
     with tab_compras:
         st.info("Cruce bidireccional entre Compras Operativas (Nexus) y Partidas Contables (CxP) para detectar fugas y errores de asignación.")
@@ -47,17 +47,17 @@ def mostrar_modulo_auditoria():
         st.markdown("##### 📥 Carga de Reportes")
         col1, col2 = st.columns(2)
         with col1:
-            arch_ops = st.file_uploader("1. Reporte de Compras (Operaciones)", type=["xlsx", "xls", "csv"], key="audit_ops")
+            arch_ops = st.file_uploader("1. Reporte de Compras (Operaciones)", type=["xlsx", "xls"], key="audit_ops")
         with col2:
-            arch_acc = st.file_uploader("2. Reporte de Movimientos (Contabilidad)", type=["xlsx", "xls", "csv"], key="audit_acc")
+            arch_acc = st.file_uploader("2. Reporte de Movimientos (Contabilidad)", type=["xlsx", "xls"], key="audit_acc")
 
         if arch_ops and arch_acc:
             if st.button("🚀 Ejecutar Cruce de Auditoría", type="primary", use_container_width=True):
                 
                 with st.spinner("Triangulando documentos y desglosando cuentas..."):
                     try:
-                        df_ops = leer_archivo_mixto(arch_ops)
-                        df_acc = leer_archivo_mixto(arch_acc)
+                        df_ops = pd.read_excel(arch_ops, dtype=str)
+                        df_acc = pd.read_excel(arch_acc, dtype=str)
 
                         df_ops.columns = df_ops.columns.str.strip()
                         df_acc.columns = df_acc.columns.str.strip()
@@ -464,10 +464,8 @@ def mostrar_modulo_auditoria():
                         # --- FASE 3: CRUCE Y MATRIZ DE DIFERENCIAS ---
                         df_cruce_inv = pd.merge(df_acc_grouped, df_kar_grouped, on='Categoria', how='outer').fillna(0)
                         
-                        # Cálculo: Conta (Lo que se registró que salió) - Kardex (Lo que realmente salió en ventas)
                         df_cruce_inv['Diferencia Neta ($)'] = df_cruce_inv['Descargado en Contabilidad ($)'] - df_cruce_inv['Salidas en Kardex ($)']
                         
-                        # Columna de Acción Recomendada
                         def accion_recomendada(dif):
                             if dif > 0.05: return "⬇️ Conta tiene más salidas (Ajustar sobrante)"
                             elif dif < -0.05: return "⬆️ Conta tiene menos salidas (Ajustar faltante)"
