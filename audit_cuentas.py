@@ -16,7 +16,6 @@ def limpiar_codigo_cuenta(c):
 def generar_excel_auditoria(df, nombre_hoja="Auditoria_Cuentas"):
     output = io.BytesIO()
     df_descarga = df.copy()
-    # Corrección: Solo intentamos borrar la columna si realmente existe en la tabla
     if 'Categoria_Original' in df_descarga.columns:
         df_descarga = df_descarga.drop(columns=['Categoria_Original'])
         
@@ -72,13 +71,14 @@ def obtener_categoria_inv(cuenta_raw):
     return f"OTRA CUENTA ({cuenta_raw})"
 
 def extraer_factura_conta(concepto):
-    """Extrae el correlativo de la factura, remueve puntos de venta (-P0001) y detecta FSE."""
+    """Extrae el correlativo de la factura, excluye FSE y CFE, y remueve puntos de venta."""
     c = str(concepto).upper()
     
-    if 'FSE' in c:
-        return "FSE_EXCLUIDO"
+    # Excluir facturas de sujeto excluido (FSE) y compras electrónicas (CFE)
+    if 'FSE' in c or 'CFE' in c:
+        return "DOCUMENTO_EXCLUIDO"
         
-    match = re.search(r'(CCF|FCF|CFE)[\-\s]*([A-Z0-9\-]+)', c)
+    match = re.search(r'(CCF|FCF)[\-\s]*([A-Z0-9\-]+)', c)
     if match:
         doc_num = f"{match.group(1)}-{match.group(2)}"
         doc_num = re.sub(r'-P\d+$', '', doc_num)  # Remueve -P001, -P0001, etc.
@@ -442,9 +442,9 @@ def mostrar_modulo_auditoria():
                         filtro_tipo = ~df_acc_inv[col_tipo_acc_inv].astype(str).str.upper().str.strip().isin(['CXP', 'CONT'])
                         df_acc_inv_filt = df_acc_inv[filtro_tipo].copy()
 
-                        # Extraer factura limpia y ejecutar FILTRADO DE SUJETOS EXCLUIDOS (FSE)
+                        # Extraer factura limpia y ejecutar exclusión de FSE y CFE
                         df_acc_inv_filt['Factura_Limpia'] = df_acc_inv_filt[col_conc_acc_inv].apply(extraer_factura_conta)
-                        df_acc_inv_filt = df_acc_inv_filt[df_acc_inv_filt['Factura_Limpia'] != "FSE_EXCLUIDO"].copy()
+                        df_acc_inv_filt = df_acc_inv_filt[df_acc_inv_filt['Factura_Limpia'] != "DOCUMENTO_EXCLUIDO"].copy()
 
                         if df_acc_inv_filt.empty:
                             st.warning("⚠️ El Libro Mayor subido no contiene registros operativos válidos tras aplicar exclusiones.")
@@ -479,8 +479,8 @@ def mostrar_modulo_auditoria():
 
                         mapa_prod_cat = df_map.set_index(col_prod_map)[col_cat_map].to_dict()
 
-                        # Prefijos permitidos (Excluyendo FSE por completo)
-                        prefijos_validos = ['CCF', 'FCF', 'CFE']
+                        # Prefijos permitidos excluyendo expresamente CFE y FSE
+                        prefijos_validos = ['CCF', 'FCF']
                         df_kar_filt = df_kar[df_kar[col_pref].astype(str).str.upper().str.strip().isin(prefijos_validos)].copy()
 
                         df_kar_filt['Salidas_Num'] = pd.to_numeric(df_kar_filt[col_salidas], errors='coerce').fillna(0)
@@ -489,7 +489,6 @@ def mostrar_modulo_auditoria():
                         df_kar_filt['Categoria_Mapeada'] = mapeo_series.where(mapeo_series.notnull(), 'SIN CATEGORIA EN MAPEO').astype(str).str.upper().str.strip()
                         df_kar_filt['Categoria'] = df_kar_filt['Categoria_Mapeada']
                         
-                        # Limpiar punto de venta también en Kardex para match exacto
                         df_kar_filt['Factura_Limpia'] = df_kar_filt[col_doc_kar].astype(str).str.strip().str.upper().str.replace(r'-P\d+$', '', regex=True)
 
                         # A. Resumen Macro Kardex
@@ -538,33 +537,10 @@ def mostrar_modulo_auditoria():
             st.success("✅ Cruce de Inventarios ejecutado con éxito.")
             
             st.subheader("📊 1. Resumen Macro General por Categoría")
-            st.dataframe(
-                st.session_state['inv_macro_df'],
-                column_config={
-                    "Categoria": st.column_config.TextColumn("Categoría de Inventario"),
-                    "Descargado en Contabilidad ($)": st.column_config.NumberColumn("Descargado en Contabilidad (Haber)", format="$ %.2f"),
-                    "Salidas en Kardex ($)": st.column_config.NumberColumn("Salidas en Kardex (Costo Ventas)", format="$ %.2f"),
-                    "Diferencia Neta ($)": st.column_config.NumberColumn("Diferencia Neta ($)", format="$ %.2f"),
-                    "Acción Recomendada": st.column_config.TextColumn("Recomendación de Ajuste")
-                },
-                use_container_width=True, hide_index=True
-            )
+            st.dataframe(st.session_state['inv_macro_df'], use_container_width=True, hide_index=True)
             
             st.subheader("📋 2. Desglose Analítico Documento por Documento")
-            st.info("Esta tabla consolida todas las series sumándolas independientemente del punto de venta para rastrear el origen exacto del descuadre.")
-            st.dataframe(
-                st.session_state['inv_docs_df'],
-                column_config={
-                    "Factura_Limpia": st.column_config.TextColumn("Correlativo Factura"),
-                    "Categoria": st.column_config.TextColumn("Categoría"),
-                    "Cuentas Detectadas": st.column_config.TextColumn("Cuenta Contable"),
-                    "Monto Conta ($)": st.column_config.NumberColumn("Monto Conta ($)", format="$ %.2f"),
-                    "Monto Kardex ($)": st.column_config.NumberColumn("Monto Kardex ($)", format="$ %.2f"),
-                    "Diferencia ($)": st.column_config.NumberColumn("Descuadre ($)", format="$ %.2f"),
-                    "Estado": st.column_config.TextColumn("Estado del Documento")
-                },
-                use_container_width=True, hide_index=True
-            )
+            st.dataframe(st.session_state['inv_docs_df'], use_container_width=True, hide_index=True)
 
             dict_excel_inventarios = {
                 "Resumen_Macro": st.session_state['inv_macro_df'],
