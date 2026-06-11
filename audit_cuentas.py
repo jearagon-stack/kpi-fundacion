@@ -29,9 +29,10 @@ def generar_excel_multi(dict_dfs):
     return output.getvalue()
 
 def leer_archivo_mixto(file):
-    """Permite leer tanto archivos Excel como CSV sin que el sistema falle."""
+    """Permite leer archivos Excel y CSV. Auto-detecta punto y coma (;) muy común en LATAM."""
     if file.name.lower().endswith('.csv'):
-        return pd.read_csv(file, dtype=str)
+        # sep=None y engine='python' fuerzan a Pandas a detectar automáticamente el delimitador
+        return pd.read_csv(file, sep=None, engine='python', dtype=str)
     return pd.read_excel(file, dtype=str)
 
 def get_col_exacta(df, opciones_exactas, opciones_parciales):
@@ -62,6 +63,21 @@ def obtener_categoria_inv(cuenta_raw):
             return val
             
     return f"OTRA CUENTA ({cuenta_raw})"
+
+def extraer_factura_conta(concepto):
+    """Extrae quirúrgicamente el correlativo de la factura del texto sucio de la columna Concepto."""
+    c = str(concepto).upper()
+    # Busca patrones como FCF-1234, CCF-001-P002, etc.
+    match = re.search(r'(CCF|FCF|CFE|FSE)[\-\s]*([A-Z0-9\-]+)', c)
+    if match:
+        return f"{match.group(1)}-{match.group(2)}"
+    
+    # Si no tiene prefijo pero dice "No. 1234"
+    match2 = re.search(r'NO\.?\s*([A-Z0-9\-]+)', c)
+    if match2:
+        return match2.group(1)
+        
+    return c.strip() # Fallback si no encuentra patrón
 
 # ==========================================
 # MÓDULO PRINCIPAL DE AUDITORÍA
@@ -426,26 +442,34 @@ def mostrar_modulo_auditoria():
                         # --- FASE 1: PROCESAMIENTO DE CONTABILIDAD ---
                         col_tipo_acc_inv = get_col_exacta(df_acc_inv, ['IDTIPO', 'TIPO'], ['TIPO'])
                         col_cta_acc_inv = get_col_exacta(df_acc_inv, ['IDCUENTA', 'CUENTA'], ['IDCUENTA', 'CUENTA'])
-                        col_num_acc_inv = get_col_exacta(df_acc_inv, ['NUMERO'], ['NUMERO']) # Columna H (Factura)
+                        
+                        # Corrección: Columna H (Factura) ahora se extrae desde CONCEPTO usando Regex
+                        col_conc_acc_inv = get_col_exacta(df_acc_inv, ['CONCEPTO'], ['CONCEPTO']) 
                         col_haber_acc_inv = get_col_exacta(df_acc_inv, ['HABER'], ['HABER'])
 
-                        if not all([col_tipo_acc_inv, col_cta_acc_inv, col_num_acc_inv, col_haber_acc_inv]):
-                            st.error("🚨 Error en Libro Mayor: Faltan columnas (IdTipo, IdCuenta, Numero o Haber).")
+                        if not all([col_tipo_acc_inv, col_cta_acc_inv, col_conc_acc_inv, col_haber_acc_inv]):
+                            st.error("🚨 Error en Libro Mayor: Faltan columnas (IdTipo, IdCuenta, Concepto o Haber).")
                             st.stop()
 
                         # Filtrar excluyendo CXP y CONT para dejar solo las descargas operativas (DESP, TRRZ, CID, etc.)
                         filtro_tipo = ~df_acc_inv[col_tipo_acc_inv].astype(str).str.upper().str.strip().isin(['CXP', 'CONT'])
                         df_acc_inv_filt = df_acc_inv[filtro_tipo].copy()
 
+                        if df_acc_inv_filt.empty:
+                            st.warning("⚠️ El Libro Mayor subido no contiene registros operativos (solo CxP o CONT). Revisa el archivo.")
+                            st.stop()
+
                         df_acc_inv_filt['Haber_Num'] = pd.to_numeric(df_acc_inv_filt[col_haber_acc_inv], errors='coerce').fillna(0)
                         df_acc_inv_filt['Categoria'] = df_acc_inv_filt[col_cta_acc_inv].apply(obtener_categoria_inv)
-                        df_acc_inv_filt['Factura_Limpia'] = df_acc_inv_filt[col_num_acc_inv].astype(str).str.strip().str.upper()
+                        
+                        # Extraer factura limpia desde el Concepto
+                        df_acc_inv_filt['Factura_Limpia'] = df_acc_inv_filt[col_conc_acc_inv].apply(extraer_factura_conta)
 
                         # A. Resumen Macro por Categoría
                         df_acc_grouped = df_acc_inv_filt.groupby('Categoria')['Haber_Num'].sum().reset_index()
                         df_acc_grouped.rename(columns={'Haber_Num': 'Descargado en Contabilidad ($)'}, inplace=True)
 
-                        # B. Desglose detallado por Factura (Suma todo, sin importar repetidos por punto de venta)
+                        # B. Desglose detallado por Factura
                         df_acc_docs = df_acc_inv_filt.groupby(['Factura_Limpia', 'Categoria']).agg({
                             'Haber_Num': 'sum',
                             col_cta_acc_inv: lambda x: ', '.join(x.dropna().astype(str).unique())
