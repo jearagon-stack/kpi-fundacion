@@ -71,14 +71,14 @@ def obtener_categoria_inv(cuenta_raw):
     return f"OTRA CUENTA ({cuenta_raw})"
 
 def extraer_factura_conta(concepto):
-    """Extrae el correlativo de la factura, excluye FSE y CFE, y remueve puntos de venta."""
+    """Extrae el correlativo de la factura, excluye FSE y CFE, incluye FEX y remueve puntos de venta."""
     c = str(concepto).upper()
     
     # Excluir facturas de sujeto excluido (FSE) y compras electrónicas (CFE)
     if 'FSE' in c or 'CFE' in c:
         return "DOCUMENTO_EXCLUIDO"
         
-    match = re.search(r'(CCF|FCF)[\-\s]*([A-Z0-9\-]+)', c)
+    match = re.search(r'(CCF|FCF|FEX)[\-\s]*([A-Z0-9\-]+)', c)
     if match:
         doc_num = f"{match.group(1)}-{match.group(2)}"
         doc_num = re.sub(r'-P\d+$', '', doc_num)  # Remueve -P001, -P0001, etc.
@@ -479,8 +479,8 @@ def mostrar_modulo_auditoria():
 
                         mapa_prod_cat = df_map.set_index(col_prod_map)[col_cat_map].to_dict()
 
-                        # Prefijos permitidos excluyendo expresamente CFE y FSE
-                        prefijos_validos = ['CCF', 'FCF']
+                        # Prefijos permitidos excluyendo expresamente CFE y FSE, incluyendo FEX
+                        prefijos_validos = ['CCF', 'FCF', 'FEX']
                         df_kar_filt = df_kar[df_kar[col_pref].astype(str).str.upper().str.strip().isin(prefijos_validos)].copy()
 
                         df_kar_filt['Salidas_Num'] = pd.to_numeric(df_kar_filt[col_salidas], errors='coerce').fillna(0)
