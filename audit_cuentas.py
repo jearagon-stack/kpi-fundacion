@@ -26,6 +26,35 @@ def leer_archivo_mixto(file):
         return pd.read_csv(file, dtype=str)
     return pd.read_excel(file, dtype=str)
 
+def get_col_exacta(df, opciones_exactas, opciones_parciales):
+    """Busca primero la columna exacta para evitar agarrar IDCUENTAMAYOR en lugar de IDCUENTA"""
+    for op in opciones_exactas:
+        for c in df.columns:
+            if c.strip().upper() == op: return c
+    for op in opciones_parciales:
+        for c in df.columns:
+            if op in c.strip().upper(): return c
+    return None
+
+def obtener_categoria_inv(cuenta_raw):
+    """Limpia sub-cuentas (.02, -01) y mapea seguro basado en los primeros 6 dígitos"""
+    c = str(cuenta_raw).strip().upper()
+    c_num = re.sub(r'\D', '', c) # Extrae solo los números
+    
+    mapa = {
+        '110601': 'MATERIA PRIMA',
+        '110603': 'PRODUCTO TERMINADO',
+        '110610': 'REPUESTO',
+        '110608': 'LIMPIEZA',
+        '110609': 'EMPAQUE'
+    }
+    
+    for key, val in mapa.items():
+        if c_num.startswith(key):
+            return val
+            
+    return f"OTRA CUENTA ({cuenta_raw})"
+
 # ==========================================
 # MÓDULO PRINCIPAL DE AUDITORÍA
 # ==========================================
@@ -62,9 +91,7 @@ def mostrar_modulo_auditoria():
                         df_ops.columns = df_ops.columns.str.strip()
                         df_acc.columns = df_acc.columns.str.strip()
 
-                        # ==========================================
                         # 1. PROCESAMIENTO DE OPERACIONES (COMPRAS)
-                        # ==========================================
                         col_num_ops = next((c for c in df_ops.columns if 'NUMERO' in str(c).upper()), None)
                         col_tot_ops = next((c for c in df_ops.columns if 'TOTAL' in str(c).upper()), None)
                         col_cat_ops = next((c for c in df_ops.columns if 'CATEGORIA' in str(c).upper()), None)
@@ -98,7 +125,6 @@ def mostrar_modulo_auditoria():
 
                         df_ops = df_ops[df_ops['_Cat_Upper'].apply(lambda x: any(p in x for p in permitidas))].copy()
                         
-                        # Limpieza segura del Documento usando Regex
                         df_ops['Documento'] = df_ops[col_num_ops].astype(str).str.strip().str.upper()
                         df_ops['Documento'] = df_ops['Documento'].str.replace(r'^CFE-', '', regex=True).str.replace(r'^FSE-', '', regex=True)
                         
@@ -106,7 +132,6 @@ def mostrar_modulo_auditoria():
                         df_ops['Desc_Limpia'] = df_ops[col_desc_ops].astype(str).str.upper().str.strip()
                         df_ops['Tipo_Doc'] = df_ops[col_tipo_ops].astype(str).str.upper().str.strip() if col_tipo_ops else "NO IDENTIFICADO"
 
-                        # Convertir Monto_Ops a número y aplicar la REGLA DE LOS SIGNOS para Notas de Crédito
                         df_ops['Monto_Ops_Abs'] = pd.to_numeric(df_ops[col_tot_ops], errors='coerce').fillna(0)
                         df_ops['Monto_Ops'] = df_ops.apply(lambda r: -abs(r['Monto_Ops_Abs']) if 'NOTA DE CRÉDITO' in r['Tipo_Doc'] or 'NOTA DE CREDITO' in r['Tipo_Doc'] else r['Monto_Ops_Abs'], axis=1)
 
@@ -119,9 +144,7 @@ def mostrar_modulo_auditoria():
                         documentos_conocidos.sort(key=len, reverse=True) 
                         ops_docs_desc = df_ops.groupby('Documento')['Desc_Limpia'].apply(list).to_dict()
 
-                        # ==========================================
                         # 2. PROCESAMIENTO DE CONTABILIDAD
-                        # ==========================================
                         col_tipo_acc = next((c for c in df_acc.columns if 'IDTIPO' in str(c).upper()), None)
                         col_cta_acc = next((c for c in df_acc.columns if 'IDCUENTA' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
                         col_partida_acc = next((c for c in df_acc.columns if 'NUMERO' in str(c).upper()), None)
@@ -220,7 +243,6 @@ def mostrar_modulo_auditoria():
                             '110610': 'REPUESTO',
                             '110608': 'LIMPIEZA',
                             '110609': 'EMPAQUE'
-                            
                         }
                         
                         df_acc['Cuenta_Limpia'] = df_acc[col_cta_acc].astype(str).str.strip().apply(lambda c: c[:-2] if c.endswith('.0') else c)
@@ -228,21 +250,17 @@ def mostrar_modulo_auditoria():
                         df_inv['Categoria'] = df_inv['Cuenta_Limpia'].map(mapa_cuentas)
                         df_inv['Cuenta_Nom'] = df_inv[col_nom_cta_acc].astype(str).str.strip()
 
-                        # AGRUPAMOS POR CUENTA PARA QUE SE DESGLOSE EN MÚLTIPLES FILAS
                         df_acc_grouped = df_inv.groupby(['Documento_Final', 'Categoria', 'Cuenta_Nom']).agg({
                             'Monto_Conta_Neto': 'sum',
                             col_partida_acc: lambda x: ', '.join(x.dropna().astype(str).unique())
                         }).reset_index()
                         df_acc_grouped.rename(columns={'Documento_Final': 'Documento', 'Monto_Conta_Neto': 'Monto_Conta', col_partida_acc: 'Partida_Conta'}, inplace=True)
 
-                        # ==========================================
                         # 3. CRUCE BIDIRECCIONAL FINAL
-                        # ==========================================
                         df_cruce = pd.merge(df_ops_grouped, df_acc_grouped, on=['Documento', 'Categoria'], how='outer')
                         df_cruce['Monto_Ops'] = df_cruce['Monto_Ops'].fillna(0.0)
                         df_cruce['Monto_Conta'] = df_cruce['Monto_Conta'].fillna(0.0)
                         
-                        # EVITAR DUPLICAR MONTO DE OPERACIONES CUANDO CONTABILIDAD SE DIVIDE EN VARIAS CUENTAS
                         df_cruce['is_dup'] = df_cruce.duplicated(subset=['Documento', 'Categoria'])
                         df_cruce.loc[df_cruce['is_dup'], 'Monto_Ops'] = 0.0
                         
@@ -251,11 +269,9 @@ def mostrar_modulo_auditoria():
                         df_cruce['Partida_Conta'] = df_cruce['Partida_Conta'].fillna('SIN PARTIDA')
                         df_cruce['Tipo_Doc'] = df_cruce['Tipo_Doc'].fillna('NO EN OPS')
 
-                        # Configuración de las columnas visibles y ocultas
                         df_cruce['Categoria_Original'] = df_cruce['Categoria']
                         df_cruce['Categoria Operativa'] = df_cruce.apply(lambda r: r['Categoria'] if r['Monto_Ops'] != 0 else 'SIN REGISTRO EN OPS', axis=1)
 
-                        # CALCULAMOS EL GLOBAL DEL DOCUMENTO PARA EVALUAR SU ESTADO CORRECTAMENTE
                         df_cruce['doc_ops_total'] = df_cruce.groupby(['Documento', 'Categoria_Original'])['Monto_Ops'].transform('sum')
                         df_cruce['doc_acc_total'] = df_cruce.groupby(['Documento', 'Categoria_Original'])['Monto_Conta'].transform('sum')
 
@@ -308,7 +324,7 @@ def mostrar_modulo_auditoria():
                     except Exception as e:
                         st.error(f"Error procesando los archivos. Verifica los formatos. Detalle: {e}")
 
-        # --- SECCIÓN VISUAL DE RESULTADOS ---
+        # --- SECCIÓN VISUAL DE RESULTADOS PESTAÑA 1 ---
         if st.session_state.get('audit_ejecutado', False):
             df_final = st.session_state['audit_cruce_df']
             
@@ -400,9 +416,9 @@ def mostrar_modulo_auditoria():
                         df_map.columns = df_map.columns.str.strip().str.upper()
 
                         # --- FASE 1: PROCESAMIENTO DE CONTABILIDAD ---
-                        col_tipo_acc_inv = next((c for c in df_acc_inv.columns if 'IDTIPO' in c or 'TIPO' in c), None)
-                        col_cta_acc_inv = next((c for c in df_acc_inv.columns if 'IDCUENTA' in c or 'CUENTA' in c), None)
-                        col_haber_acc_inv = next((c for c in df_acc_inv.columns if 'HABER' in c), None)
+                        col_tipo_acc_inv = get_col_exacta(df_acc_inv, ['IDTIPO', 'TIPO'], ['TIPO'])
+                        col_cta_acc_inv = get_col_exacta(df_acc_inv, ['IDCUENTA', 'CUENTA'], ['IDCUENTA', 'CUENTA'])
+                        col_haber_acc_inv = get_col_exacta(df_acc_inv, ['HABER'], ['HABER'])
 
                         if not all([col_tipo_acc_inv, col_cta_acc_inv, col_haber_acc_inv]):
                             st.error("🚨 Error en Libro Mayor: Faltan columnas (IdTipo, IdCuenta o Haber).")
@@ -414,31 +430,20 @@ def mostrar_modulo_auditoria():
 
                         df_acc_inv_filt['Haber_Num'] = pd.to_numeric(df_acc_inv_filt[col_haber_acc_inv], errors='coerce').fillna(0)
                         
-                        # Mapeo idéntico de cuentas a categorías maestras
-                        mapa_cuentas_inv = {
-                            '110601': 'MATERIA PRIMA',
-                            '110603': 'PRODUCTO TERMINADO',
-                            '110610': 'REPUESTO',
-                            '110608': 'LIMPIEZA',
-                            '110609': 'EMPAQUE'
-                        }
-                        
-                        df_acc_inv_filt['Cuenta_Limpia'] = df_acc_inv_filt[col_cta_acc_inv].astype(str).str.strip()
-                        # NUEVA LÍNEA CLAVE: Extraemos solo los primeros 6 dígitos para ignorar los subniveles como .02
-                        df_acc_inv_filt['Cuenta_Base'] = df_acc_inv_filt['Cuenta_Limpia'].str[:6]
-                        df_acc_inv_filt['Categoria'] = df_acc_inv_filt['Cuenta_Base'].map(mapa_cuentas_inv).fillna('OTRA CUENTA (' + df_acc_inv_filt['Cuenta_Limpia'] + ')')
+                        # NUEVA LÍNEA: Uso de la función robusta que mapea incluso si vienen con subcuentas o decimales
+                        df_acc_inv_filt['Categoria'] = df_acc_inv_filt[col_cta_acc_inv].apply(obtener_categoria_inv)
                         
                         # Agrupar saldos contables
                         df_acc_grouped = df_acc_inv_filt.groupby('Categoria')['Haber_Num'].sum().reset_index()
                         df_acc_grouped.rename(columns={'Haber_Num': 'Descargado en Contabilidad ($)'}, inplace=True)
 
                         # --- FASE 2: PROCESAMIENTO DEL KARDEX Y MAPEO ---
-                        col_pref = next((c for c in df_kar.columns if 'PREFIJO' in c), None)
-                        col_prod_kar = next((c for c in df_kar.columns if 'IDPRODUCTO' in c or 'PRODUCTO' in c), None)
-                        col_salidas = next((c for c in df_kar.columns if 'SALIDASVALOR' in c or 'SALIDAS' in c), None)
+                        col_pref = get_col_exacta(df_kar, ['PREFIJO'], ['PREFIJO'])
+                        col_prod_kar = get_col_exacta(df_kar, ['IDPRODUCTO', 'PRODUCTO'], ['IDPRODUCTO', 'PRODUCTO'])
+                        col_salidas = get_col_exacta(df_kar, ['SALIDASVALOR', 'SALIDAS'], ['SALIDASVALOR', 'SALIDAS'])
 
-                        col_prod_map = next((c for c in df_map.columns if 'IDPRODUCTO' in c or 'PRODUCTO' in c or 'CODIGO' in c), None)
-                        col_cat_map = next((c for c in df_map.columns if 'CATEGORIA' in c or 'CUENTA' in c), None)
+                        col_prod_map = get_col_exacta(df_map, ['IDPRODUCTO', 'PRODUCTO', 'CODIGO'], ['IDPRODUCTO', 'PRODUCTO', 'CODIGO'])
+                        col_cat_map = get_col_exacta(df_map, ['CATEGORIA', 'CUENTA'], ['CATEGORIA', 'CUENTA'])
 
                         if not all([col_pref, col_prod_kar, col_salidas]):
                             st.error("🚨 Error en Kardex Valuado: Faltan columnas (Prefijo, IdProducto o SalidasValor).")
@@ -456,9 +461,10 @@ def mostrar_modulo_auditoria():
 
                         df_kar_filt['Salidas_Num'] = pd.to_numeric(df_kar_filt[col_salidas], errors='coerce').fillna(0)
                         
-                        # Asignar la categoría desde el Kardex Resumen
-                        df_kar_filt['Categoria_Mapeada'] = df_kar_filt[col_prod_kar].astype(str).str.strip().map(mapa_prod_cat).str.upper().str.strip()
-                        df_kar_filt['Categoria'] = df_kar_filt['Categoria_Mapeada'].fillna('SIN CATEGORIA EN MAPEO')
+                        # Asignar la categoría desde el Kardex Resumen (evitando que los nulos digan "NAN")
+                        mapeo_series = df_kar_filt[col_prod_kar].astype(str).str.strip().map(mapa_prod_cat)
+                        df_kar_filt['Categoria_Mapeada'] = mapeo_series.where(mapeo_series.notnull(), 'SIN CATEGORIA EN MAPEO').astype(str).str.upper().str.strip()
+                        df_kar_filt['Categoria'] = df_kar_filt['Categoria_Mapeada']
 
                         # Agrupar saldos de operaciones
                         df_kar_grouped = df_kar_filt.groupby('Categoria')['Salidas_Num'].sum().reset_index()
