@@ -126,7 +126,6 @@ def mostrar_modulo_auditoria():
                         df_ops.columns = df_ops.columns.str.strip().str.replace('\ufeff', '')
                         df_acc.columns = df_acc.columns.str.strip().str.replace('\ufeff', '')
 
-                        # 1. PROCESAMIENTO DE OPERACIONES (COMPRAS)
                         col_num_ops = next((c for c in df_ops.columns if 'NUMERO' in str(c).upper()), None)
                         col_tot_ops = next((c for c in df_ops.columns if 'TOTAL' in str(c).upper()), None)
                         col_cat_ops = next((c for c in df_ops.columns if 'CATEGORIA' in str(c).upper()), None)
@@ -171,7 +170,6 @@ def mostrar_modulo_auditoria():
                         documentos_conocidos.sort(key=len, reverse=True) 
                         ops_docs_desc = df_ops.groupby('Documento')['Desc_Limpia'].apply(list).to_dict()
 
-                        # 2. PROCESAMIENTO DE CONTABILIDAD
                         col_tipo_acc = next((c for c in df_acc.columns if 'IDTIPO' in str(c).upper()), None)
                         col_cta_acc = next((c for c in df_acc.columns if 'IDCUENTA' in str(c).upper() and 'MAYOR' not in str(c).upper()), None)
                         col_partida_acc = next((c for c in df_acc.columns if 'NUMERO' in str(c).upper()), None)
@@ -281,7 +279,6 @@ def mostrar_modulo_auditoria():
                         }).reset_index()
                         df_acc_grouped.rename(columns={'Documento_Final': 'Documento', 'Monto_Conta_Neto': 'Monto_Conta', col_partida_acc: 'Partida_Conta'}, inplace=True)
 
-                        # 3. CRUCE BIDIRECCIONAL FINAL
                         df_cruce = pd.merge(df_ops_grouped, df_acc_grouped, on=['Documento', 'Categoria'], how='outer')
                         df_cruce['Monto_Ops'] = df_cruce['Monto_Ops'].fillna(0.0)
                         df_cruce['Monto_Conta'] = df_cruce['Monto_Conta'].fillna(0.0)
@@ -438,11 +435,9 @@ def mostrar_modulo_auditoria():
                             st.error("🚨 Error en Libro Mayor: Faltan columnas vitales.")
                             st.stop()
 
-                        # Filtrar excluyendo CXP y CONT
                         filtro_tipo = ~df_acc_inv[col_tipo_acc_inv].astype(str).str.upper().str.strip().isin(['CXP', 'CONT'])
                         df_acc_inv_filt = df_acc_inv[filtro_tipo].copy()
 
-                        # Extraer factura limpia y ejecutar exclusión de FSE y CFE
                         df_acc_inv_filt['Factura_Limpia'] = df_acc_inv_filt[col_conc_acc_inv].apply(extraer_factura_conta)
                         df_acc_inv_filt = df_acc_inv_filt[df_acc_inv_filt['Factura_Limpia'] != "DOCUMENTO_EXCLUIDO"].copy()
 
@@ -453,11 +448,9 @@ def mostrar_modulo_auditoria():
                         df_acc_inv_filt['Haber_Num'] = pd.to_numeric(df_acc_inv_filt[col_haber_acc_inv], errors='coerce').fillna(0)
                         df_acc_inv_filt['Categoria'] = df_acc_inv_filt[col_cta_acc_inv].apply(obtener_categoria_inv)
 
-                        # A. Resumen Macro Contable
                         df_acc_grouped = df_acc_inv_filt.groupby('Categoria')['Haber_Num'].sum().reset_index()
                         df_acc_grouped.rename(columns={'Haber_Num': 'Descargado en Contabilidad ($)'}, inplace=True)
 
-                        # B. Desglose por Documento Contable
                         df_acc_docs = df_acc_inv_filt.groupby(['Factura_Limpia', 'Categoria']).agg({
                             'Haber_Num': 'sum',
                             col_cta_acc_inv: lambda x: ', '.join(x.dropna().astype(str).unique())
@@ -479,7 +472,6 @@ def mostrar_modulo_auditoria():
 
                         mapa_prod_cat = df_map.set_index(col_prod_map)[col_cat_map].to_dict()
 
-                        # Prefijos permitidos excluyendo expresamente CFE y FSE, incluyendo FEX
                         prefijos_validos = ['CCF', 'FCF', 'FEX']
                         df_kar_filt = df_kar[df_kar[col_pref].astype(str).str.upper().str.strip().isin(prefijos_validos)].copy()
 
@@ -491,15 +483,13 @@ def mostrar_modulo_auditoria():
                         
                         df_kar_filt['Factura_Limpia'] = df_kar_filt[col_doc_kar].astype(str).str.strip().str.upper().str.replace(r'-P\d+$', '', regex=True)
 
-                        # A. Resumen Macro Kardex
                         df_kar_grouped = df_kar_filt.groupby('Categoria')['Salidas_Num'].sum().reset_index()
                         df_kar_grouped.rename(columns={'Salidas_Num': 'Salidas en Kardex ($)'}, inplace=True)
 
-                        # B. Desglose por Documento Kardex
                         df_kar_docs = df_kar_filt.groupby(['Factura_Limpia', 'Categoria'])['Salidas_Num'].sum().reset_index()
                         df_kar_docs.rename(columns={'Salidas_Num': 'Monto Kardex ($)'}, inplace=True)
 
-                        # --- FASE 3: CRUCE Y MATRICZ DE CONCILIACIÓN ---
+                        # --- FASE 3: CRUCE Y MATRIZ DE CONCILIACIÓN ---
                         df_cruce_macro = pd.merge(df_acc_grouped, df_kar_grouped, on='Categoria', how='outer').fillna(0)
                         df_cruce_macro['Diferencia Neta ($)'] = df_cruce_macro['Descargado en Contabilidad ($)'] - df_cruce_macro['Salidas en Kardex ($)']
                         
@@ -526,6 +516,18 @@ def mostrar_modulo_auditoria():
                         df_cruce_docs['Prioridad'] = df_cruce_docs['Estado'].map(orden_docs).fillna(99)
                         df_cruce_docs = df_cruce_docs.sort_values(['Prioridad', 'Factura_Limpia']).drop(columns=['Prioridad'])
 
+                        # =========================================================
+                        # CANDADO DE SEGURIDAD PARA STREAMLIT (NUEVO)
+                        # =========================================================
+                        # Asegurar estricto formato numérico para que Streamlit no colapse
+                        for col in ['Descargado en Contabilidad ($)', 'Salidas en Kardex ($)', 'Diferencia Neta ($)']:
+                            if col in df_cruce_macro.columns:
+                                df_cruce_macro[col] = pd.to_numeric(df_cruce_macro[col], errors='coerce').fillna(0.0)
+
+                        for col in ['Monto Conta ($)', 'Monto Kardex ($)', 'Diferencia ($)']:
+                            if col in df_cruce_docs.columns:
+                                df_cruce_docs[col] = pd.to_numeric(df_cruce_docs[col], errors='coerce').fillna(0.0)
+
                         st.session_state['inv_macro_df'] = df_cruce_macro
                         st.session_state['inv_docs_df'] = df_cruce_docs
                         st.session_state['inv_ejecutado'] = True
@@ -537,10 +539,33 @@ def mostrar_modulo_auditoria():
             st.success("✅ Cruce de Inventarios ejecutado con éxito.")
             
             st.subheader("📊 1. Resumen Macro General por Categoría")
-            st.dataframe(st.session_state['inv_macro_df'], use_container_width=True, hide_index=True)
+            st.dataframe(
+                st.session_state['inv_macro_df'],
+                column_config={
+                    "Categoria": st.column_config.TextColumn("Categoría de Inventario"),
+                    "Descargado en Contabilidad ($)": st.column_config.NumberColumn("Descargado en Contabilidad (Haber)", format="$ %.2f"),
+                    "Salidas en Kardex ($)": st.column_config.NumberColumn("Salidas en Kardex (Costo Ventas)", format="$ %.2f"),
+                    "Diferencia Neta ($)": st.column_config.NumberColumn("Diferencia Neta ($)", format="$ %.2f"),
+                    "Acción Recomendada": st.column_config.TextColumn("Recomendación de Ajuste")
+                },
+                use_container_width=True, hide_index=True
+            )
             
             st.subheader("📋 2. Desglose Analítico Documento por Documento")
-            st.dataframe(st.session_state['inv_docs_df'], use_container_width=True, hide_index=True)
+            st.info("Esta tabla consolida todas las series sumándolas independientemente del punto de venta para rastrear el origen exacto del descuadre.")
+            st.dataframe(
+                st.session_state['inv_docs_df'],
+                column_config={
+                    "Factura_Limpia": st.column_config.TextColumn("Correlativo Factura"),
+                    "Categoria": st.column_config.TextColumn("Categoría"),
+                    "Cuentas Detectadas": st.column_config.TextColumn("Cuenta Contable"),
+                    "Monto Conta ($)": st.column_config.NumberColumn("Monto Conta ($)", format="$ %.2f"),
+                    "Monto Kardex ($)": st.column_config.NumberColumn("Monto Kardex ($)", format="$ %.2f"),
+                    "Diferencia ($)": st.column_config.NumberColumn("Descuadre ($)", format="$ %.2f"),
+                    "Estado": st.column_config.TextColumn("Estado del Documento")
+                },
+                use_container_width=True, hide_index=True
+            )
 
             dict_excel_inventarios = {
                 "Resumen_Macro": st.session_state['inv_macro_df'],
