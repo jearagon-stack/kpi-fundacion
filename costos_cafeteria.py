@@ -101,12 +101,8 @@ def mostrar_modulo_costos():
                 if op in c.strip().upper(): return c
         return None
 
-    def proteger_cuentas_nulas(df_m, fallback="SIN CUENTA REGISTRADA"):
-        if 'Cuenta_Contable' in df_m.columns:
-            df_m['Cuenta_Contable'] = df_m['Cuenta_Contable'].fillna(fallback)
-            mask = df_m['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
-            df_m.loc[mask, 'Cuenta_Contable'] = fallback
-        return df_m
+    def limpiar_cod(s): 
+        return s.astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
 
     meses_texto = {1:"ENERO", 2:"FEBRERO", 3:"MARZO", 4:"ABRIL", 5:"MAYO", 6:"JUNIO", 7:"JULIO", 8:"AGOSTO", 9:"SEPTIEMBRE", 10:"OCTUBRE", 11:"NOVIEMBRE", 12:"DICIEMBRE"}
     lista_meses = list(meses_texto.values())
@@ -147,14 +143,11 @@ def mostrar_modulo_costos():
                 
                 suma_actual = sum(pesos) * 100
                 if round(suma_actual, 2) != 100.0:
-                    st.error(f"❌ Error de Distribución: Los porcentajes ingresados suman {suma_actual:.2f}%. Deben sumar exactamente 100.00% para poder procesar los datos.")
+                    st.error(f"❌ Error de Distribución: Los porcentajes suman {suma_actual:.2f}%. Deben sumar exactamente 100.00%.")
                     st.stop()
-                else:
-                    st.success("✅ Distribución configurada correctamente al 100.00%.")
 
             st.divider()
             
-            # Obtención de Ingresos
             df_ventas = obtener_dataframe("Historico_Ventas")
             ventas_mes = subsidio_mes = 0.0
             if not df_ventas.empty:
@@ -169,6 +162,8 @@ def mostrar_modulo_costos():
                 subsidio_mes = pd.to_numeric(df_ventas[filtro_v]['Subsidio_UCA'].astype(str).str.replace(',', ''), errors='coerce').sum()
 
             porcentaje_subsidio = (subsidio_mes / ventas_mes) if ventas_mes > 0 else 0.0
+            st.info(f"📊 Ingresos Totales Periodo: Ventas ${ventas_mes:,.2f} | Subsidio ${subsidio_mes:,.2f}")
+
             costo_diferido_anterior = st.number_input("Costo Diferido de Arrastre (110602):", min_value=0.0, value=0.0)
             
             st.markdown("#### 📁 Archivos Base de Cierre (Cálculo de Consumo)")
@@ -187,8 +182,8 @@ def mostrar_modulo_costos():
                 if 'huerfanos_df' not in st.session_state:
                     forzar_calculo = st.checkbox("⚠️ Forzar cálculo ciego (Omitir revisión de cuentas)")
                     
-                    if st.button("⚙️ Procesar Archivos y Guardar en Memoria", type="primary", use_container_width=True):
-                        with st.spinner("Realizando cálculos contables y verificando Kardex..."):
+                    if st.button("⚙️ Procesar Archivos y Calcular Consumo", type="primary", use_container_width=True):
+                        with st.spinner("Agrupando productos y consolidando estructura matemática..."):
                             try:
                                 mapa_costo_unificado = {}
                                 if arch_kardex_res:
@@ -208,54 +203,67 @@ def mostrar_modulo_costos():
                                     except Exception as e:
                                         st.warning(f"No se pudo unificar costo del Kardex Resumen: {e}")
 
-                                # Carga y descarte de duplicados en el diccionario de cuentas
                                 df_dic = obtener_dataframe("Categorias_Costos")
-                                def limpiar_cod(s): return s.astype(str).str.strip().str.upper().str.replace(r'\.0$', '', regex=True)
-                                
                                 if not df_dic.empty and 'Codigo' in df_dic.columns:
                                     df_dic['Codigo'] = limpiar_cod(df_dic['Codigo'])
                                     df_dic = df_dic.drop_duplicates(subset=['Codigo'])
+                                else:
+                                    df_dic = pd.DataFrame(columns=['Codigo', 'Cuenta_Contable', 'Categoria'])
 
-                                # Procesamiento Inventario y Compras
-                                df_maestro_inv = consolidar(arch_inv_maestro)
-                                df_inicial = df_maestro_inv.copy()
-                                df_final = df_maestro_inv.copy()
-                                df_compras = consolidar(arch_com)
-                                
-                                for df in [df_inicial, df_compras, df_final]: 
-                                    if not df.empty and 'Codigo' in df.columns:
-                                        df['Codigo'] = limpiar_cod(df['Codigo'])
-                                
                                 basura = ['G222', 'G231', '21455979']
-                                df_inicial = df_inicial[~df_inicial['Codigo'].isin(basura)] if not df_inicial.empty else df_inicial
-                                df_compras = df_compras[~df_compras['Codigo'].isin(basura)] if not df_compras.empty else df_compras
-                                df_final = df_final[~df_final['Codigo'].isin(basura)] if not df_final.empty else df_final
 
-                                df_ini_m = pd.merge(df_inicial, df_dic, on='Codigo', how='left') if not df_inicial.empty else pd.DataFrame()
-                                df_com_m = pd.merge(df_compras, df_dic, on='Codigo', how='left') if not df_compras.empty else pd.DataFrame()
-                                df_fin_m = pd.merge(df_final, df_dic, on='Codigo', how='left') if not df_final.empty else pd.DataFrame()
+                                # 1. PROCESAMIENTO DE INVENTARIOS (Agrupado previo para evitar duplicaciones)
+                                df_inv_raw = consolidar(arch_inv_maestro)
+                                df_inv_grp = pd.DataFrame(columns=['Codigo', 'Valor_Ini', 'Valor_Fin'])
+                                
+                                if not df_inv_raw.empty:
+                                    df_inv_raw['Codigo'] = limpiar_cod(df_inv_raw['Codigo'])
+                                    df_inv_raw = df_inv_raw[~df_inv_raw['Codigo'].isin(basura)]
+                                    
+                                    df_inv_raw['Cant_Ini'] = pd.to_numeric(get_num(df_inv_raw, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
+                                    df_inv_raw['Costo_Ini'] = pd.to_numeric(get_num(df_inv_raw, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                    df_inv_raw['Valor_Ini'] = (df_inv_raw['Cant_Ini'] * df_inv_raw['Costo_Ini']).round(2)
+                                    
+                                    df_inv_raw['Cant_Fin'] = pd.to_numeric(get_num(df_inv_raw, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
+                                    if mapa_costo_unificado:
+                                        df_inv_raw['Costo_Fin'] = df_inv_raw['Codigo'].map(mapa_costo_unificado).fillna(0.0)
+                                    else:
+                                        df_inv_raw['Costo_Fin'] = pd.to_numeric(get_num(df_inv_raw, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                    df_inv_raw['Valor_Fin'] = (df_inv_raw['Cant_Fin'] * df_inv_raw['Costo_Fin']).round(2)
+                                    
+                                    df_inv_grp = df_inv_raw.groupby('Codigo', as_index=False).agg({'Valor_Ini': 'sum', 'Valor_Fin': 'sum'})
+                                    df_categoria_nat = df_inv_raw.groupby('Codigo', as_index=False).first()[['Codigo', 'Categoria']] if 'Categoria' in df_inv_raw.columns else pd.DataFrame(columns=['Codigo', 'Categoria'])
+                                else:
+                                    df_categoria_nat = pd.DataFrame(columns=['Codigo', 'Categoria'])
 
-                                # Procesamiento de Traslados (Solo Archivo Cargado)
-                                df_tras_in = pd.DataFrame()
-                                df_tras_out = pd.DataFrame()
-                                grp_tras_in = pd.Series(dtype=float)
-                                grp_tras_out = pd.Series(dtype=float)
-                                traslados_neta = 0.0
+                                # 2. PROCESAMIENTO DE COMPRAS
+                                df_com_raw = consolidar(arch_com)
+                                df_com_grp = pd.DataFrame(columns=['Codigo', 'Valor_Com'])
+                                
+                                if not df_com_raw.empty:
+                                    df_com_raw['Codigo'] = limpiar_cod(df_com_raw['Codigo'])
+                                    df_com_raw = df_com_raw[~df_com_raw['Codigo'].isin(basura)]
+                                    df_com_raw['Valor_Com'] = pd.to_numeric(get_num(df_com_raw, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0).round(2)
+                                    df_com_grp = df_com_raw.groupby('Codigo', as_index=False).agg({'Valor_Com': 'sum'})
 
+                                # 3. PROCESAMIENTO DE TRASLADOS (Archivo Cargado en Pestaña 1)
+                                df_tras_in_grp = pd.DataFrame(columns=['Codigo', 'Valor_Tras_In'])
+                                df_tras_out_grp = pd.DataFrame(columns=['Codigo', 'Valor_Tras_Out'])
+                                
                                 if arch_tras_mes:
                                     df_tras_raw = consolidar(arch_tras_mes)
                                     if not df_tras_raw.empty:
                                         df_tras_raw['Codigo'] = limpiar_cod(df_tras_raw['Codigo'])
-                                        df_tras_raw['Monto'] = pd.to_numeric(get_num(df_tras_raw, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
+                                        df_tras_raw['Monto_T'] = pd.to_numeric(get_num(df_tras_raw, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
                                         
-                                        c_orig_t = get_col_exacta(df_tras_raw, ['ORIGEN', 'SALIDA', 'BODEGAORIGEN'], ['ORIG', 'SALIDA'])
-                                        c_dest_t = get_col_exacta(df_tras_raw, ['DESTINO', 'INGRESO', 'BODEGADESTINO'], ['DEST', 'INGR'])
-
-                                        if c_orig_t and c_dest_t:
-                                            mask_orig_caf = df_tras_raw[c_orig_t].apply(es_cafeteria)
-                                            mask_dest_caf = df_tras_raw[c_dest_t].apply(es_cafeteria)
-                                            mask_orig_desp = df_tras_raw[c_orig_t].apply(es_despensa)
-                                            mask_dest_desp = df_tras_raw[c_dest_t].apply(es_despensa)
+                                        c_orig = get_col_exacta(df_tras_raw, ['ORIGEN', 'SALIDA', 'BODEGAORIGEN'], ['ORIG', 'SALIDA'])
+                                        c_dest = get_col_exacta(df_tras_raw, ['DESTINO', 'INGRESO', 'BODEGADESTINO'], ['DEST', 'INGR'])
+                                        
+                                        if c_orig and c_dest:
+                                            mask_orig_caf = df_tras_raw[c_orig].apply(es_cafeteria)
+                                            mask_dest_caf = df_tras_raw[c_dest].apply(es_cafeteria)
+                                            mask_orig_desp = df_tras_raw[c_orig].apply(es_despensa)
+                                            mask_dest_desp = df_tras_raw[c_dest].apply(es_despensa)
 
                                             if unidad_cierre == "CAFETERIA":
                                                 f_in = mask_dest_caf & (~mask_orig_caf)
@@ -264,167 +272,65 @@ def mostrar_modulo_costos():
                                                 f_in = mask_dest_desp & (~mask_orig_desp)
                                                 f_out = mask_orig_desp & (~mask_dest_desp)
 
-                                            df_tras_in = df_tras_raw[f_in].copy()
-                                            df_tras_out = df_tras_raw[f_out].copy()
+                                            df_tras_in_grp = df_tras_raw[f_in].groupby('Codigo', as_index=False).agg({'Monto_T': 'sum'}).rename(columns={'Monto_T': 'Valor_Tras_In'})
+                                            df_tras_out_grp = df_tras_raw[f_out].groupby('Codigo', as_index=False).agg({'Monto_T': 'sum'}).rename(columns={'Monto_T': 'Valor_Tras_Out'})
 
-                                            if not df_tras_in.empty:
-                                                df_tras_in = pd.merge(df_tras_in, df_dic, on='Codigo', how='left')
-                                                df_tras_in = proteger_cuentas_nulas(df_tras_in)
-                                                grp_tras_in = df_tras_in.groupby('Cuenta_Contable')['Monto'].sum()
-                                                traslados_neta += df_tras_in['Monto'].sum()
+                                # 4. MATRIZ MAESTRA UNIFICADA (Elimina por completo el Producto Cartesiano)
+                                all_codes = set()
+                                for d in [df_inv_grp, df_com_grp, df_tras_in_grp, df_tras_out_grp]:
+                                    if not d.empty: all_codes.update(d['Codigo'].tolist())
+                                
+                                df_master = pd.DataFrame({'Codigo': list(all_codes)})
+                                df_master = pd.merge(df_master, df_dic[['Codigo', 'Cuenta_Contable']], on='Codigo', how='left')
+                                df_master = pd.merge(df_master, df_categoria_nat, on='Codigo', how='left')
+                                df_master = pd.merge(df_master, df_inv_grp, on='Codigo', how='left').fillna(0)
+                                df_master = pd.merge(df_master, df_com_grp, on='Codigo', how='left').fillna(0)
+                                df_master = pd.merge(df_master, df_tras_in_grp, on='Codigo', how='left').fillna(0)
+                                df_master = pd.merge(df_master, df_tras_out_grp, on='Codigo', how='left').fillna(0)
 
-                                            if not df_tras_out.empty:
-                                                df_tras_out = pd.merge(df_tras_out, df_dic, on='Codigo', how='left')
-                                                df_tras_out = proteger_cuentas_nulas(df_tras_out)
-                                                grp_tras_out = df_tras_out.groupby('Cuenta_Contable')['Monto'].sum()
-                                                traslados_neta -= df_tras_out['Monto'].sum()
-
-                                def detectar_huerfanos(df):
-                                    if df.empty or 'Cuenta_Contable' not in df.columns: return pd.DataFrame()
-                                    mask = df['Cuenta_Contable'].isna() | df['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
-                                    if 'Categoria' not in df.columns:
-                                        df['Categoria'] = 'SIN CATEGORIA NATIVA'
-                                    return df[mask][['Codigo', 'Categoria', 'ORIGEN_ARCHIVO']]
-
-                                df_faltantes = pd.concat([
-                                    detectar_huerfanos(df_ini_m), 
-                                    detectar_huerfanos(df_com_m), 
-                                    detectar_huerfanos(df_fin_m),
-                                    detectar_huerfanos(df_tras_in),
-                                    detectar_huerfanos(df_tras_out)
-                                ]).drop_duplicates(subset=['Codigo'])
+                                mask_huerf = df_master['Cuenta_Contable'].isna() | df_master['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
+                                df_faltantes = df_master[mask_huerf][['Codigo', 'Categoria']].copy()
+                                if 'Categoria' not in df_faltantes.columns or df_faltantes['Categoria'].isna().all():
+                                    df_faltantes['Categoria'] = 'SIN CATEGORIA NATIVA'
 
                                 if not df_faltantes.empty and not forzar_calculo:
                                     st.session_state['pre_proceso'] = {
-                                        'ini': df_ini_m, 'com': df_com_m, 'fin': df_fin_m, 
-                                        'tras_in': df_tras_in, 'tras_out': df_tras_out,
-                                        'grp_tras_in': grp_tras_in, 'grp_tras_out': grp_tras_out,
-                                        'mapa_costo_unificado': mapa_costo_unificado,
-                                        'traslados_neta': traslados_neta
+                                        'df_master': df_master,
+                                        'mapa_costo_unificado': mapa_costo_unificado
                                     }
                                     st.session_state['huerfanos_df'] = df_faltantes
                                     st.rerun()
 
-                                df_ini_m = proteger_cuentas_nulas(df_ini_m)
-                                df_com_m = proteger_cuentas_nulas(df_com_m)
-                                df_fin_m = proteger_cuentas_nulas(df_fin_m)
-
-                                if mapa_costo_unificado and not df_fin_m.empty:
-                                    df_fin_m['Costo_Unificado'] = df_fin_m['Codigo'].map(mapa_costo_unificado)
-                                    df_fin_m['Costo_Usar'] = pd.to_numeric(df_fin_m['Costo_Unificado'], errors='coerce').fillna(0.0)
-                                elif not df_fin_m.empty:
-                                    df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-
-                                if not df_ini_m.empty:
-                                    df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
-                                    df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-                                    df_ini_m['Valor'] = (df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']).round(2)
-
-                                if not df_fin_m.empty:
-                                    df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
-                                    df_fin_m['Valor'] = (df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']).round(2)
+                                # Si no hay huérfanos o se forzó el cálculo:
+                                if 'Cuenta_Contable' in df_master.columns:
+                                    df_master['Cuenta_Contable'] = df_master['Cuenta_Contable'].fillna("SIN CUENTA REGISTRADA")
+                                    mask_null = df_master['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
+                                    df_master.loc[mask_null, 'Cuenta_Contable'] = "SIN CUENTA REGISTRADA"
                                 
-                                if not df_com_m.empty:
-                                    df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0).round(2)
+                                df_master = df_master[~df_master['Cuenta_Contable'].isin(["OMITIDO_MANUAL", "NO APLICA", "0", "0.0"])]
 
-                                grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum() if not df_ini_m.empty else pd.Series(dtype=float)
-                                grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum() if not df_com_m.empty else pd.Series(dtype=float)
-                                grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum() if not df_fin_m.empty else pd.Series(dtype=float)
+                                df_master['Consumo'] = df_master['Valor_Ini'] + df_master['Valor_Com'] + df_master['Valor_Tras_In'] - df_master['Valor_Tras_Out'] - df_master['Valor_Fin']
                                 
-                                todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras_in.index).union(grp_tras_out.index)
-                                consumo_por_cuenta = {}
-                                total_ini_val = total_com_val = total_tras_val = total_fin_val = costo_operativo = 0.0
+                                grp_ini_sum = df_master['Valor_Ini'].sum()
+                                grp_comp_sum = df_master['Valor_Com'].sum()
+                                grp_tras_sum = df_master['Valor_Tras_In'].sum() - df_master['Valor_Tras_Out'].sum()
+                                grp_fin_sum = df_master['Valor_Fin'].sum()
                                 
-                                cuentas_invalidas = ["NO APLICA", "0", "0.0", "OMITIDO_MANUAL"]
-                                for cta in todas_cuentas:
-                                    if pd.isna(cta): continue
-                                    cta_str = str(cta).strip().upper().replace(".0", "")
-                                    
-                                    v_ini = float(grp_ini.get(cta, 0.0))
-                                    v_com = float(grp_comp.get(cta, 0.0))
-                                    v_tras_entrada = float(grp_tras_in.get(cta, 0.0))
-                                    v_tras_salida = float(grp_tras_out.get(cta, 0.0))
-                                    v_fin = float(grp_fin.get(cta, 0.0))
-                                    
-                                    v_tras_neta = v_tras_entrada - v_tras_salida
-                                    
-                                    if cta_str not in cuentas_invalidas: 
-                                        total_ini_val += v_ini; total_com_val += v_com
-                                        total_tras_val += v_tras_neta; total_fin_val += v_fin
-                                        
-                                        val = v_ini + v_com + v_tras_neta - v_fin
-                                        if val != 0:
-                                            consumo_por_cuenta[cta_str] = val
-                                            costo_operativo += val
+                                consumo_por_cuenta = df_master[df_master['Consumo'] != 0].groupby('Cuenta_Contable')['Consumo'].sum().to_dict()
+                                costo_operativo = sum(consumo_por_cuenta.values())
                                 
                                 costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                                 costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
-                                df_comp_unitario = pd.DataFrame()
-                                if not df_com_m.empty:
-                                    df_temp_com = df_com_m.copy()
-                                    try:
-                                        df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, [['CANTIDAD'], ['UNIDADES'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
-                                        df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
-                                        df_comp_unitario = df_temp_com.groupby('Codigo').agg({'Monto_Mes': 'sum', 'Unidades_Mes': 'sum'}).reset_index()
-                                        df_comp_unitario['Compras_Promedio'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
-                                    except: pass
-
-                                df_ini_unitario = pd.DataFrame()
-                                if not df_ini_m.empty:
-                                    df_temp_ini = df_ini_m.copy()
-                                    try:
-                                        df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-                                        df_ini_unitario = df_temp_ini.groupby('Codigo')['Costo_Inicial'].max().reset_index()
-                                    except: pass
-
-                                df_inv_actual = pd.DataFrame()
-                                if not df_fin_m.empty:
-                                    df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
-                                    df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
-                                    df_inv_actual['Costo_Unitario_Actual'] = df_fin_m['Costo_Usar']
-                                    df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
-
-                                df_var_costos = pd.DataFrame()
-                                if not df_comp_unitario.empty and not df_inv_actual.empty:
-                                    df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Compras_Promedio']], on='Codigo', how='inner')
-                                    df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0] 
-                                    
-                                    if not df_ini_unitario.empty:
-                                        df_var_costos = pd.merge(df_var_costos, df_ini_unitario[['Codigo', 'Costo_Inicial']], on='Codigo', how='left')
-                                    else:
-                                        df_var_costos['Costo_Inicial'] = 0.0
-                                        
-                                    df_var_costos = df_var_costos.rename(columns={'Costo_Unitario_Actual': 'Costo_Actual'})
-                                    df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
-                                    df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
-                                    df_var_costos['Diferencia_$'] = df_var_costos['Costo_Actual'] - df_var_costos['Compras_Promedio']
-                                    
-                                    cond_perc = df_var_costos['Variacion_Porcentual'].abs() > 0.01
-                                    cond_mone = df_var_costos['Diferencia_$'].abs() >= 0.019
-                                    df_var_costos = df_var_costos[cond_perc & cond_mone]
-                                    df_var_costos = df_var_costos[['Codigo', 'Producto', 'Costo_Inicial', 'Compras_Promedio', 'Costo_Actual', 'Diferencia_$', 'Variacion_Porcentual']]
-
-
                                 st.session_state['memoria_cierre'] = {
-                                    'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
-                                    'grp_ini_sum': total_ini_val, 'grp_comp_sum': total_com_val, 
-                                    'grp_tras_sum': total_tras_val, 'grp_fin_sum': total_fin_val,
+                                    'df_master': df_master,
+                                    'grp_ini_sum': grp_ini_sum, 'grp_comp_sum': grp_comp_sum, 
+                                    'grp_tras_sum': grp_tras_sum, 'grp_fin_sum': grp_fin_sum,
                                     'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
                                     'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
                                     'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
                                     'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses,
-                                    'anomalias_kardex': pd.DataFrame(),
-                                    'anomalias_antiguas': df_var_costos,
-                                    'traslados_neta': traslados_neta
-                                }
-
-                                st.session_state['datos_auditoria'] = {
-                                    'consumo': consumo_por_cuenta, 
-                                    'ventas': ventas_mes, 
-                                    'costo_real': costo_real,
-                                    'inventario_final': df_fin_m,
-                                    'variaciones_costo': df_var_costos
+                                    'anomalias_kardex': pd.DataFrame(), 'anomalias_antiguas': pd.DataFrame()
                                 }
                                 
                                 if 'huerfanos_df' in st.session_state: del st.session_state['huerfanos_df']
@@ -433,7 +339,7 @@ def mostrar_modulo_costos():
                                 st.rerun()
 
                             except Exception as e: 
-                                st.error(f"Error procesando: {e}")
+                                st.error(f"Error procesando la matriz maestra: {e}")
 
                 else:
                     st.error("🚨 ALERTA: PRODUCTOS SIN CUENTA CONTABLE DETECTADOS")
@@ -449,7 +355,6 @@ def mostrar_modulo_costos():
                         column_config={
                             "Codigo": "Código Producto",
                             "Categoria": "Categoría Nativa",
-                            "ORIGEN_ARCHIVO": "Archivo Origen",
                             "Accion": st.column_config.SelectboxColumn(
                                 "¿Qué hacer?",
                                 options=["Omitir (No sumar al costo)", "Usar Categoría Nativa", "Escribir Cuenta Manual"],
@@ -457,169 +362,58 @@ def mostrar_modulo_costos():
                             ),
                             "Cuenta_Manual": st.column_config.TextColumn("Cuenta (Si es Manual)")
                         },
-                        hide_index=True, disabled=["Codigo", "Categoria", "ORIGEN_ARCHIVO"], use_container_width=True
+                        hide_index=True, disabled=["Codigo", "Categoria"], use_container_width=True
                     )
 
                     col_b1, col_b2 = st.columns(2)
                     if col_b1.button("✅ Aplicar Decisiones y Generar Cierre", type="primary", use_container_width=True):
-                        with st.spinner("Aplicando reglas y calculando..."):
-                            df_ini_m = st.session_state['pre_proceso']['ini']
-                            df_com_m = st.session_state['pre_proceso']['com']
-                            df_fin_m = st.session_state['pre_proceso']['fin']
-                            df_tras_in = st.session_state['pre_proceso'].get('tras_in', pd.DataFrame())
-                            df_tras_out = st.session_state['pre_proceso'].get('tras_out', pd.DataFrame())
-                            grp_tras_in = st.session_state['pre_proceso']['grp_tras_in']
-                            grp_tras_out = st.session_state['pre_proceso']['grp_tras_out']
-                            traslados_neta = st.session_state['pre_proceso'].get('traslados_neta', 0.0)
-                            mapa_costo_unificado = st.session_state['pre_proceso'].get('mapa_costo_unificado', {})
+                        with st.spinner("Aplicando reglas y calculando matriz maestra..."):
+                            df_master = st.session_state['pre_proceso']['df_master'].copy()
 
                             codigos_omitir = edited_df[edited_df['Accion'] == 'Omitir (No sumar al costo)']['Codigo'].tolist()
                             df_asignar = edited_df[edited_df['Accion'] == 'Escribir Cuenta Manual']
                             df_categoria = edited_df[edited_df['Accion'] == 'Usar Categoría Nativa']
 
-                            def aplicar_reglas_auditor(df_obj):
-                                if df_obj.empty: return df_obj
-                                df = df_obj.copy()
-                                mask_omitir = df['Codigo'].isin(codigos_omitir)
-                                if mask_omitir.any(): df.loc[mask_omitir, 'Cuenta_Contable'] = 'OMITIDO_MANUAL'
-                                
-                                for _, row in df_asignar.iterrows():
-                                    c_manual = str(row['Cuenta_Manual']).strip()
-                                    if c_manual == "": c_manual = "SIN CUENTA REGISTRADA"
-                                    df.loc[df['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = c_manual
-                                
-                                for _, row in df_categoria.iterrows():
-                                    cat_val = str(row['Categoria']).strip()
-                                    df.loc[df['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = cat_val
-                                return df
-
-                            df_ini_m = aplicar_reglas_auditor(df_ini_m)
-                            df_com_m = aplicar_reglas_auditor(df_com_m)
-                            df_fin_m = aplicar_reglas_auditor(df_fin_m)
-                            df_tras_in = aplicar_reglas_auditor(df_tras_in)
-                            df_tras_out = aplicar_reglas_auditor(df_tras_out)
-
-                            if not df_tras_in.empty: grp_tras_in = df_tras_in.groupby('Cuenta_Contable')['Monto'].sum()
-                            if not df_tras_out.empty: grp_tras_out = df_tras_out.groupby('Cuenta_Contable')['Monto'].sum()
-
-                            df_ini_m = proteger_cuentas_nulas(df_ini_m)
-                            df_com_m = proteger_cuentas_nulas(df_com_m)
-                            df_fin_m = proteger_cuentas_nulas(df_fin_m)
-
-                            if mapa_costo_unificado and not df_fin_m.empty:
-                                df_fin_m['Costo_Unificado'] = df_fin_m['Codigo'].map(mapa_costo_unificado)
-                                df_fin_m['Costo_Usar'] = pd.to_numeric(df_fin_m['Costo_Unificado'], errors='coerce').fillna(0.0)
-                            elif not df_fin_m.empty:
-                                df_fin_m['Costo_Usar'] = pd.to_numeric(get_num(df_fin_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-
-                            if not df_ini_m.empty:
-                                df_ini_m['Cantidad_Ini'] = pd.to_numeric(get_num(df_ini_m, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
-                                df_ini_m['Costo_Ini'] = pd.to_numeric(get_num(df_ini_m, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-                                df_ini_m['Valor'] = (df_ini_m['Cantidad_Ini'] * df_ini_m['Costo_Ini']).round(2)
-
-                            if not df_fin_m.empty:
-                                df_fin_m['Cantidad_Fin'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
-                                df_fin_m['Valor'] = (df_fin_m['Cantidad_Fin'] * df_fin_m['Costo_Usar']).round(2)
+                            mask_omitir = df_master['Codigo'].isin(codigos_omitir)
+                            if mask_omitir.any(): df_master.loc[mask_omitir, 'Cuenta_Contable'] = 'OMITIDO_MANUAL'
                             
-                            if not df_com_m.empty:
-                                df_com_m['Valor'] = pd.to_numeric(get_num(df_com_m, [['TOTAL'], ['MONTO']]), errors='coerce').fillna(0.0).round(2)
+                            for _, row in df_asignar.iterrows():
+                                c_manual = str(row['Cuenta_Manual']).strip()
+                                if c_manual == "": c_manual = "SIN CUENTA REGISTRADA"
+                                df_master.loc[df_master['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = c_manual
+                            
+                            for _, row in df_categoria.iterrows():
+                                cat_val = str(row['Categoria']).strip()
+                                df_master.loc[df_master['Codigo'] == row['Codigo'], 'Cuenta_Contable'] = cat_val
 
-                            grp_ini = df_ini_m.groupby('Cuenta_Contable')['Valor'].sum() if not df_ini_m.empty else pd.Series(dtype=float)
-                            grp_comp = df_com_m.groupby('Cuenta_Contable')['Valor'].sum() if not df_com_m.empty else pd.Series(dtype=float)
-                            grp_fin = df_fin_m.groupby('Cuenta_Contable')['Valor'].sum() if not df_fin_m.empty else pd.Series(dtype=float)
+                            df_master['Cuenta_Contable'] = df_master['Cuenta_Contable'].fillna("SIN CUENTA REGISTRADA")
+                            mask_null = df_master['Cuenta_Contable'].astype(str).str.strip().str.upper().isin(["", "NAN", "NAT", "NONE"])
+                            df_master.loc[mask_null, 'Cuenta_Contable'] = "SIN CUENTA REGISTRADA"
                             
-                            todas_cuentas = set(grp_ini.index).union(grp_comp.index).union(grp_fin.index).union(grp_tras_in.index).union(grp_tras_out.index)
-                            consumo_por_cuenta = {}
-                            total_ini_val = total_com_val = total_tras_val = total_fin_val = costo_operativo = 0.0
+                            df_master = df_master[~df_master['Cuenta_Contable'].isin(["OMITIDO_MANUAL", "NO APLICA", "0", "0.0"])]
+
+                            df_master['Consumo'] = df_master['Valor_Ini'] + df_master['Valor_Com'] + df_master['Valor_Tras_In'] - df_master['Valor_Tras_Out'] - df_master['Valor_Fin']
                             
-                            cuentas_invalidas = ["NO APLICA", "0", "0.0", "OMITIDO_MANUAL"]
-                            for cta in todas_cuentas:
-                                if pd.isna(cta): continue
-                                cta_str = str(cta).strip().upper().replace(".0", "")
-                                
-                                v_ini = float(grp_ini.get(cta, 0.0))
-                                v_com = float(grp_comp.get(cta, 0.0))
-                                v_tras_entrada = float(grp_tras_in.get(cta, 0.0))
-                                v_tras_salida = float(grp_tras_out.get(cta, 0.0))
-                                v_fin = float(grp_fin.get(cta, 0.0))
-                                
-                                v_tras_neta = v_tras_entrada - v_tras_salida
-                                
-                                if cta_str not in cuentas_invalidas: 
-                                    total_ini_val += v_ini; total_com_val += v_com
-                                    total_tras_val += v_tras_neta; total_fin_val += v_fin
-                                    val = v_ini + v_com + v_tras_neta - v_fin
-                                    if val != 0:
-                                        consumo_por_cuenta[cta_str] = val
-                                        costo_operativo += val
+                            grp_ini_sum = df_master['Valor_Ini'].sum()
+                            grp_comp_sum = df_master['Valor_Com'].sum()
+                            grp_tras_sum = df_master['Valor_Tras_In'].sum() - df_master['Valor_Tras_Out'].sum()
+                            grp_fin_sum = df_master['Valor_Fin'].sum()
+                            
+                            consumo_por_cuenta = df_master[df_master['Consumo'] != 0].groupby('Cuenta_Contable')['Consumo'].sum().to_dict()
+                            costo_operativo = sum(consumo_por_cuenta.values())
                             
                             costo_dif_mes = float(costo_operativo) * float(porcentaje_subsidio)
                             costo_real = float(costo_operativo) - float(costo_dif_mes) + float(costo_diferido_anterior)
 
-                            df_comp_unitario = pd.DataFrame()
-                            if not df_com_m.empty:
-                                df_temp_com = df_com_m.copy()
-                                try:
-                                    df_temp_com['Unidades_Mes'] = pd.to_numeric(get_num(df_temp_com, [['CANTIDAD'], ['UNIDADES'], ['EXISTENCIAS'], ['SALDO']]), errors='coerce').fillna(0.0)
-                                    df_temp_com['Monto_Mes'] = pd.to_numeric(get_num(df_temp_com, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
-                                    df_comp_unitario = df_temp_com.groupby('Codigo').agg({'Monto_Mes': 'sum', 'Unidades_Mes': 'sum'}).reset_index()
-                                    df_comp_unitario['Compras_Promedio'] = (df_comp_unitario['Monto_Mes'] / df_comp_unitario['Unidades_Mes'].replace(0, 1)).fillna(0.0)
-                                except: pass
-
-                            df_ini_unitario = pd.DataFrame()
-                            if not df_ini_m.empty:
-                                df_temp_ini = df_ini_m.copy()
-                                try:
-                                    df_temp_ini['Costo_Inicial'] = pd.to_numeric(get_num(df_temp_ini, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
-                                    df_ini_unitario = df_temp_ini.groupby('Codigo')['Costo_Inicial'].max().reset_index()
-                                except: pass
-
-                            df_inv_actual = pd.DataFrame()
-                            if not df_fin_m.empty:
-                                df_inv_actual = df_fin_m[['Codigo', 'Cuenta_Contable']].copy()
-                                df_inv_actual['Unidades_Actual'] = pd.to_numeric(get_num(df_fin_m, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
-                                df_inv_actual['Costo_Unitario_Actual'] = df_fin_m['Costo_Usar']
-                                df_inv_actual = df_inv_actual.rename(columns={'Cuenta_Contable': 'Producto'})
-
-                            df_var_costos = pd.DataFrame()
-                            if not df_comp_unitario.empty and not df_inv_actual.empty:
-                                df_var_costos = pd.merge(df_inv_actual, df_comp_unitario[['Codigo', 'Compras_Promedio']], on='Codigo', how='inner')
-                                df_var_costos = df_var_costos[df_var_costos['Unidades_Actual'] > 0] 
-                                
-                                if not df_ini_unitario.empty:
-                                    df_var_costos = pd.merge(df_var_costos, df_ini_unitario[['Codigo', 'Costo_Inicial']], on='Codigo', how='left')
-                                else:
-                                    df_var_costos['Costo_Inicial'] = 0.0
-                                    
-                                df_var_costos = df_var_costos.rename(columns={'Costo_Unitario_Actual': 'Costo_Actual'})
-                                df_var_costos['Variacion_Porcentual'] = (df_var_costos['Costo_Actual'] / df_var_costos['Compras_Promedio'].replace(0, 1)) - 1
-                                df_var_costos['Variacion_Porcentual'] = df_var_costos['Variacion_Porcentual'].fillna(0.0)
-                                df_var_costos['Diferencia_$'] = df_var_costos['Costo_Actual'] - df_var_costos['Compras_Promedio']
-                                
-                                cond_perc = df_var_costos['Variacion_Porcentual'].abs() > 0.01
-                                cond_mone = df_var_costos['Diferencia_$'].abs() >= 0.019
-                                df_var_costos = df_var_costos[cond_perc & cond_mone]
-                                df_var_costos = df_var_costos[['Codigo', 'Producto', 'Costo_Inicial', 'Compras_Promedio', 'Costo_Actual', 'Diferencia_$', 'Variacion_Porcentual']]
-
                             st.session_state['memoria_cierre'] = {
-                                'df_ini_m': df_ini_m, 'df_com_m': df_com_m, 'df_fin_m': df_fin_m,
-                                'grp_ini_sum': total_ini_val, 'grp_comp_sum': total_com_val, 
-                                'grp_tras_sum': total_tras_val, 'grp_fin_sum': total_fin_val,
+                                'df_master': df_master,
+                                'grp_ini_sum': grp_ini_sum, 'grp_comp_sum': grp_comp_sum, 
+                                'grp_tras_sum': grp_tras_sum, 'grp_fin_sum': grp_fin_sum,
                                 'costo_dif_mes': costo_dif_mes, 'costo_real': costo_real, 'costo_operativo': costo_operativo,
                                 'costo_diferido_anterior': costo_diferido_anterior, 'consumo_por_cuenta': consumo_por_cuenta,
                                 'mes_cierre': mes_cierre, 'anio_cierre': anio_cierre, 'unidad_cierre': unidad_cierre,
                                 'es_consolidado': es_consolidado, 'pesos': pesos, 'nombres_meses': nombres_meses,
-                                'anomalias_kardex': pd.DataFrame(),
-                                'anomalias_antiguas': df_var_costos,
-                                'traslados_neta': traslados_neta
-                            }
-
-                            st.session_state['datos_auditoria'] = {
-                                'consumo': consumo_por_cuenta, 
-                                'ventas': ventas_mes, 
-                                'costo_real': costo_real,
-                                'inventario_final': df_fin_m,
-                                'variaciones_costo': df_var_costos
+                                'anomalias_kardex': pd.DataFrame(), 'anomalias_antiguas': pd.DataFrame()
                             }
                             
                             if 'huerfanos_df' in st.session_state: del st.session_state['huerfanos_df']
@@ -634,34 +428,10 @@ def mostrar_modulo_costos():
             r1, r2, r3, r4, r5, r6 = st.columns(6)
             r1.metric("Inicial (+)", f"${mem['grp_ini_sum']:,.2f}")
             r2.metric("Compras (+)", f"${mem['grp_comp_sum']:,.2f}")
-            r3.metric("Traslados Netos (+/-)", f"${mem.get('traslados_neta', mem['grp_tras_sum']):,.2f}")
+            r3.metric("Traslados Netos (+/-)", f"${mem['grp_tras_sum']:,.2f}")
             r4.metric("Final (-)", f"${mem['grp_fin_sum']:,.2f}")
             r5.metric("Diferido (-)", f"${mem['costo_dif_mes']:,.2f}")
             r6.metric("Real (=)", f"${mem['costo_real']:,.2f}")
-
-            st.divider()
-            
-            st.subheader("🕵️ Auditoría de Costo de Venta (Doble Filtro)")
-            
-            if 'anomalias_kardex' in mem and not mem['anomalias_kardex'].empty:
-                df_a = mem['anomalias_kardex']
-                df_criticas = df_a[df_a['ORIGEN'] != 'COMPRA']
-                
-                if not df_criticas.empty:
-                    st.error("⚠️ ALERTAS CRÍTICAS: Elevación de costo NO relacionada a Compras")
-                    st.dataframe(df_criticas.style.format({'C_BASE':'${:.4f}', 'COSTO_NUM':'${:.4f}', 'DIF_M':'${:.4f}', 'VAR_P':'{:.2%}'}), use_container_width=True)
-                else:
-                    st.success("✅ No hay elevaciones sospechosas por Ajustes, Producción o Traslados.")
-                
-                with st.expander("🔍 Ver Auditoría Completa (Incluye variaciones de Mercado/Compras)"):
-                    st.write("Esta tabla muestra todos los productos con Existencia > 0 que variaron su costo en más del 1% y $0.02.")
-                    st.dataframe(df_a.style.format({'C_BASE':'${:.4f}', 'COSTO_NUM':'${:.4f}', 'DIF_M':'${:.4f}', 'VAR_P':'{:.2%}'}), use_container_width=True)
-
-            elif 'anomalias_antiguas' in mem and not mem['anomalias_antiguas'].empty:
-                st.warning("Visualizando auditoría básica (Kardex no subido o no válido).")
-                st.dataframe(mem['anomalias_antiguas'].style.format({'Costo_Inicial':'${:.4f}', 'Compras_Promedio':'${:.4f}', 'Costo_Actual':'${:.4f}', 'Diferencia_$':'${:.4f}', 'Variacion_Porcentual':'{:.2%}'}), use_container_width=True)
-            else:
-                st.success("✅ Validación impecable: No hay desviaciones significativas detectadas (o los artículos tienen existencia 0).")
 
             st.divider()
             if st.checkbox("📂 Ver Detalle de Consumo por Cuentas"):
@@ -673,7 +443,6 @@ def mostrar_modulo_costos():
                 col_b1, col_b2 = st.columns(2)
                 if col_b1.button("🗑️ Descartar Memoria y Subir Archivos Nuevos"):
                     del st.session_state['memoria_cierre']
-                    if 'datos_auditoria' in st.session_state: del st.session_state['datos_auditoria']
                     st.rerun()
                 if col_b2.button("✅ Aprobar Auditoría y Proceder"):
                     st.session_state['auditoria_aprobada'] = True
@@ -727,20 +496,15 @@ def mostrar_modulo_costos():
                         fecha_hoy = date.today().strftime('%d/%m/%Y')
                         if ws_res and ws_det:
                             ws_res.append_row([fecha_hoy, mem['mes_cierre'], mem['anio_cierre'], mem['unidad_cierre'], round(mem['grp_ini_sum'],2), round(mem['grp_comp_sum'],2), round(mem['grp_fin_sum'],2), round(mem['costo_diferido_anterior'],2), round(mem['costo_dif_mes'],2), round(mem['costo_real'],2)])
-                            df_det_c = pd.concat([mem['df_ini_m'][['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Inicial'}),
-                                               mem['df_com_m'][['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Compra'}),
-                                               mem['df_fin_m'][['Codigo','Cuenta_Contable','Valor','ORIGEN_ARCHIVO']].rename(columns={'Valor':'Final'})]).fillna(0)
-                            df_det_c = df_det_c.groupby(['Codigo','Cuenta_Contable','ORIGEN_ARCHIVO']).sum().reset_index()
-                            df_det_c['Consumo'] = df_det_c['Inicial'] + df_det_c['Compra'] - df_det_c['Final']
+                            
+                            # Guardado unificado de la matriz maestra
+                            df_guardar = mem['df_master'][mem['df_master']['Consumo'] != 0].copy()
                             filas_g = []
-                            for _, r in df_det_c.iterrows():
-                                if r['Inicial']!=0 or r['Compra']!=0 or r['Final']!=0:
-                                    u_r = extraer_subunidad(r['ORIGEN_ARCHIVO'], mem['unidad_cierre'])
-                                    filas_g.append([fecha_hoy, mem['mes_cierre'], mem['anio_cierre'], u_r, str(r['Cuenta_Contable']), round(r['Inicial'],2), round(r['Compra'],2), round(r['Final'],2), round(r['Consumo'],2), r['Codigo'], r['ORIGEN_ARCHIVO']])
+                            for _, r in df_guardar.iterrows():
+                                filas_g.append([fecha_hoy, mem['mes_cierre'], mem['anio_cierre'], mem['unidad_cierre'], str(r['Cuenta_Contable']), round(r['Valor_Ini'],2), round(r['Valor_Com'],2), round(r['Valor_Fin'],2), round(r['Consumo'],2), r['Codigo'], "Archivo_Consolidado"])
                             if filas_g: ws_det.append_rows(filas_g)
                             
                         del st.session_state['memoria_cierre']
-                        del st.session_state['datos_auditoria']
                         st.session_state['auditoria_aprobada'] = False
                         st.cache_data.clear()
                         st.rerun()
@@ -781,9 +545,7 @@ def mostrar_modulo_costos():
                 mask_orig_interna = df_raw_t['Origen'].apply(lambda x: es_interno(x, u_responsable))
                 mask_dest_interna = df_raw_t['Destino'].apply(lambda x: es_interno(x, u_responsable))
 
-                # EXCLUSIVO: Filtra aquellos donde Origen y Destino cruzan las listas base
                 filtro_direccion = mask_orig_interna != mask_dest_interna
-
                 mask_base_tecnica = (df_raw_t['Monto'] > 0) & (df_raw_t['Categoria'] != 'SERVICIO')
 
                 df_tras_filtrados = df_raw_t[filtro_direccion & mask_base_tecnica]
@@ -951,4 +713,4 @@ def mostrar_modulo_costos():
             st.info("No hay cierres previos registrados en el historial.")
 
 if __name__ == "__main__":
-    mostrar_modulo_costos()
+    mostrar_modulo_costos() 
