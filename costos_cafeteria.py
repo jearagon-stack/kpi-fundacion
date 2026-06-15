@@ -19,16 +19,21 @@ def mostrar_modulo_costos():
         return str(t).strip().upper().replace('Í', 'I').replace('ÍA', 'IA')
 
     def es_cafeteria(b):
-        """Filtro flexible: Detecta si pertenece al universo de Cafetería."""
+        """Filtro hiper-estricto: Detecta universo de Cafetería y bloquea falsos positivos."""
         b_norm = normalizar_texto(b)
-        if "DESPENSA" in b_norm: return False
-        if "LIBRERIA" in b_norm: return False
-        if "SOHO" in b_norm: return False
-        if "CID" in b_norm: return False
-        if "TERRAZA" in b_norm: return False
-        if "GERENCIA" in b_norm: return False
         
-        claves_cafeteria = ["CAFETERIA", "JARDINES", "POLIDEPORTIVO", "ICAS", "EVENTOS", "ABASTECIMIENTO", "CENTRAL", "GENERAL", "PRODUCCION"]
+        # 1. LISTA NEGRA (Si tiene alguna de estas, se bloquea y NO es cafetería)
+        exclusiones = ["DESPENSA", "LIBRERIA", "SOHO", "CID", "TERRAZA", "GERENCIA", "TALLERES", "MATERIA PRIMA"]
+        for exc in exclusiones:
+            if exc in b_norm: return False
+            
+        # 2. LISTA BLANCA (Nombres base de tus sucursales)
+        claves_cafeteria = ["CAFETERIA", "JARDINES", "POLIDEPORTIVO", "ICAS", "EVENTOS", "ABASTECIMIENTO", "CENTRAL", "GENERAL"]
+        
+        # Validación especial para Producción (Para evitar "PRODUCCION TALLERES")
+        if "PRODUCCION" in b_norm and ("CAFE" in b_norm or "CENTRAL" in b_norm):
+            return True
+            
         return any(clave in b_norm for clave in claves_cafeteria)
 
     def es_despensa(b):
@@ -110,7 +115,6 @@ def mostrar_modulo_costos():
         return pd.concat([limpiar_nativos_nexus(cargar_y_marcar(a)) for a in lista], ignore_index=True)
 
     def get_num(df, keys):
-        """Busca y limpia columnas de dinero removiendo símbolos y comas"""
         for k in keys:
             for col in df.columns:
                 c_norm = str(col).upper().replace(' ', '').replace('.', '').replace('_', '')
@@ -216,7 +220,7 @@ def mostrar_modulo_costos():
                                 mapa_costo_unificado = {}
                                 if arch_kardex_res:
                                     try:
-                                        df_resumen_g = cargar_y_marcar(arch_kardex_res) if not isinstance(arch_kardex_res, list) else cargar_y_marcar(arch_kardex_res[0])
+                                        df_resumen_g = leer_archivo_mixto(arch_kardex_res)
                                         df_resumen_g.columns = df_resumen_g.columns.astype(str).str.strip().str.upper()
                                         c_cod_res_g = next((c for c in df_resumen_g.columns if 'IDPRODUCTO' in c or 'COD' in c), df_resumen_g.columns[0])
                                         c_costo_res_g = next((c for c in df_resumen_g.columns if 'COSTOPROM' in c.replace(' ', '')), None)
@@ -283,7 +287,7 @@ def mostrar_modulo_costos():
                                     df_com_grp = df_com_raw.groupby('Codigo', as_index=False).agg({'Valor_Com': 'sum'})
 
                                 # =========================================================================
-                                # 3. PROCESAMIENTO DE TRASLADOS (Lógica exacta y Auditoría)
+                                # 3. PROCESAMIENTO DE TRASLADOS (FILTRADO ANTI-ENTRADAS/SALIDAS AJENAS)
                                 # =========================================================================
                                 df_tras_in_grp = pd.DataFrame(columns=['Codigo', 'Valor_Tras_In'])
                                 df_tras_out_grp = pd.DataFrame(columns=['Codigo', 'Valor_Tras_Out'])
@@ -292,6 +296,14 @@ def mostrar_modulo_costos():
                                 if arch_tras_mes:
                                     df_tras_raw = consolidar(arch_tras_mes)
                                     if not df_tras_raw.empty:
+                                        
+                                        # ¡NUEVO!: FILTRAR ESTRICTAMENTE SOLO AQUELLOS QUE DICEN "TRASLADO"
+                                        c_tipo = get_col_exacta(df_tras_raw, ['TIPO', 'TIPOMOVIMIENTO', 'TIPODOCUMENTO'], ['TIPO'])
+                                        if c_tipo:
+                                            df_tras_raw = df_tras_raw[df_tras_raw[c_tipo].astype(str).str.upper().str.contains('TRASLADO', na=False)]
+                                        else:
+                                            st.warning("⚠️ No se encontró la columna 'TIPO' para filtrar. El sistema leerá todas las filas del archivo.")
+
                                         df_tras_raw['Codigo'] = limpiar_cod(df_tras_raw['Codigo'])
                                         df_tras_raw['Monto_T'] = pd.to_numeric(get_num(df_tras_raw, [['COSTOTOTAL', 'VALORTOTAL'], ['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0).round(2)
                                         
@@ -313,7 +325,6 @@ def mostrar_modulo_costos():
                                                 f_out = mask_orig_desp & (~mask_dest_desp)
                                                 f_in = (~mask_orig_desp) & mask_dest_desp
 
-                                            # --- GUARDAR DATA PARA AUDITORÍA DE TRASLADOS ---
                                             df_audit_in = df_tras_raw[f_in].copy()
                                             df_audit_in['TIPO_IMPACTO'] = 'ENTRADA (+)'
                                             
@@ -321,7 +332,6 @@ def mostrar_modulo_costos():
                                             df_audit_out['TIPO_IMPACTO'] = 'SALIDA (-)'
                                             
                                             df_tras_audit_full = pd.concat([df_audit_in, df_audit_out], ignore_index=True)
-                                            # ------------------------------------------------
 
                                             df_tras_in_grp = df_tras_raw[f_in].groupby('Codigo', as_index=False).agg({'Monto_T': 'sum'}).rename(columns={'Monto_T': 'Valor_Tras_In'})
                                             df_tras_out_grp = df_tras_raw[f_out].groupby('Codigo', as_index=False).agg({'Monto_T': 'sum'}).rename(columns={'Monto_T': 'Valor_Tras_Out'})
@@ -490,18 +500,21 @@ def mostrar_modulo_costos():
 
             st.divider()
 
-            # ========================================================
-            # SECCIÓN NUEVA: AUDITORÍA DE TRASLADOS (VISIBLE)
-            # ========================================================
             if 'df_tras_audit' in mem and not mem['df_tras_audit'].empty:
                 st.markdown("#### 🕵️ Auditoría Detallada de Traslados")
                 st.info("Esta tabla muestra exactamente qué líneas del Excel sumaron o restaron dinero.")
                 
                 cols_mostrar = []
-                for c in ['Codigo', 'Monto_T', 'Origen', 'Destino', 'TIPO_IMPACTO', 'Categoria']:
-                    if c in mem['df_tras_audit'].columns: cols_mostrar.append(c)
+                # Buscamos de forma flexible los nombres de columnas
+                for base_col in ['Codigo', 'Monto_T', 'Origen', 'Destino', 'TIPO_IMPACTO', 'Categoria']:
+                    for c in mem['df_tras_audit'].columns:
+                        if base_col.upper() in c.upper(): 
+                            cols_mostrar.append(c)
+                            break
                 
                 if cols_mostrar:
+                    # Removemos duplicados en la lista de columnas por si acaso
+                    cols_mostrar = list(dict.fromkeys(cols_mostrar))
                     st.dataframe(mem['df_tras_audit'][cols_mostrar], use_container_width=True)
                 
                 st.download_button(
@@ -511,7 +524,6 @@ def mostrar_modulo_costos():
                     type="primary"
                 )
                 st.divider()
-            # ========================================================
 
             if st.checkbox("📂 Ver Detalle de Consumo por Cuentas"):
                 df_det_view = pd.DataFrame(list(mem['consumo_por_cuenta'].items()), columns=['Cuenta Contable', 'Consumo (Impacto)'])
@@ -610,6 +622,7 @@ def mostrar_modulo_costos():
             try:
                 df_raw_t = cargar_y_marcar(archivo_nexus)
                 
+                c_tipo = get_col_exacta(df_raw_t, ['TIPO', 'TIPOMOVIMIENTO', 'TIPODOCUMENTO'], ['TIPO'])
                 c_cod = get_col_exacta(df_raw_t, ['CODIGO', 'IDPRODUCTO'], ['COD'])
                 c_cant = get_col_exacta(df_raw_t, ['CANTIDAD', 'UNIDADES'], ['CANT'])
                 c_monto = get_col_exacta(df_raw_t, ['MONTO', 'TOTAL', 'VALOR', 'COSTOTOTAL'], ['MONT', 'TOT'])
@@ -620,6 +633,9 @@ def mostrar_modulo_costos():
                 if not all([c_cod, c_cant, c_monto, c_cat, c_orig, c_dest]):
                     st.error("🚨 Faltan columnas en el reporte de traslados. Asegúrate de tener: Código, Cantidad, Monto, Categoría, Origen y Destino.")
                     st.stop()
+                    
+                if c_tipo:
+                    df_raw_t = df_raw_t[df_raw_t[c_tipo].astype(str).str.upper().str.contains('TRASLADO', na=False)]
                 
                 df_raw_t = df_raw_t.rename(columns={c_cod:'Codigo', c_cant:'Cantidad', c_monto:'Monto', c_cat:'Categoria', c_orig:'Origen', c_dest:'Destino'})
                 
