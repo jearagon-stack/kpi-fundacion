@@ -14,29 +14,22 @@ def mostrar_modulo_costos():
     # FUNCIONES DE APOYO Y FILTROS ESTRICTOS
     # ==========================================
     
-    BODEGAS_CAFETERIA = [
-        "CAFETERIA JARDINES", 
-        "CAFETERIA POLIDEPORTIVO", 
-        "CAFETERIA ICAS", 
-        "CAFETERIA EVENTOS", 
-        "CAFETERIA ABASTECIMIENTO", 
-        "CAFETERIA CENTRAL",
-        "PRODUCCION CAFETERIA CENTRAL", 
-        "GENERAL"
-    ]
-
     def normalizar_texto(t):
         if pd.isna(t): return ""
         return str(t).strip().upper().replace('Í', 'I').replace('ÍA', 'IA')
 
     def es_cafeteria(b):
+        """Filtro flexible: Detecta si pertenece al universo de Cafetería."""
         b_norm = normalizar_texto(b)
         if "DESPENSA" in b_norm: return False
-        claves_cafeteria = ["CAFETERIA", "JARDINES", "POLIDEPORTIVO", "ICAS", "EVENTOS", "ABASTECIMIENTO", "CENTRAL", "GENERAL"]
+        if "LIBRERIA" in b_norm: return False
+        if "SOHO" in b_norm: return False
+        if "CID" in b_norm: return False
+        if "TERRAZA" in b_norm: return False
+        if "GERENCIA" in b_norm: return False
+        
+        claves_cafeteria = ["CAFETERIA", "JARDINES", "POLIDEPORTIVO", "ICAS", "EVENTOS", "ABASTECIMIENTO", "CENTRAL", "GENERAL", "PRODUCCION"]
         return any(clave in b_norm for clave in claves_cafeteria)
-
-    def es_despensa(b):
-        return "DESPENSA" in normalizar_texto(b)
 
     def generar_excel_bytes(filas):
         df_p = pd.DataFrame(filas)
@@ -85,6 +78,7 @@ def mostrar_modulo_costos():
         df.rename(columns=col_rename, inplace=True)
         df['ORIGEN_ARCHIVO'] = archivo.name
         
+        # Eliminar Subtotales y Totales de Nexus para evitar duplicación
         if 'Codigo' in df.columns:
             df = df[df['Codigo'].notna()]
             df = df[df['Codigo'].astype(str).str.strip() != '']
@@ -108,11 +102,12 @@ def mostrar_modulo_costos():
         return pd.concat([limpiar_nativos_nexus(cargar_y_marcar(a)) for a in lista], ignore_index=True)
 
     def get_num(df, keys):
+        """Busca y limpia columnas de dinero removiendo símbolos y comas"""
         for k in keys:
             for col in df.columns:
-                c_norm = str(col).upper().replace(' ', '').replace('.', '')
+                c_norm = str(col).upper().replace(' ', '').replace('.', '').replace('_', '')
                 if all(p in c_norm for p in k): 
-                    val_limpio = df[col].astype(str).str.replace(',', '', regex=False).str.replace('$', '', regex=False)
+                    val_limpio = df[col].astype(str).str.replace(',', '', regex=False).str.replace('$', '', regex=False).str.strip()
                     return pd.to_numeric(val_limpio, errors='coerce').fillna(0.0)
         return pd.Series(0.0, index=df.index)
 
@@ -122,7 +117,8 @@ def mostrar_modulo_costos():
                 if c.strip().upper() == op: return c
         for op in opciones_parciales:
             for c in df.columns:
-                if op in c.strip().upper(): return c
+                c_norm = c.strip().upper().replace(' ', '').replace('_', '')
+                if op in c_norm: return c
         return None
 
     def limpiar_cod(s): 
@@ -236,7 +232,9 @@ def mostrar_modulo_costos():
 
                                 basura = ['G222', 'G231', '21455979']
 
-                                # 1. PROCESAMIENTO DE INVENTARIOS
+                                # =========================================================================
+                                # 1. PROCESAMIENTO DE INVENTARIOS (Con lectura directa del MONTO TOTAL)
+                                # =========================================================================
                                 df_inv_raw = consolidar(arch_inv_maestro)
                                 df_inv_grp = pd.DataFrame(columns=['Codigo', 'Valor_Ini', 'Valor_Fin'])
                                 
@@ -244,41 +242,46 @@ def mostrar_modulo_costos():
                                     df_inv_raw['Codigo'] = limpiar_cod(df_inv_raw['Codigo'])
                                     df_inv_raw = df_inv_raw[~df_inv_raw['Codigo'].isin(basura)]
                                     
-                                    val_ini_col = get_num(df_inv_raw, [['VALORINICIAL', 'SALDOINICIALVALOR'], ['TOTALINICIAL']])
+                                    # Busca primero la columna monetaria cruda para evitar diferencia por decimales
+                                    val_ini_col = get_num(df_inv_raw, [['SALDOINICIALVALOR'], ['VALORINICIAL'], ['TOTALINICIAL']])
                                     if val_ini_col.sum() > 0:
-                                        df_inv_raw['Valor_Ini'] = val_ini_col.round(2)
+                                        df_inv_raw['Valor_Ini'] = val_ini_col
                                     else:
                                         df_inv_raw['Cant_Ini'] = pd.to_numeric(get_num(df_inv_raw, [['EXISTENCIASINIC'], ['EXISTENCIA', 'INIC'], ['SALDO', 'INIC']]), errors='coerce').fillna(0.0)
-                                        df_inv_raw['Costo_Ini'] = pd.to_numeric(get_num(df_inv_raw, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0).round(4)
-                                        df_inv_raw['Valor_Ini'] = (df_inv_raw['Cant_Ini'] * df_inv_raw['Costo_Ini']).round(2)
+                                        df_inv_raw['Costo_Ini'] = pd.to_numeric(get_num(df_inv_raw, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                        df_inv_raw['Valor_Ini'] = df_inv_raw['Cant_Ini'] * df_inv_raw['Costo_Ini']
                                     
-                                    val_fin_col = get_num(df_inv_raw, [['VALORFINAL', 'SALDOFINALVALOR', 'TOTALFINAL']])
+                                    val_fin_col = get_num(df_inv_raw, [['SALDOFINALVALOR'], ['VALORFINAL'], ['TOTALFINAL']])
                                     if val_fin_col.sum() > 0:
-                                        df_inv_raw['Valor_Fin'] = val_fin_col.round(2)
+                                        df_inv_raw['Valor_Fin'] = val_fin_col
                                     else:
                                         df_inv_raw['Cant_Fin'] = pd.to_numeric(get_num(df_inv_raw, [['EXISTENCIASFIN'], ['EXISTENCIA', 'FIN'], ['SALDO', 'FIN']]), errors='coerce').fillna(0.0)
                                         if mapa_costo_unificado:
-                                            df_inv_raw['Costo_Fin'] = df_inv_raw['Codigo'].map(mapa_costo_unificado).fillna(0.0).round(4)
+                                            df_inv_raw['Costo_Fin'] = df_inv_raw['Codigo'].map(mapa_costo_unificado).fillna(0.0)
                                         else:
-                                            df_inv_raw['Costo_Fin'] = pd.to_numeric(get_num(df_inv_raw, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0).round(4)
-                                        df_inv_raw['Valor_Fin'] = (df_inv_raw['Cant_Fin'] * df_inv_raw['Costo_Fin']).round(2)
+                                            df_inv_raw['Costo_Fin'] = pd.to_numeric(get_num(df_inv_raw, [['COSTOUNITARIO'], ['COSTO', 'U'], ['PRECIO', 'U']]), errors='coerce').fillna(0.0)
+                                        df_inv_raw['Valor_Fin'] = df_inv_raw['Cant_Fin'] * df_inv_raw['Costo_Fin']
                                     
                                     df_inv_grp = df_inv_raw.groupby('Codigo', as_index=False).agg({'Valor_Ini': 'sum', 'Valor_Fin': 'sum'})
                                     df_categoria_nat = df_inv_raw.groupby('Codigo', as_index=False).first()[['Codigo', 'Categoria']] if 'Categoria' in df_inv_raw.columns else pd.DataFrame(columns=['Codigo', 'Categoria'])
                                 else:
                                     df_categoria_nat = pd.DataFrame(columns=['Codigo', 'Categoria'])
 
+                                # =========================================================================
                                 # 2. PROCESAMIENTO DE COMPRAS
+                                # =========================================================================
                                 df_com_raw = consolidar(arch_com)
                                 df_com_grp = pd.DataFrame(columns=['Codigo', 'Valor_Com'])
                                 
                                 if not df_com_raw.empty:
                                     df_com_raw['Codigo'] = limpiar_cod(df_com_raw['Codigo'])
                                     df_com_raw = df_com_raw[~df_com_raw['Codigo'].isin(basura)]
-                                    df_com_raw['Valor_Com'] = pd.to_numeric(get_num(df_com_raw, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0).round(2)
+                                    df_com_raw['Valor_Com'] = pd.to_numeric(get_num(df_com_raw, [['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
                                     df_com_grp = df_com_raw.groupby('Codigo', as_index=False).agg({'Valor_Com': 'sum'})
 
-                                # 3. PROCESAMIENTO DE TRASLADOS (Lógica estricta de Origen/Destino)
+                                # =========================================================================
+                                # 3. PROCESAMIENTO DE TRASLADOS (Lógica exacta de Bodegas de Frontera)
+                                # =========================================================================
                                 df_tras_in_grp = pd.DataFrame(columns=['Codigo', 'Valor_Tras_In'])
                                 df_tras_out_grp = pd.DataFrame(columns=['Codigo', 'Valor_Tras_Out'])
                                 
@@ -286,30 +289,28 @@ def mostrar_modulo_costos():
                                     df_tras_raw = consolidar(arch_tras_mes)
                                     if not df_tras_raw.empty:
                                         df_tras_raw['Codigo'] = limpiar_cod(df_tras_raw['Codigo'])
-                                        df_tras_raw['Monto_T'] = pd.to_numeric(get_num(df_tras_raw, [['COSTOTOTAL', 'VALORTOTAL'], ['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0).round(2)
+                                        df_tras_raw['Monto_T'] = pd.to_numeric(get_num(df_tras_raw, [['COSTOTOTAL', 'VALORTOTAL'], ['TOTAL'], ['MONTO'], ['VALOR']]), errors='coerce').fillna(0.0)
                                         
-                                        c_orig = get_col_exacta(df_tras_raw, ['ORIGEN', 'SALIDA', 'BODEGAORIGEN', 'BODEGASALIDA'], ['ORIG', 'SALID'])
-                                        c_dest = get_col_exacta(df_tras_raw, ['DESTINO', 'INGRESO', 'BODEGADESTINO', 'BODEGAINGRESO'], ['DEST', 'INGR'])
+                                        c_orig = get_col_exacta(df_tras_raw, ['ORIGEN', 'SALIDA', 'BODEGAORIGEN', 'BODEGASALIDA'], ['BODEGASALIDA', 'ORIG', 'SALID'])
+                                        c_dest = get_col_exacta(df_tras_raw, ['DESTINO', 'INGRESO', 'BODEGADESTINO', 'BODEGAINGRESO'], ['BODEGAINGR', 'DEST', 'INGR'])
                                         
                                         if not c_orig or not c_dest:
                                             st.error("⚠️ En el archivo de Traslados no se detectaron columnas válidas de Origen y Destino. Se omitirán.")
                                         else:
                                             mask_orig_caf = df_tras_raw[c_orig].apply(es_cafeteria)
                                             mask_dest_caf = df_tras_raw[c_dest].apply(es_cafeteria)
-                                            mask_orig_desp = df_tras_raw[c_orig].apply(es_despensa)
-                                            mask_dest_desp = df_tras_raw[c_dest].apply(es_despensa)
 
-                                            if unidad_cierre == "CAFETERIA":
-                                                f_in = mask_dest_caf & (~mask_orig_caf)
-                                                f_out = mask_orig_caf & (~mask_dest_caf)
-                                            else:
-                                                f_in = mask_dest_desp & (~mask_orig_desp)
-                                                f_out = mask_orig_desp & (~mask_dest_desp)
+                                            # SALEN de la cafetería hacia otra unidad = RESTAN (-)
+                                            f_out = mask_orig_caf & (~mask_dest_caf)
+                                            # ENTRAN a la cafetería desde otra unidad = SUMAN (+)
+                                            f_in = (~mask_orig_caf) & mask_dest_caf
 
                                             df_tras_in_grp = df_tras_raw[f_in].groupby('Codigo', as_index=False).agg({'Monto_T': 'sum'}).rename(columns={'Monto_T': 'Valor_Tras_In'})
                                             df_tras_out_grp = df_tras_raw[f_out].groupby('Codigo', as_index=False).agg({'Monto_T': 'sum'}).rename(columns={'Monto_T': 'Valor_Tras_Out'})
 
-                                # 4. MATRIZ MAESTRA UNIFICADA
+                                # =========================================================================
+                                # 4. MATRIZ MAESTRA UNIFICADA (Consolidación y Redondeo Final)
+                                # =========================================================================
                                 all_codes = set()
                                 for d in [df_inv_grp, df_com_grp, df_tras_in_grp, df_tras_out_grp]:
                                     if not d.empty: all_codes.update(d['Codigo'].tolist())
@@ -343,6 +344,7 @@ def mostrar_modulo_costos():
                                 
                                 df_master = df_master[~df_master['Cuenta_Contable'].isin(["OMITIDO_MANUAL", "NO APLICA", "0", "0.0"])]
 
+                                # Cálculo Final con Redondeo estricto a 2 decimales para igualar a la vista de Excel
                                 df_master['Consumo'] = (df_master['Valor_Ini'] + df_master['Valor_Com'] + df_master['Valor_Tras_In'] - df_master['Valor_Tras_Out'] - df_master['Valor_Fin']).round(2)
                                 
                                 grp_ini_sum = round(df_master['Valor_Ini'].sum(), 2)
@@ -569,8 +571,8 @@ def mostrar_modulo_costos():
                 c_cant = get_col_exacta(df_raw_t, ['CANTIDAD', 'UNIDADES'], ['CANT'])
                 c_monto = get_col_exacta(df_raw_t, ['MONTO', 'TOTAL', 'VALOR', 'COSTOTOTAL'], ['MONT', 'TOT'])
                 c_cat = get_col_exacta(df_raw_t, ['CATEGORIA'], ['CAT'])
-                c_orig = get_col_exacta(df_raw_t, ['ORIGEN', 'SALIDA', 'BODEGAORIGEN'], ['ORIG', 'SALID'])
-                c_dest = get_col_exacta(df_raw_t, ['DESTINO', 'INGRESO', 'BODEGADESTINO'], ['DEST', 'INGR'])
+                c_orig = get_col_exacta(df_raw_t, ['ORIGEN', 'SALIDA', 'BODEGAORIGEN'], ['BODEGASALID', 'ORIG', 'SALID'])
+                c_dest = get_col_exacta(df_raw_t, ['DESTINO', 'INGRESO', 'BODEGADESTINO'], ['BODEGAINGR', 'DEST', 'INGR'])
 
                 if not all([c_cod, c_cant, c_monto, c_cat, c_orig, c_dest]):
                     st.error("🚨 Faltan columnas en el reporte de traslados. Asegúrate de tener: Código, Cantidad, Monto, Categoría, Origen y Destino.")
