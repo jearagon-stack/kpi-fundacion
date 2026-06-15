@@ -216,7 +216,7 @@ def mostrar_modulo_costos():
                                 mapa_costo_unificado = {}
                                 if arch_kardex_res:
                                     try:
-                                        df_resumen_g = leer_archivo_mixto(arch_kardex_res)
+                                        df_resumen_g = cargar_y_marcar(arch_kardex_res) if not isinstance(arch_kardex_res, list) else cargar_y_marcar(arch_kardex_res[0])
                                         df_resumen_g.columns = df_resumen_g.columns.astype(str).str.strip().str.upper()
                                         c_cod_res_g = next((c for c in df_resumen_g.columns if 'IDPRODUCTO' in c or 'COD' in c), df_resumen_g.columns[0])
                                         c_costo_res_g = next((c for c in df_resumen_g.columns if 'COSTOPROM' in c.replace(' ', '')), None)
@@ -283,11 +283,11 @@ def mostrar_modulo_costos():
                                     df_com_grp = df_com_raw.groupby('Codigo', as_index=False).agg({'Valor_Com': 'sum'})
 
                                 # =========================================================================
-                                # 3. PROCESAMIENTO DE TRASLADOS (NUEVA LÓGICA DE AUDITORÍA)
+                                # 3. PROCESAMIENTO DE TRASLADOS (Lógica exacta y Auditoría)
                                 # =========================================================================
                                 df_tras_in_grp = pd.DataFrame(columns=['Codigo', 'Valor_Tras_In'])
                                 df_tras_out_grp = pd.DataFrame(columns=['Codigo', 'Valor_Tras_Out'])
-                                df_tras_audit_full = pd.DataFrame() # Tabla para mostrar al usuario
+                                df_tras_audit_full = pd.DataFrame()
                                 
                                 if arch_tras_mes:
                                     df_tras_raw = consolidar(arch_tras_mes)
@@ -307,13 +307,13 @@ def mostrar_modulo_costos():
                                             mask_dest_desp = df_tras_raw[c_dest].apply(es_despensa)
 
                                             if unidad_cierre == "CAFETERIA":
-                                                f_in = mask_dest_caf & (~mask_orig_caf)
                                                 f_out = mask_orig_caf & (~mask_dest_caf)
+                                                f_in = (~mask_orig_caf) & mask_dest_caf
                                             else:
-                                                f_in = mask_dest_desp & (~mask_orig_desp)
                                                 f_out = mask_orig_desp & (~mask_dest_desp)
+                                                f_in = (~mask_orig_desp) & mask_dest_desp
 
-                                            # Guardamos el detalle crudo para auditoría
+                                            # --- GUARDAR DATA PARA AUDITORÍA DE TRASLADOS ---
                                             df_audit_in = df_tras_raw[f_in].copy()
                                             df_audit_in['TIPO_IMPACTO'] = 'ENTRADA (+)'
                                             
@@ -321,8 +321,8 @@ def mostrar_modulo_costos():
                                             df_audit_out['TIPO_IMPACTO'] = 'SALIDA (-)'
                                             
                                             df_tras_audit_full = pd.concat([df_audit_in, df_audit_out], ignore_index=True)
+                                            # ------------------------------------------------
 
-                                            # Agrupamos matemáticamente
                                             df_tras_in_grp = df_tras_raw[f_in].groupby('Codigo', as_index=False).agg({'Monto_T': 'sum'}).rename(columns={'Monto_T': 'Valor_Tras_In'})
                                             df_tras_out_grp = df_tras_raw[f_out].groupby('Codigo', as_index=False).agg({'Monto_T': 'sum'}).rename(columns={'Monto_T': 'Valor_Tras_Out'})
 
@@ -490,14 +490,15 @@ def mostrar_modulo_costos():
 
             st.divider()
 
-            # SECCIÓN NUEVA: AUDITORÍA DE TRASLADOS
+            # ========================================================
+            # SECCIÓN NUEVA: AUDITORÍA DE TRASLADOS (VISIBLE)
+            # ========================================================
             if 'df_tras_audit' in mem and not mem['df_tras_audit'].empty:
                 st.markdown("#### 🕵️ Auditoría Detallada de Traslados")
                 st.info("Esta tabla muestra exactamente qué líneas del Excel sumaron o restaron dinero.")
                 
-                # Formatear para mostrar solo columnas importantes
                 cols_mostrar = []
-                for c in ['Codigo', 'Monto_T', 'Origen', 'Destino', 'TIPO_IMPACTO']:
+                for c in ['Codigo', 'Monto_T', 'Origen', 'Destino', 'TIPO_IMPACTO', 'Categoria']:
                     if c in mem['df_tras_audit'].columns: cols_mostrar.append(c)
                 
                 if cols_mostrar:
@@ -510,6 +511,7 @@ def mostrar_modulo_costos():
                     type="primary"
                 )
                 st.divider()
+            # ========================================================
 
             if st.checkbox("📂 Ver Detalle de Consumo por Cuentas"):
                 df_det_view = pd.DataFrame(list(mem['consumo_por_cuenta'].items()), columns=['Cuenta Contable', 'Consumo (Impacto)'])
@@ -606,7 +608,7 @@ def mostrar_modulo_costos():
 
         if archivo_nexus:
             try:
-                df_raw_t = leer_archivo_mixto(archivo_nexus)
+                df_raw_t = cargar_y_marcar(archivo_nexus)
                 
                 c_cod = get_col_exacta(df_raw_t, ['CODIGO', 'IDPRODUCTO'], ['COD'])
                 c_cant = get_col_exacta(df_raw_t, ['CANTIDAD', 'UNIDADES'], ['CANT'])
