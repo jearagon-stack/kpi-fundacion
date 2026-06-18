@@ -1,7 +1,16 @@
 import streamlit as st
 import pandas as pd
+import re
+from io import BytesIO
 from datetime import datetime, date, timedelta
 from utils import obtener_dataframe, conectar_hoja
+
+def generar_excel_bytes(df):
+    """Genera un archivo Excel en memoria para poder descargarlo."""
+    output = BytesIO()
+    with pd.ExcelWriter(output, engine='openpyxl') as writer:
+        df.to_excel(writer, index=False, sheet_name='Ventas_Limpias')
+    return output.getvalue()
 
 def mostrar_modulo_ventas():
     st.title("📊 Panel de Control: KPI de Ventas")
@@ -29,8 +38,14 @@ def mostrar_modulo_ventas():
         if nombre_mes in df_metas.columns:
             df_metas[nombre_mes] = pd.to_numeric(df_metas[nombre_mes], errors='coerce').fillna(0)
 
-    tab_dashboard, tab_carga = st.tabs(["📈 Dashboard de KPI", "📥 Ingresar Ventas Diarias"])
+    # --- DEFINICIÓN DE PESTAÑAS (Se agregó la tercera) ---
+    tab_dashboard, tab_carga, tab_limpiador = st.tabs([
+        "📈 Dashboard de KPI", 
+        "📥 Ingresar Ventas Diarias",
+        "🧹 Limpiador de Reportes POS"
+    ])
 
+    # --- PESTAÑA DE CARGA ---
     with tab_carga:
         st.subheader("Registrar ventas desde Nexus")
         st.info("El sistema ahora detecta el subsidio automáticamente leyendo la columna 'TipoCliente' de Nexus.")
@@ -154,23 +169,16 @@ def mostrar_modulo_ventas():
             mes_actual = fecha_inicio.month
             dias_en_mes = (date(año_actual, mes_actual % 12 + 1, 1) - timedelta(days=1)).day if mes_actual < 12 else 31
             
-            # Recalculando con pesos exactos (L-V: 1, Sáb: 0.5, Dom: 0)
             peso_total_mes = 0.0
             for d in range(1, dias_en_mes + 1):
                 dia_semana = date(año_actual, mes_actual, d).weekday()
-                if dia_semana < 5:      # Lunes a Viernes
-                    peso_total_mes += 1.0
-                elif dia_semana == 5:   # Sábado
-                    peso_total_mes += 0.5
-                # Domingo es 0, no suma
+                if dia_semana < 5:      peso_total_mes += 1.0
+                elif dia_semana == 5:   peso_total_mes += 0.5
                     
             dia_seleccionado_semana = fecha_dia.weekday()
-            if dia_seleccionado_semana < 5:
-                peso_dia_seleccionado = 1.0
-            elif dia_seleccionado_semana == 5:
-                peso_dia_seleccionado = 0.5
-            else:
-                peso_dia_seleccionado = 0.0 # Domingo
+            if dia_seleccionado_semana < 5: peso_dia_seleccionado = 1.0
+            elif dia_seleccionado_semana == 5: peso_dia_seleccionado = 0.5
+            else: peso_dia_seleccionado = 0.0
             
             titulo_periodo = f"Día: {fecha_dia.strftime('%d/%m/%Y')}"
             
@@ -257,3 +265,120 @@ def mostrar_modulo_ventas():
 
                 if resultados_desglose:
                     st.dataframe(pd.DataFrame(resultados_desglose), hide_index=True, use_container_width=True)  
+
+    # --- NUEVA PESTAÑA: LIMPIADOR DE REPORTES POS ---
+    with tab_limpiador:
+        st.subheader("Estructuración de Reporte por Categorías")
+        st.markdown("Sube el archivo bruto del POS. El sistema consolidará los productos, agrupará las cantidades y limpiará los prefijos automáticos.")
+        
+        archivo_bruto = st.file_uploader("Sube el reporte de ventas (Excel o CSV)", type=["xlsx", "xls", "csv"], key="upload_limpiador")
+
+        if archivo_bruto:
+            with st.spinner("Procesando y estructurando datos..."):
+                try:
+                    # Lectura del archivo crudo
+                    if archivo_bruto.name.endswith('.csv'):
+                        df_bruto = pd.read_csv(archivo_bruto, header=None)
+                    else:
+                        df_bruto = pd.read_excel(archivo_bruto, header=None)
+
+                    datos_procesados = []
+                    sucursal_actual = "GENERAL"
+                    categoria_actual = "SIN CATEGORIA"
+
+                    # Iterar fila por fila simulando la lectura en cascada
+                    for index, row in df_bruto.iterrows():
+                        # La columna 0 es 'Descripción', la columna 1 es 'Tot. Vendido' (o similar)
+                        desc = str(row[0]).strip()
+                        
+                        # Omitir filas vacías o encabezados inútiles
+                        if not desc or desc.lower() in ['nan', 'none', 'descripción', 'pág. no.', 'informe de ventas']:
+                            continue
+                        if "del 1 de" in desc.lower() or "tot. vendido" in desc.lower():
+                            continue
+
+                        # Determinar si es un título (Sucursal/Categoría) o un Producto
+                        # Si la columna de totales (índice 1) está vacía o es texto, asumimos que es un título
+                        val_tot = str(row[1]).strip()
+                        if val_tot.lower() in ['nan', 'none', '']:
+                            # Heurística para diferenciar Sucursal de Categoría
+                            if "CAFETERÍA" in desc.upper() or "SUCURSAL" in desc.upper() or "CENTRAL" in desc.upper():
+                                sucursal_actual = desc
+                            else:
+                                categoria_actual = desc
+                        else:
+                            # Es un producto. Limpiar prefijos estilo "-X3 ", "-X12 "
+                            producto_limpio = re.sub(r'^-X\d+\s+', '', desc).strip()
+                            
+                            # Extraer valores numéricos
+                            try:
+                                total_vendido = float(str(row[1]).replace('$', '').replace(',', '').strip())
+                                cnt_vendida = float(str(row[2]).replace(',', '').strip())
+                            except ValueError:
+                                continue # Si no se puede convertir a número, no es un registro válido
+                                
+                            # Extraer el código del producto (suele estar en la última columna útil)
+                            cod_producto = ""
+                            for col_idx in range(len(row)-1, 2, -1):
+                                val_cod = str(row[col_idx]).strip()
+                                if val_cod.startswith('PT'):
+                                    cod_producto = val_cod
+                                    break
+                            
+                            if pd.notna(total_vendido) and pd.notna(cnt_vendida):
+                                datos_procesados.append({
+                                    "Sucursal": sucursal_actual,
+                                    "Categoría": categoria_actual,
+                                    "Producto": producto_limpio,
+                                    "Cantidad": cnt_vendida,
+                                    "Total Ventas ($)": total_vendido,
+                                    "Código": cod_producto
+                                })
+
+                    # Crear DataFrame limpio y agrupar para consolidar las repeticiones
+                    df_limpio = pd.DataFrame(datos_procesados)
+                    
+                    if not df_limpio.empty:
+                        df_agrupado = df_limpio.groupby(
+                            ['Sucursal', 'Categoría', 'Código', 'Producto'], 
+                            as_index=False
+                        ).agg({
+                            'Cantidad': 'sum',
+                            'Total Ventas ($)': 'sum'
+                        })
+
+                        # Interfaz de Filtros
+                        st.write("---")
+                        st.markdown("### 🎛️ Filtros de Exportación")
+                        
+                        col_fil1, col_fil2 = st.columns(2)
+                        with col_fil1:
+                            sucursales_disp = df_agrupado['Sucursal'].unique().tolist()
+                            sucursal_filtro = st.multiselect("Filtrar por Sucursal:", sucursales_disp, default=sucursales_disp)
+                        with col_fil2:
+                            categorias_disp = df_agrupado['Categoría'].unique().tolist()
+                            categoria_filtro = st.multiselect("Filtrar por Categoría:", categorias_disp, default=categorias_disp)
+
+                        # Aplicar filtros
+                        df_final = df_agrupado[
+                            (df_agrupado['Sucursal'].isin(sucursal_filtro)) & 
+                            (df_agrupado['Categoría'].isin(categoria_filtro))
+                        ]
+
+                        st.write(f"**Total de registros filtrados:** {len(df_final)}")
+                        st.dataframe(df_final, hide_index=True, use_container_width=True)
+
+                        # Botón de exportación
+                        st.write("---")
+                        excel_data = generar_excel_bytes(df_final)
+                        st.download_button(
+                            label="📥 Descargar Datos Limpios (Excel)",
+                            data=excel_data,
+                            file_name=f"Ventas_Estructuradas_{datetime.now().strftime('%Y%m%d')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                    else:
+                        st.warning("No se pudieron extraer datos válidos del archivo. Verifica el formato original.")
+
+                except Exception as e:
+                    st.error(f"Error procesando la estructuración: {e}")
