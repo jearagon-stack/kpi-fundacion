@@ -38,7 +38,7 @@ def mostrar_modulo_ventas():
         if nombre_mes in df_metas.columns:
             df_metas[nombre_mes] = pd.to_numeric(df_metas[nombre_mes], errors='coerce').fillna(0)
 
-    # --- DEFINICIÓN DE PESTAÑAS (Se agregó la tercera) ---
+    # --- DEFINICIÓN DE PESTAÑAS ---
     tab_dashboard, tab_carga, tab_limpiador = st.tabs([
         "📈 Dashboard de KPI", 
         "📥 Ingresar Ventas Diarias",
@@ -298,7 +298,6 @@ def mostrar_modulo_ventas():
                             continue
 
                         # Determinar si es un título (Sucursal/Categoría) o un Producto
-                        # Si la columna de totales (índice 1) está vacía o es texto, asumimos que es un título
                         val_tot = str(row[1]).strip()
                         if val_tot.lower() in ['nan', 'none', '']:
                             # Heurística para diferenciar Sucursal de Categoría
@@ -315,9 +314,9 @@ def mostrar_modulo_ventas():
                                 total_vendido = float(str(row[1]).replace('$', '').replace(',', '').strip())
                                 cnt_vendida = float(str(row[2]).replace(',', '').strip())
                             except ValueError:
-                                continue # Si no se puede convertir a número, no es un registro válido
+                                continue 
                                 
-                            # Extraer el código del producto (suele estar en la última columna útil)
+                            # Extraer el código del producto
                             cod_producto = ""
                             for col_idx in range(len(row)-1, 2, -1):
                                 val_cod = str(row[col_idx]).strip()
