@@ -1,23 +1,24 @@
 import streamlit as st
+
+# 1. LA CONFIGURACIÓN DE LA PÁGINA DEBE SER ESTRICTAMENTE EL PRIMER COMANDO
+st.set_page_config(page_title="Auditoría DTE Pro", layout="wide")
+
 import urllib.parse
 import pandas as pd
 from datetime import datetime, timedelta
-import importlib # <-- Librería nativa agregada
+import importlib 
 
 import auth, gastos, ventas, costos, validacion  
 from utils import conectar_hoja, obtener_dataframe
 
-# --- FORZAR RECARGA DE MÓDULOS ---
-# Esto obliga a Python a leer los archivos del disco duro en cada rerun,
-# asegurando que los cambios visuales y de código se apliquen de inmediato.
+# 2. AHORA SÍ, FORZAMOS LA RECARGA DE MÓDULOS PARA QUE VEAS LOS CAMBIOS EN VIVO
 importlib.reload(auth)
 importlib.reload(gastos)
 importlib.reload(ventas)
 importlib.reload(costos)
 importlib.reload(validacion)
 
-st.set_page_config(page_title="Auditoría DTE Pro", layout="wide")
-
+# 3. EL RESTO DE TU CÓDIGO INTACTO
 ocultar_elementos = """
     <style>
     .stAppDeployButton {display: none !important;}
