@@ -7,3 +7,4 @@ google-auth-oauthlib
 gspread
 plotly
 xlsxwriter
+xlrd>=2.0.1
