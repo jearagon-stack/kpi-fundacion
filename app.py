@@ -2,8 +2,19 @@ import streamlit as st
 import urllib.parse
 import pandas as pd
 from datetime import datetime, timedelta
+import importlib # <-- Librería nativa agregada
+
 import auth, gastos, ventas, costos, validacion  
 from utils import conectar_hoja, obtener_dataframe
+
+# --- FORZAR RECARGA DE MÓDULOS ---
+# Esto obliga a Python a leer los archivos del disco duro en cada rerun,
+# asegurando que los cambios visuales y de código se apliquen de inmediato.
+importlib.reload(auth)
+importlib.reload(gastos)
+importlib.reload(ventas)
+importlib.reload(costos)
+importlib.reload(validacion)
 
 st.set_page_config(page_title="Auditoría DTE Pro", layout="wide")
 
