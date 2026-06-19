@@ -297,7 +297,9 @@ def mostrar_modulo_ventas():
                             if not val_str or val_str.lower() in ['nan', 'none']:
                                 continue
                                 
-                            if val_str.startswith('PT') and len(val_str) > 2:
+                            # REGRA DE ORO PARA CÓDIGOS: 
+                            # Atrapa los "PT00..." y también códigos de barras puramente numéricos mayores a 5 dígitos
+                            if (val_str.upper().startswith('PT') and len(val_str) > 2) or (val_str.isdigit() and len(val_str) >= 6):
                                 cod_producto = val_str.upper()
                             else:
                                 try:
@@ -325,30 +327,28 @@ def mostrar_modulo_ventas():
                             else:
                                 categoria_actual = desc
                         else:
-                            # LA MAGIA ESTÁ AQUÍ:
-                            # Destruye el guion, destruye la X si existe, y destruye el número
-                            # SOLAMENTE si ese número NO va acompañado de una pleca (/) inmediatamente después.
                             producto_limpio = re.sub(r'^[\s*.\-–—]*(?:x\s*)?(?:\d+\b(?!\s*/))?\s*', '', desc, flags=re.IGNORECASE).strip()
-                            
                             producto_limpio = re.sub(r'\s+', ' ', producto_limpio)
                             producto_limpio = producto_limpio.replace('Á','A').replace('É','E').replace('Í','I').replace('Ó','O').replace('Ú','U')
                             
                             total_vendido = numeros_en_fila[0] if len(numeros_en_fila) > 0 else 0.0
-                            cnt_vendida = numeros_en_fila[1] if len(numeros_en_fila) > 1 else 1.0
+                            cnt_vendida = numeros_en_fila[1] if len(numeros_en_fila) > 1 else 0.0
                             
-                            if total_vendido > 0 or cnt_vendida > 0:
-                                datos_procesados.append({
-                                    "Sucursal": sucursal_actual,
-                                    "Categoría": categoria_actual,
-                                    "Producto": producto_limpio,
-                                    "Cantidad": cnt_vendida,
-                                    "Total Ventas ($)": total_vendido,
-                                    "Código": cod_producto
-                                })
+                            # AGREGAMOS TODO SIN IMPORTAR SI TOTAL ES 0. 
+                            # Esto asegura atrapar la línea matriz donde el POS escondió el código del producto.
+                            datos_procesados.append({
+                                "Sucursal": sucursal_actual,
+                                "Categoría": categoria_actual,
+                                "Producto": producto_limpio,
+                                "Cantidad": cnt_vendida,
+                                "Total Ventas ($)": total_vendido,
+                                "Código": cod_producto
+                            })
 
                     df_limpio = pd.DataFrame(datos_procesados)
                     
                     if not df_limpio.empty:
+                        # Al agrupar, la línea en 0 transfiere su "Código" a los demás mediante el "max"
                         df_agrupado = df_limpio.groupby(
                             ['Sucursal', 'Categoría', 'Producto'], 
                             as_index=False
@@ -357,6 +357,9 @@ def mostrar_modulo_ventas():
                             'Total Ventas ($)': 'sum',
                             'Código': 'max' 
                         })
+                        
+                        # Ahora sí, filtramos los que quedaron con ventas en 0 absoluto para limpiar la vista
+                        df_agrupado = df_agrupado[(df_agrupado['Cantidad'] > 0) | (df_agrupado['Total Ventas ($)'] > 0)]
                         
                         df_agrupado = df_agrupado[['Sucursal', 'Categoría', 'Código', 'Producto', 'Cantidad', 'Total Ventas ($)']]
 
