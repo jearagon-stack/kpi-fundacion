@@ -313,8 +313,7 @@ def mostrar_modulo_ventas():
                             
                         desc = textos_en_fila[0].upper()
                         
-                        # Filtro Antibasura y Anti-Subtotales ("TOTAL POR CATEGORIA", etc.)
-                        if any(ign in desc for ign in ignorar_textos) or desc.startswith('TOTAL') or len(desc) < 3:
+                        if any(ign in desc for ign in ignorar_textos) or len(desc) < 3:
                             continue
 
                         # ¿ES TÍTULO O PRODUCTO?
@@ -332,7 +331,6 @@ def mostrar_modulo_ventas():
                             
                             producto_limpio = producto_limpio.replace('Á','A').replace('É','E').replace('Í','I').replace('Ó','O').replace('Ú','U')
                             
-                            # El archivo del POS pone primero el dinero y luego la cantidad
                             total_vendido = numeros_en_fila[0] if len(numeros_en_fila) > 0 else 0.0
                             cnt_vendida = numeros_en_fila[1] if len(numeros_en_fila) > 1 else 1.0
                             
@@ -378,10 +376,6 @@ def mostrar_modulo_ventas():
 
                         st.write(f"**Total de registros filtrados:** {len(df_final)}")
                         st.dataframe(df_final, hide_index=True, use_container_width=True)
-                        
-                        # Mostramos el Total General para validar que ya cuadra al centavo
-                        total_calculado = df_final['Total Ventas ($)'].sum()
-                        st.info(f"💰 **Total Ventas Filtradas:** ${total_calculado:,.2f}")
 
                         st.write("---")
                         excel_data = generar_excel_bytes(df_final)
