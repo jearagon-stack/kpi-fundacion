@@ -276,65 +276,67 @@ def mostrar_modulo_ventas():
         if archivo_bruto:
             with st.spinner("Procesando y estructurando datos..."):
                 try:
-                    # Lectura del archivo crudo
+                    # Lectura obligando a que todo sea texto para evitar que Pandas se estrelle adivinando formatos
                     if archivo_bruto.name.endswith('.csv'):
-                        df_bruto = pd.read_csv(archivo_bruto, header=None)
+                        df_bruto = pd.read_csv(archivo_bruto, header=None, dtype=str)
                     else:
-                        df_bruto = pd.read_excel(archivo_bruto, header=None)
+                        df_bruto = pd.read_excel(archivo_bruto, header=None, dtype=str)
 
                     datos_procesados = []
                     sucursal_actual = "GENERAL"
                     categoria_actual = "SIN CATEGORIA"
 
-                    # Iterar fila por fila simulando la lectura en cascada
+                    # Iterar fila por fila. Convertimos todo a string y limpiamos Nans.
                     for index, row in df_bruto.iterrows():
-                        # La columna 0 es 'Descripción', la columna 1 es 'Tot. Vendido' (o similar)
+                        row = row.fillna("") 
                         desc = str(row[0]).strip()
                         
-                        # Omitir filas vacías o encabezados inútiles
                         if not desc or desc.lower() in ['nan', 'none', 'descripción', 'pág. no.', 'informe de ventas']:
                             continue
                         if "del 1 de" in desc.lower() or "tot. vendido" in desc.lower():
                             continue
 
-                        # Determinar si es un título (Sucursal/Categoría) o un Producto
-                        val_tot = str(row[1]).strip()
-                        if val_tot.lower() in ['nan', 'none', '']:
-                            # Heurística para diferenciar Sucursal de Categoría
+                        # Escáner de fila: Busca números y códigos sin importar en qué columna estén
+                        valores_numericos = []
+                        cod_producto = ""
+                        
+                        for item in row[1:]:
+                            val_str = str(item).strip()
+                            if not val_str or val_str.lower() in ['nan', 'none']:
+                                continue
+                                
+                            if val_str.startswith('PT'):
+                                cod_producto = val_str
+                            else:
+                                try:
+                                    num = float(val_str.replace('$', '').replace(',', ''))
+                                    valores_numericos.append(num)
+                                except ValueError:
+                                    pass # Si no es un número, lo ignora silenciosamente
+
+                        # Si no hay ningún número en toda la fila, asumimos que es un título
+                        if len(valores_numericos) == 0:
                             if "CAFETERÍA" in desc.upper() or "SUCURSAL" in desc.upper() or "CENTRAL" in desc.upper():
                                 sucursal_actual = desc
                             else:
                                 categoria_actual = desc
                         else:
-                            # Es un producto. Limpiar prefijos estilo "-X3 ", "-X12 "
+                            # Es un producto válido
                             producto_limpio = re.sub(r'^-X\d+\s+', '', desc).strip()
                             
-                            # Extraer valores numéricos
-                            try:
-                                total_vendido = float(str(row[1]).replace('$', '').replace(',', '').strip())
-                                cnt_vendida = float(str(row[2]).replace(',', '').strip())
-                            except ValueError:
-                                continue 
-                                
-                            # Extraer el código del producto
-                            cod_producto = ""
-                            for col_idx in range(len(row)-1, 2, -1):
-                                val_cod = str(row[col_idx]).strip()
-                                if val_cod.startswith('PT'):
-                                    cod_producto = val_cod
-                                    break
+                            # El primer número que aparece siempre es el Total Vendido, el segundo es Cantidad
+                            total_vendido = valores_numericos[0] if len(valores_numericos) > 0 else 0.0
+                            cnt_vendida = valores_numericos[1] if len(valores_numericos) > 1 else 1.0
                             
-                            if pd.notna(total_vendido) and pd.notna(cnt_vendida):
-                                datos_procesados.append({
-                                    "Sucursal": sucursal_actual,
-                                    "Categoría": categoria_actual,
-                                    "Producto": producto_limpio,
-                                    "Cantidad": cnt_vendida,
-                                    "Total Ventas ($)": total_vendido,
-                                    "Código": cod_producto
-                                })
+                            datos_procesados.append({
+                                "Sucursal": sucursal_actual,
+                                "Categoría": categoria_actual,
+                                "Producto": producto_limpio,
+                                "Cantidad": cnt_vendida,
+                                "Total Ventas ($)": total_vendido,
+                                "Código": cod_producto
+                            })
 
-                    # Crear DataFrame limpio y agrupar para consolidar las repeticiones
                     df_limpio = pd.DataFrame(datos_procesados)
                     
                     if not df_limpio.empty:
@@ -358,7 +360,6 @@ def mostrar_modulo_ventas():
                             categorias_disp = df_agrupado['Categoría'].unique().tolist()
                             categoria_filtro = st.multiselect("Filtrar por Categoría:", categorias_disp, default=categorias_disp)
 
-                        # Aplicar filtros
                         df_final = df_agrupado[
                             (df_agrupado['Sucursal'].isin(sucursal_filtro)) & 
                             (df_agrupado['Categoría'].isin(categoria_filtro))
@@ -367,7 +368,6 @@ def mostrar_modulo_ventas():
                         st.write(f"**Total de registros filtrados:** {len(df_final)}")
                         st.dataframe(df_final, hide_index=True, use_container_width=True)
 
-                        # Botón de exportación
                         st.write("---")
                         excel_data = generar_excel_bytes(df_final)
                         st.download_button(
