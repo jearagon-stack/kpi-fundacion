@@ -285,78 +285,87 @@ def mostrar_modulo_ventas():
                     sucursal_actual = "GENERAL"
                     categoria_actual = "SIN CATEGORIA"
 
-                    # Palabras clave para detectar si el encabezado es una Sucursal
-                    claves_sucursal = ['CAFETERÍA', 'SUCURSAL', 'CENTRAL', 'SOHO', 'TERRAZA', 'CAMPUS']
+                    # Lista estricta de palabras que definen una sucursal para tu operación
+                    claves_sucursal = ['CENTRAL', 'SOHO', 'TERRAZA', 'CAMPUS']
+                    
+                    # Palabras basura que el POS exporta y que debemos ignorar
+                    ignorar_textos = ['PÁG', 'INFORME', 'DEL', 'TOT.', 'VENDIDO', 'DESCRIPCIÓN', 'FECHA']
 
                     for index, row in df_bruto.iterrows():
-                        row = row.fillna("") 
-                        desc = str(row[0]).strip()
-                        
-                        if not desc or desc.lower() in ['nan', 'none', 'descripción', 'pág. no.', 'informe de ventas']:
-                            continue
-                        if "del 1 de" in desc.lower() or "tot. vendido" in desc.lower():
-                            continue
-
-                        valores_numericos = []
+                        textos_en_fila = []
+                        numeros_en_fila = []
                         cod_producto = ""
-                        es_encabezado = True
                         
-                        # Escaneo de columnas para diferenciar un título de un producto
-                        for item in row[1:]:
+                        # ESCÁNER FLOTANTE: Barre la fila de izquierda a derecha sin importar las columnas
+                        for item in row:
                             val_str = str(item).strip()
                             if not val_str or val_str.lower() in ['nan', 'none']:
                                 continue
                                 
-                            if val_str.startswith('PT'):
-                                cod_producto = val_str
-                                es_encabezado = False
+                            if val_str.startswith('PT') and len(val_str) > 2:
+                                cod_producto = val_str.upper()
                             else:
                                 try:
-                                    num = float(val_str.replace('$', '').replace(',', ''))
-                                    valores_numericos.append(num)
-                                    es_encabezado = False
+                                    num = float(val_str.replace('$', '').replace(',', '').strip())
+                                    numeros_en_fila.append(num)
                                 except ValueError:
-                                    pass
+                                    textos_en_fila.append(val_str)
 
-                        if es_encabezado:
-                            # Asignar Sucursal o Categoría correctamente
-                            desc_upper = desc.upper()
-                            if any(clave in desc_upper for clave in claves_sucursal):
-                                sucursal_actual = desc_upper
-                                categoria_actual = "SIN CATEGORIA" # Resetea la categoría al cambiar de sucursal
-                            else:
-                                categoria_actual = desc_upper
+                        # Si la fila no tiene ningún texto, la ignoramos
+                        if not textos_en_fila:
+                            continue
+                            
+                        # El primer texto que encontramos siempre es la Descripción / Categoría / Título
+                        desc = textos_en_fila[0].upper()
+                        
+                        # Filtro Antibasura
+                        if any(ign in desc for ign in ignorar_textos) or len(desc) < 3:
+                            continue
+
+                        # ¿ES TÍTULO O PRODUCTO?
+                        # Si no hay números (precios/cantidades), matemáticamente es un título.
+                        if len(numeros_en_fila) == 0:
+                            if any(clave in desc for clave in claves_sucursal):
+                                sucursal_actual = desc
+                                categoria_actual = "SIN CATEGORIA"
+                            elif desc not in ['CAFETERÍA', 'SUCURSAL']: 
+                                # Si dice solo "CAFETERÍA", lo ignoramos para esperar el apellido (ej. "CENTRAL")
+                                categoria_actual = desc
                         else:
-                            # Expresión regular robusta para eliminar CUALQUIER variación de "-X" o "-X 5"
-                            producto_limpio = re.sub(r'^\s*-X\s*\d+\s*', '', desc, flags=re.IGNORECASE).strip().upper()
+                            # ES PRODUCTO
+                            # Regex extrema: Destruye '-X3', '- X 3', '-3', '- CAFE' sin importar espacios
+                            producto_limpio = re.sub(r'^\s*-\s*X?\s*\d*\s*', '', desc, flags=re.IGNORECASE).strip()
                             
-                            total_vendido = valores_numericos[0] if len(valores_numericos) > 0 else 0.0
-                            cnt_vendida = valores_numericos[1] if len(valores_numericos) > 1 else 1.0
+                            # Normalizar tildes para evitar que "CAFÉ" y "CAFE" se separen en dos filas
+                            producto_limpio = producto_limpio.replace('Á','A').replace('É','E').replace('Í','I').replace('Ó','O').replace('Ú','U')
                             
-                            datos_procesados.append({
-                                "Sucursal": sucursal_actual,
-                                "Categoría": categoria_actual,
-                                "Producto": producto_limpio,
-                                "Cantidad": cnt_vendida,
-                                "Total Ventas ($)": total_vendido,
-                                "Código": cod_producto
-                            })
+                            total_vendido = numeros_en_fila[0] if len(numeros_en_fila) > 0 else 0.0
+                            cnt_vendida = numeros_en_fila[1] if len(numeros_en_fila) > 1 else 1.0
+                            
+                            if total_vendido > 0 or cnt_vendida > 0:
+                                datos_procesados.append({
+                                    "Sucursal": sucursal_actual,
+                                    "Categoría": categoria_actual,
+                                    "Producto": producto_limpio,
+                                    "Cantidad": cnt_vendida,
+                                    "Total Ventas ($)": total_vendido,
+                                    "Código": cod_producto
+                                })
 
                     df_limpio = pd.DataFrame(datos_procesados)
                     
                     if not df_limpio.empty:
-                        # Agrupamos EXCLUYENDO el código de la llave principal. 
-                        # Así, si a un producto "-X3" le falta el código PT, se fusionará igual por el Nombre.
+                        # Agrupación por Nombre estricto. Si una línea no tiene el código PT, se lo roba a la otra.
                         df_agrupado = df_limpio.groupby(
                             ['Sucursal', 'Categoría', 'Producto'], 
                             as_index=False
                         ).agg({
                             'Cantidad': 'sum',
                             'Total Ventas ($)': 'sum',
-                            'Código': 'max' # Rescata el código PT si al menos una línea lo tiene
+                            'Código': 'max' 
                         })
                         
-                        # Reordenamos columnas para la vista final
+                        # Ordenamos las columnas para la vista final
                         df_agrupado = df_agrupado[['Sucursal', 'Categoría', 'Código', 'Producto', 'Cantidad', 'Total Ventas ($)']]
 
                         st.write("---")
