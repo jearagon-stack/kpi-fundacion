@@ -297,8 +297,6 @@ def mostrar_modulo_ventas():
                             if not val_str or val_str.lower() in ['nan', 'none']:
                                 continue
                                 
-                            # REGRA DE ORO PARA CÓDIGOS: 
-                            # Atrapa los "PT00..." y también códigos de barras puramente numéricos mayores a 5 dígitos
                             if (val_str.upper().startswith('PT') and len(val_str) > 2) or (val_str.isdigit() and len(val_str) >= 6):
                                 cod_producto = val_str.upper()
                             else:
@@ -334,8 +332,6 @@ def mostrar_modulo_ventas():
                             total_vendido = numeros_en_fila[0] if len(numeros_en_fila) > 0 else 0.0
                             cnt_vendida = numeros_en_fila[1] if len(numeros_en_fila) > 1 else 0.0
                             
-                            # AGREGAMOS TODO SIN IMPORTAR SI TOTAL ES 0. 
-                            # Esto asegura atrapar la línea matriz donde el POS escondió el código del producto.
                             datos_procesados.append({
                                 "Sucursal": sucursal_actual,
                                 "Categoría": categoria_actual,
@@ -348,7 +344,6 @@ def mostrar_modulo_ventas():
                     df_limpio = pd.DataFrame(datos_procesados)
                     
                     if not df_limpio.empty:
-                        # Al agrupar, la línea en 0 transfiere su "Código" a los demás mediante el "max"
                         df_agrupado = df_limpio.groupby(
                             ['Sucursal', 'Categoría', 'Producto'], 
                             as_index=False
@@ -358,26 +353,51 @@ def mostrar_modulo_ventas():
                             'Código': 'max' 
                         })
                         
-                        # Ahora sí, filtramos los que quedaron con ventas en 0 absoluto para limpiar la vista
                         df_agrupado = df_agrupado[(df_agrupado['Cantidad'] > 0) | (df_agrupado['Total Ventas ($)'] > 0)]
-                        
-                        df_agrupado = df_agrupado[['Sucursal', 'Categoría', 'Código', 'Producto', 'Cantidad', 'Total Ventas ($)']]
 
                         st.write("---")
-                        st.markdown("### 🎛️ Filtros de Exportación")
+                        st.markdown("### 🎛️ Filtros y Opciones de Exportación")
+                        
+                        # Nuevo Checkbox para Consolidar Sucursales
+                        consolidar_sucursales = st.checkbox("🔄 Consolidar todas las sucursales en un solo total general (Ocultar detalle por sucursal)")
                         
                         col_fil1, col_fil2 = st.columns(2)
+                        
+                        # Filtro de Sucursales (Se oculta si se está consolidando todo)
                         with col_fil1:
-                            sucursales_disp = df_agrupado['Sucursal'].unique().tolist()
-                            sucursal_filtro = st.multiselect("Filtrar por Sucursal:", sucursales_disp, default=sucursales_disp)
-                        with col_fil2:
-                            categorias_disp = df_agrupado['Categoría'].unique().tolist()
-                            categoria_filtro = st.multiselect("Filtrar por Categoría:", categorias_disp, default=categorias_disp)
+                            if consolidar_sucursales:
+                                st.info("Modo Consolidado: Se mostrará la suma total de todas las sucursales.")
+                                df_filtrado = df_agrupado.copy()
+                            else:
+                                sucursales_disp = df_agrupado['Sucursal'].unique().tolist()
+                                sucursal_filtro = st.multiselect("Filtrar por Sucursal:", sucursales_disp, default=sucursales_disp)
+                                df_filtrado = df_agrupado[df_agrupado['Sucursal'].isin(sucursal_filtro)]
 
-                        df_final = df_agrupado[
-                            (df_agrupado['Sucursal'].isin(sucursal_filtro)) & 
-                            (df_agrupado['Categoría'].isin(categoria_filtro))
-                        ]
+                        # Filtro de Categorías
+                        with col_fil2:
+                            categorias_disp = df_filtrado['Categoría'].unique().tolist()
+                            categoria_filtro = st.multiselect("Filtrar por Categoría:", categorias_disp, default=categorias_disp)
+                            df_filtrado = df_filtrado[df_filtrado['Categoría'].isin(categoria_filtro)]
+
+                        # Aplicación de la agrupación final y cálculo de costo unitario
+                        if consolidar_sucursales:
+                            df_final = df_filtrado.groupby(['Categoría', 'Producto'], as_index=False).agg({
+                                'Cantidad': 'sum',
+                                'Total Ventas ($)': 'sum',
+                                'Código': 'max'
+                            })
+                            columnas_orden = ['Categoría', 'Código', 'Producto', 'Cantidad', 'Precio Unitario ($)', 'Total Ventas ($)']
+                        else:
+                            df_final = df_filtrado.copy()
+                            columnas_orden = ['Sucursal', 'Categoría', 'Código', 'Producto', 'Cantidad', 'Precio Unitario ($)', 'Total Ventas ($)']
+
+                        # Cálculo de Precio Unitario evitando división por cero
+                        df_final['Precio Unitario ($)'] = df_final.apply(
+                            lambda row: round(row['Total Ventas ($)'] / row['Cantidad'], 2) if row['Cantidad'] > 0 else 0.0, axis=1
+                        )
+                        
+                        # Reordenar las columnas para la vista final
+                        df_final = df_final[columnas_orden]
 
                         st.write(f"**Total de registros filtrados:** {len(df_final)}")
                         st.dataframe(df_final, hide_index=True, use_container_width=True)
