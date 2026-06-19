@@ -285,9 +285,6 @@ def mostrar_modulo_ventas():
                     sucursal_actual = "GENERAL"
                     categoria_actual = "SIN CATEGORIA"
 
-                    # Lista estricta de palabras que definen una sucursal para tu operación
-                    claves_sucursal = ['CENTRAL', 'SOHO', 'TERRAZA', 'CAMPUS']
-                    
                     # Palabras basura que el POS exporta y que debemos ignorar
                     ignorar_textos = ['PÁG', 'INFORME', 'DEL', 'TOT.', 'VENDIDO', 'DESCRIPCIÓN', 'FECHA']
 
@@ -296,7 +293,7 @@ def mostrar_modulo_ventas():
                         numeros_en_fila = []
                         cod_producto = ""
                         
-                        # ESCÁNER FLOTANTE: Barre la fila de izquierda a derecha sin importar las columnas
+                        # ESCÁNER FLOTANTE: Barre la fila de izquierda a derecha
                         for item in row:
                             val_str = str(item).strip()
                             if not val_str or val_str.lower() in ['nan', 'none']:
@@ -311,32 +308,27 @@ def mostrar_modulo_ventas():
                                 except ValueError:
                                     textos_en_fila.append(val_str)
 
-                        # Si la fila no tiene ningún texto, la ignoramos
                         if not textos_en_fila:
                             continue
                             
-                        # El primer texto que encontramos siempre es la Descripción / Categoría / Título
                         desc = textos_en_fila[0].upper()
                         
-                        # Filtro Antibasura
                         if any(ign in desc for ign in ignorar_textos) or len(desc) < 3:
                             continue
 
                         # ¿ES TÍTULO O PRODUCTO?
-                        # Si no hay números (precios/cantidades), matemáticamente es un título.
                         if len(numeros_en_fila) == 0:
-                            if any(clave in desc for clave in claves_sucursal):
+                            # Detección Universal de Sucursales (Cualquiera que diga CAFETERÍA o SUCURSAL)
+                            if "CAFETER" in desc or "SUCURSAL" in desc:
                                 sucursal_actual = desc
                                 categoria_actual = "SIN CATEGORIA"
-                            elif desc not in ['CAFETERÍA', 'SUCURSAL']: 
-                                # Si dice solo "CAFETERÍA", lo ignoramos para esperar el apellido (ej. "CENTRAL")
+                            else:
                                 categoria_actual = desc
                         else:
                             # ES PRODUCTO
-                            # Regex extrema: Destruye '-X3', '- X 3', '-3', '- CAFE' sin importar espacios
-                            producto_limpio = re.sub(r'^\s*-\s*X?\s*\d*\s*', '', desc, flags=re.IGNORECASE).strip()
+                            # Regex ajustada: Solo elimina la X y sus números (ej. -X3). Si es "- 1/4", deja el 1/4 en paz.
+                            producto_limpio = re.sub(r'^\s*-\s*(X\s*\d*\s*)?', '', desc, flags=re.IGNORECASE).strip()
                             
-                            # Normalizar tildes para evitar que "CAFÉ" y "CAFE" se separen en dos filas
                             producto_limpio = producto_limpio.replace('Á','A').replace('É','E').replace('Í','I').replace('Ó','O').replace('Ú','U')
                             
                             total_vendido = numeros_en_fila[0] if len(numeros_en_fila) > 0 else 0.0
@@ -355,7 +347,6 @@ def mostrar_modulo_ventas():
                     df_limpio = pd.DataFrame(datos_procesados)
                     
                     if not df_limpio.empty:
-                        # Agrupación por Nombre estricto. Si una línea no tiene el código PT, se lo roba a la otra.
                         df_agrupado = df_limpio.groupby(
                             ['Sucursal', 'Categoría', 'Producto'], 
                             as_index=False
@@ -365,7 +356,6 @@ def mostrar_modulo_ventas():
                             'Código': 'max' 
                         })
                         
-                        # Ordenamos las columnas para la vista final
                         df_agrupado = df_agrupado[['Sucursal', 'Categoría', 'Código', 'Producto', 'Cantidad', 'Total Ventas ($)']]
 
                         st.write("---")
