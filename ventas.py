@@ -315,24 +315,22 @@ def mostrar_modulo_ventas():
                             continue
 
                         if len(numeros_en_fila) == 0:
-                            # Ignoramos la fila basura que dice "-- TODAS LAS SUCURSALES --" en los saltos de página
                             if "TODAS" in desc:
                                 continue
                                 
                             if "CAFETER" in desc or "SUCURSAL" in desc:
-                                # PROTECCIÓN ANTI AMNESIA: Solo resetea la categoría si la sucursal realmente es nueva
                                 if sucursal_actual != desc:
                                     sucursal_actual = desc
                                     categoria_actual = "SIN CATEGORIA"
                             else:
                                 categoria_actual = desc
                         else:
-                            # ESTANDARIZADOR AGRESIVO: Destruye cualquier guion (-, –, —), puntos o asteriscos al inicio.
-                            producto_limpio = re.sub(r'^\s*[*.\-–—]\s*(X\s*\d*\s*)?', '', desc, flags=re.IGNORECASE).strip()
+                            # LA MAGIA ESTÁ AQUÍ:
+                            # Destruye el guion, destruye la X si existe, y destruye el número
+                            # SOLAMENTE si ese número NO va acompañado de una pleca (/) inmediatamente después.
+                            producto_limpio = re.sub(r'^[\s*.\-–—]*(?:x\s*)?(?:\d+\b(?!\s*/))?\s*', '', desc, flags=re.IGNORECASE).strip()
                             
-                            # Quitar dobles espacios adentro del nombre para que coincidan siempre
                             producto_limpio = re.sub(r'\s+', ' ', producto_limpio)
-                            
                             producto_limpio = producto_limpio.replace('Á','A').replace('É','E').replace('Í','I').replace('Ó','O').replace('Ú','U')
                             
                             total_vendido = numeros_en_fila[0] if len(numeros_en_fila) > 0 else 0.0
