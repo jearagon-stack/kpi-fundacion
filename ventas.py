@@ -285,7 +285,6 @@ def mostrar_modulo_ventas():
                     sucursal_actual = "GENERAL"
                     categoria_actual = "SIN CATEGORIA"
 
-                    # Palabras basura que el POS exporta y que debemos ignorar
                     ignorar_textos = ['PÁG', 'INFORME', 'DEL', 'TOT.', 'VENDIDO', 'DESCRIPCIÓN', 'FECHA']
 
                     for index, row in df_bruto.iterrows():
@@ -293,7 +292,6 @@ def mostrar_modulo_ventas():
                         numeros_en_fila = []
                         cod_producto = ""
                         
-                        # ESCÁNER FLOTANTE: Barre la fila de izquierda a derecha
                         for item in row:
                             val_str = str(item).strip()
                             if not val_str or val_str.lower() in ['nan', 'none']:
@@ -313,21 +311,27 @@ def mostrar_modulo_ventas():
                             
                         desc = textos_en_fila[0].upper()
                         
-                        if any(ign in desc for ign in ignorar_textos) or len(desc) < 3:
+                        if any(ign in desc for ign in ignorar_textos) or desc.startswith('TOTAL') or len(desc) < 3:
                             continue
 
-                        # ¿ES TÍTULO O PRODUCTO?
                         if len(numeros_en_fila) == 0:
-                            # Detección Universal de Sucursales (Cualquiera que diga CAFETERÍA o SUCURSAL)
+                            # Ignoramos la fila basura que dice "-- TODAS LAS SUCURSALES --" en los saltos de página
+                            if "TODAS" in desc:
+                                continue
+                                
                             if "CAFETER" in desc or "SUCURSAL" in desc:
-                                sucursal_actual = desc
-                                categoria_actual = "SIN CATEGORIA"
+                                # PROTECCIÓN ANTI AMNESIA: Solo resetea la categoría si la sucursal realmente es nueva
+                                if sucursal_actual != desc:
+                                    sucursal_actual = desc
+                                    categoria_actual = "SIN CATEGORIA"
                             else:
                                 categoria_actual = desc
                         else:
-                            # ES PRODUCTO
-                            # Regex ajustada: Solo elimina la X y sus números (ej. -X3). Si es "- 1/4", deja el 1/4 en paz.
-                            producto_limpio = re.sub(r'^\s*-\s*(X\s*\d*\s*)?', '', desc, flags=re.IGNORECASE).strip()
+                            # ESTANDARIZADOR AGRESIVO: Destruye cualquier guion (-, –, —), puntos o asteriscos al inicio.
+                            producto_limpio = re.sub(r'^\s*[*.\-–—]\s*(X\s*\d*\s*)?', '', desc, flags=re.IGNORECASE).strip()
+                            
+                            # Quitar dobles espacios adentro del nombre para que coincidan siempre
+                            producto_limpio = re.sub(r'\s+', ' ', producto_limpio)
                             
                             producto_limpio = producto_limpio.replace('Á','A').replace('É','E').replace('Í','I').replace('Ó','O').replace('Ú','U')
                             
@@ -376,6 +380,9 @@ def mostrar_modulo_ventas():
 
                         st.write(f"**Total de registros filtrados:** {len(df_final)}")
                         st.dataframe(df_final, hide_index=True, use_container_width=True)
+                        
+                        total_calculado = df_final['Total Ventas ($)'].sum()
+                        st.info(f"💰 **Total Ventas Filtradas:** ${total_calculado:,.2f}")
 
                         st.write("---")
                         excel_data = generar_excel_bytes(df_final)
