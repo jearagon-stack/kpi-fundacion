@@ -276,7 +276,6 @@ def mostrar_modulo_ventas():
         if archivo_bruto:
             with st.spinner("Procesando y estructurando datos..."):
                 try:
-                    # Lectura obligando a que todo sea texto para evitar que Pandas se estrelle adivinando formatos
                     if archivo_bruto.name.endswith('.csv'):
                         df_bruto = pd.read_csv(archivo_bruto, header=None, dtype=str)
                     else:
@@ -286,7 +285,9 @@ def mostrar_modulo_ventas():
                     sucursal_actual = "GENERAL"
                     categoria_actual = "SIN CATEGORIA"
 
-                    # Iterar fila por fila. Convertimos todo a string y limpiamos Nans.
+                    # Palabras clave para detectar si el encabezado es una Sucursal
+                    claves_sucursal = ['CAFETERÍA', 'SUCURSAL', 'CENTRAL', 'SOHO', 'TERRAZA', 'CAMPUS']
+
                     for index, row in df_bruto.iterrows():
                         row = row.fillna("") 
                         desc = str(row[0]).strip()
@@ -296,10 +297,11 @@ def mostrar_modulo_ventas():
                         if "del 1 de" in desc.lower() or "tot. vendido" in desc.lower():
                             continue
 
-                        # Escáner de fila: Busca números y códigos sin importar en qué columna estén
                         valores_numericos = []
                         cod_producto = ""
+                        es_encabezado = True
                         
+                        # Escaneo de columnas para diferenciar un título de un producto
                         for item in row[1:]:
                             val_str = str(item).strip()
                             if not val_str or val_str.lower() in ['nan', 'none']:
@@ -307,24 +309,27 @@ def mostrar_modulo_ventas():
                                 
                             if val_str.startswith('PT'):
                                 cod_producto = val_str
+                                es_encabezado = False
                             else:
                                 try:
                                     num = float(val_str.replace('$', '').replace(',', ''))
                                     valores_numericos.append(num)
+                                    es_encabezado = False
                                 except ValueError:
-                                    pass # Si no es un número, lo ignora silenciosamente
+                                    pass
 
-                        # Si no hay ningún número en toda la fila, asumimos que es un título
-                        if len(valores_numericos) == 0:
-                            if "CAFETERÍA" in desc.upper() or "SUCURSAL" in desc.upper() or "CENTRAL" in desc.upper():
-                                sucursal_actual = desc
+                        if es_encabezado:
+                            # Asignar Sucursal o Categoría correctamente
+                            desc_upper = desc.upper()
+                            if any(clave in desc_upper for clave in claves_sucursal):
+                                sucursal_actual = desc_upper
+                                categoria_actual = "SIN CATEGORIA" # Resetea la categoría al cambiar de sucursal
                             else:
-                                categoria_actual = desc
+                                categoria_actual = desc_upper
                         else:
-                            # Es un producto válido
-                            producto_limpio = re.sub(r'^-X\d+\s+', '', desc).strip()
+                            # Expresión regular robusta para eliminar CUALQUIER variación de "-X" o "-X 5"
+                            producto_limpio = re.sub(r'^\s*-X\s*\d+\s*', '', desc, flags=re.IGNORECASE).strip().upper()
                             
-                            # El primer número que aparece siempre es el Total Vendido, el segundo es Cantidad
                             total_vendido = valores_numericos[0] if len(valores_numericos) > 0 else 0.0
                             cnt_vendida = valores_numericos[1] if len(valores_numericos) > 1 else 1.0
                             
@@ -340,15 +345,20 @@ def mostrar_modulo_ventas():
                     df_limpio = pd.DataFrame(datos_procesados)
                     
                     if not df_limpio.empty:
+                        # Agrupamos EXCLUYENDO el código de la llave principal. 
+                        # Así, si a un producto "-X3" le falta el código PT, se fusionará igual por el Nombre.
                         df_agrupado = df_limpio.groupby(
-                            ['Sucursal', 'Categoría', 'Código', 'Producto'], 
+                            ['Sucursal', 'Categoría', 'Producto'], 
                             as_index=False
                         ).agg({
                             'Cantidad': 'sum',
-                            'Total Ventas ($)': 'sum'
+                            'Total Ventas ($)': 'sum',
+                            'Código': 'max' # Rescata el código PT si al menos una línea lo tiene
                         })
+                        
+                        # Reordenamos columnas para la vista final
+                        df_agrupado = df_agrupado[['Sucursal', 'Categoría', 'Código', 'Producto', 'Cantidad', 'Total Ventas ($)']]
 
-                        # Interfaz de Filtros
                         st.write("---")
                         st.markdown("### 🎛️ Filtros de Exportación")
                         
