@@ -154,7 +154,10 @@ def mostrar_modulo_contabilidad():
                 with st.spinner("Procesando datos..."):
                     df_map = obtener_dataframe("Balance_Mapeado")
                     if df_map is not None:
-                        df_map.columns = df_map.columns.str.strip().str.upper()
+                        # BALA DE PLATA 1: Limpiar nombres y destruir columnas duplicadas
+                        df_map.columns = df_map.columns.astype(str).str.strip().str.upper()
+                        df_map = df_map.loc[:, ~df_map.columns.duplicated()].copy()
+
                         c_map_cta = buscar_columna(df_map, ["CUENTA", "ID"])
                         c_map_nom = buscar_columna(df_map, ["NOMBRE", "DESCRIP", "CUENTA"]) 
                         c_map_tipo = buscar_columna(df_map, ["TIPO"])
@@ -173,9 +176,13 @@ def mostrar_modulo_contabilidad():
                         dfs_cons = []
                         for arch in archivos_subidos:
                             df_temp = pd.read_excel(arch, dtype=str)
-                            df_temp.columns = df_temp.columns.str.strip().str.upper()
+                            # BALA DE PLATA 2: Destruir columnas duplicadas del archivo origen
+                            df_temp.columns = df_temp.columns.astype(str).str.strip().str.upper()
+                            df_temp = df_temp.loc[:, ~df_temp.columns.duplicated()].copy()
+
                             c_arch_cta = buscar_columna(df_temp, ["CUENTA", "ID"])
                             c_arch_sld = buscar_columna(df_temp, ["SALDO", "FINAL"], todas=True)
+                            
                             if c_arch_sld and c_arch_cta:
                                 df_temp[c_arch_cta] = df_temp[c_arch_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                 df_temp[c_arch_sld] = pd.to_numeric(df_temp[c_arch_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True), errors='coerce').fillna(0)
@@ -216,7 +223,11 @@ def mostrar_modulo_contabilidad():
             if filtro_cat != "Todas": df_filtro = df_filtro[df_filtro[cd['cat']] == filtro_cat]
                 
             with col_f3:
-                df_filtro['display_name'] = df_filtro[cd['cta']].astype(str) + " - " + df_filtro[cd['nom']]
+                # Blindaje extra para asegurar que es un texto puro y no una tabla anidada
+                serie_cta = df_filtro[cd['cta']].iloc[:, 0] if isinstance(df_filtro[cd['cta']], pd.DataFrame) else df_filtro[cd['cta']]
+                serie_nom = df_filtro[cd['nom']].iloc[:, 0] if isinstance(df_filtro[cd['nom']], pd.DataFrame) else df_filtro[cd['nom']]
+                
+                df_filtro['display_name'] = serie_cta.astype(str) + " - " + serie_nom.astype(str)
                 cuenta_sel = st.selectbox("C. Seleccionar Cuenta:", options=["Seleccione una cuenta..."] + df_filtro['display_name'].tolist())
 
             if cuenta_sel != "Seleccione una cuenta...":
@@ -278,7 +289,10 @@ def mostrar_modulo_contabilidad():
             if st.button("🔄 Armar Matriz Histórica", type="primary"):
                 with st.spinner("Construyendo matriz y prorrateando Gerencias..."):
                     df_map_m = obtener_dataframe("Balance_Mapeado")
-                    df_map_m.columns = df_map_m.columns.str.strip().str.upper()
+                    # BALA DE PLATA 3
+                    df_map_m.columns = df_map_m.columns.astype(str).str.strip().str.upper()
+                    df_map_m = df_map_m.loc[:, ~df_map_m.columns.duplicated()].copy()
+                    
                     cm_cta = buscar_columna(df_map_m, ["CUENTA", "ID"])
                     cm_nom = buscar_columna(df_map_m, ["NOMBRE", "DESCRIP", "CUENTA"]) 
                     cm_tipo = buscar_columna(df_map_m, ["TIPO"])
@@ -291,14 +305,16 @@ def mostrar_modulo_contabilidad():
                     df_map_m[cm_cta] = df_map_m[cm_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                     df_map_m[cm_tipo] = df_map_m[cm_tipo].apply(limpiar_texto)
                     
-                    # 1. Matriz Cruda sin filtros estructurales (TOMA TODO EL CATÁLOGO)
                     df_base_m4 = df_map_m.copy()
                     
                     for u in unidades_oficiales: df_base_m4[u] = 0.0
 
                     for nombre_arch, info in mapeo_m4.items():
                         df_tm = pd.read_excel(info["file"], dtype=str)
-                        df_tm.columns = df_tm.columns.str.strip().str.upper()
+                        # BALA DE PLATA 4
+                        df_tm.columns = df_tm.columns.astype(str).str.strip().str.upper()
+                        df_tm = df_tm.loc[:, ~df_tm.columns.duplicated()].copy()
+                        
                         c_a_cta = buscar_columna(df_tm, ["CUENTA", "ID"])
                         c_a_sld = buscar_columna(df_tm, ["SALDO", "FINAL"], todas=True)
                         
@@ -315,7 +331,6 @@ def mostrar_modulo_contabilidad():
                     df_base_m4['TOTAL CONSOLIDADO'] = df_base_m4[unidades_oficiales].sum(axis=1)
                     st.session_state['matriz_2025_cruda'] = df_base_m4.copy()
                     
-                    # 2. Filtrado de cuentas estructurales para el cálculo de Rentabilidad y PE (La pestaña principal)
                     mask_excluir = (
                         df_base_m4[cm_tipo].str.upper().isin(["NO APLICA", ""]) |
                         df_base_m4[cm_est].str.upper().isin(["CUENTA DE MAYOR", "CUENTA DE MENOR", "CUENTA GENERAL"])
@@ -339,7 +354,6 @@ def mostrar_modulo_contabilidad():
                 "Prorrateo y PE": st.session_state['matriz_2025_prorrateada']
             }
             
-            # EL BOTÓN AHORA DESCARGA EL EXCEL CON LAS 2 PESTAÑAS
             st.download_button(
                 label="📥 Descargar Reporte Completo 2025 (Excel 2 Pestañas)", 
                 data=generar_excel_multi(dict_export_2025), 
