@@ -26,6 +26,39 @@ def generar_excel_multi(dict_dfs):
             df.to_excel(writer, index=False, sheet_name=nombre_hoja[:31])
     return output.getvalue()
 
+def cargar_archivo_contable(archivo):
+    """Escanea el archivo saltando encabezados basura de sistemas ERP y purga columnas clonadas."""
+    if archivo.name.lower().endswith('.csv'):
+        archivo.seek(0)
+        linea = archivo.readline().decode('utf-8', errors='ignore')
+        separador = ';' if ';' in linea else ','
+        archivo.seek(0)
+        df = pd.read_csv(archivo, sep=separador, dtype=str)
+    else:
+        try:
+            df = pd.read_excel(archivo, dtype=str)
+        except Exception:
+            # Respaldo en caso de que sea un archivo HTML disfrazado de XLS
+            archivo.seek(0)
+            dfs = pd.read_html(archivo.read().decode('utf-8'))
+            df = dfs[0].astype(str)
+            
+    df.columns = df.columns.astype(str).str.strip().str.upper().str.replace('\ufeff', '')
+    cols_upper = df.columns.str.replace(' ', '').str.replace('.', '')
+    
+    # Búsqueda dinámica del encabezado real
+    if not (any('CUENTA' in c or 'ID' in c for c in cols_upper) and any('SALDO' in c for c in cols_upper)):
+        for i in range(min(20, len(df))):
+            row_str = df.iloc[i].astype(str).str.upper().str.replace(' ', '').str.replace('.', '')
+            if (any('CUENTA' in val or 'ID' in val for val in row_str) and any('SALDO' in val for val in row_str)):
+                df.columns = df.iloc[i].astype(str).str.strip().str.upper()
+                df = df.iloc[i+1:].reset_index(drop=True)
+                break
+                
+    # Eliminar columnas duplicadas para evitar errores de seteo en Pandas
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    return df
+
 def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unidades_oficiales, unidad_gerencia="Gerencias"):
     """
     Calcula porcentajes de venta INCLUYENDO Gerencias, prorratea el gasto
@@ -33,7 +66,7 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
     """
     df_res = df_base.copy()
     
-    # 1. Calcular Ingresos por Unidad (TODAS, incluyendo Gerencias)
+    # 1. Calcular Ingresos por Unidad
     ventas = {}
     total_ventas = 0
     for u in unidades_oficiales:
@@ -56,19 +89,16 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
             f[u] = 0
         return f
 
-    # Fila: % Participación
     fila_pct = crear_fila("% PARTICIPACIÓN (VENTAS)", "INDICADOR")
     for u in unidades_oficiales: fila_pct[u] = pct_ventas[u] * 100
     fila_pct['TOTAL CONSOLIDADO'] = 100 if total_ventas > 0 else 0
     resumen_data.append(fila_pct)
     
-    # Fila: Ingresos Totales
     fila_ing = crear_fila("INGRESOS TOTALES")
     for u in unidades_oficiales: fila_ing[u] = ventas[u]
     fila_ing['TOTAL CONSOLIDADO'] = total_ventas
     resumen_data.append(fila_ing)
     
-    # Fila: Costos Fijos Propios (Gerencias en 0 porque se redistribuye)
     fila_cfp = crear_fila("COSTOS FIJOS (PROPIOS)")
     tot_cfp = 0
     for u in unidades_oficiales:
@@ -78,7 +108,6 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
     fila_cfp['TOTAL CONSOLIDADO'] = tot_cfp
     resumen_data.append(fila_cfp)
     
-    # Fila: Costos Variables (Gerencias en 0 porque se redistribuye)
     fila_cv = crear_fila("COSTOS VARIABLES")
     tot_cv = 0
     for u in unidades_oficiales:
@@ -88,17 +117,15 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
     fila_cv['TOTAL CONSOLIDADO'] = tot_cv
     resumen_data.append(fila_cv)
     
-    # Fila: Gasto Administrativo Asignado (Prorrateo)
     fila_cif = crear_fila("GASTO ADM. ASIGNADO (GERENCIAS)")
     tot_cif = 0
     for u in unidades_oficiales:
-        cif_asignado = gasto_gerencia * pct_ventas[u] # Gerencias absorberá su propia parte aquí
+        cif_asignado = gasto_gerencia * pct_ventas[u]
         fila_cif[u] = cif_asignado
         tot_cif += cif_asignado
     fila_cif['TOTAL CONSOLIDADO'] = tot_cif
     resumen_data.append(fila_cif)
     
-    # Fila: Punto de Equilibrio
     fila_pe = crear_fila("PUNTO DE EQUILIBRIO (CON CIF)", "INDICADOR")
     tot_pe_global = 0
     for u in unidades_oficiales:
@@ -109,7 +136,6 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
     fila_pe['TOTAL CONSOLIDADO'] = tot_pe_global
     resumen_data.append(fila_pe)
     
-    # Fila: Margen de Seguridad ($)
     fila_ms = crear_fila("SUPERÁVIT / DÉFICIT ($)", "INDICADOR")
     tot_ms = 0
     for u in unidades_oficiales:
@@ -119,7 +145,6 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
     fila_ms['TOTAL CONSOLIDADO'] = tot_ms
     resumen_data.append(fila_ms)
 
-    # Separador visual
     fila_sep = {col_cta: "", col_nom: "-"*30, col_est: "", col_tipo: ""}
     for u in unidades_oficiales + ['TOTAL CONSOLIDADO']: fila_sep[u] = None
     
@@ -152,9 +177,12 @@ def mostrar_modulo_contabilidad():
         if st.button("🔄 Procesar Consolidado Global", type="primary", use_container_width=True):
             if archivos_subidos:
                 with st.spinner("Procesando datos..."):
-                    df_map = obtener_dataframe("Balance_Mapeado")
-                    if df_map is not None:
-                        # BALA DE PLATA 1: Limpiar nombres y destruir columnas duplicadas
+                    try:
+                        df_map = obtener_dataframe("Balance_Mapeado")
+                        if df_map is None or df_map.empty:
+                            st.error("❌ No se pudo cargar el catálogo mapeado de la base de datos.")
+                            st.stop()
+                            
                         df_map.columns = df_map.columns.astype(str).str.strip().str.upper()
                         df_map = df_map.loc[:, ~df_map.columns.duplicated()].copy()
 
@@ -175,20 +203,22 @@ def mostrar_modulo_contabilidad():
                         
                         dfs_cons = []
                         for arch in archivos_subidos:
-                            df_temp = pd.read_excel(arch, dtype=str)
-                            # BALA DE PLATA 2: Destruir columnas duplicadas del archivo origen
-                            df_temp.columns = df_temp.columns.astype(str).str.strip().str.upper()
-                            df_temp = df_temp.loc[:, ~df_temp.columns.duplicated()].copy()
+                            df_temp = cargar_archivo_contable(arch)
 
                             c_arch_cta = buscar_columna(df_temp, ["CUENTA", "ID"])
                             c_arch_sld = buscar_columna(df_temp, ["SALDO", "FINAL"], todas=True)
                             
+                            if not c_arch_sld:
+                                c_arch_sld = buscar_columna(df_temp, ["SALDO"])
+                                
                             if c_arch_sld and c_arch_cta:
                                 df_temp[c_arch_cta] = df_temp[c_arch_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                 df_temp[c_arch_sld] = pd.to_numeric(df_temp[c_arch_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True), errors='coerce').fillna(0)
                                 df_agrup = df_temp.groupby(c_arch_cta, as_index=False)[c_arch_sld].sum()
                                 df_agrup.rename(columns={c_arch_sld: "SALDO_FINAL_GLOBAL"}, inplace=True)
                                 dfs_cons.append(df_agrup)
+                            else:
+                                st.warning(f"⚠️ El archivo {arch.name} no posee encabezados de 'CUENTA' y 'SALDO' identificables.")
 
                         if dfs_cons:
                             df_total = pd.concat(dfs_cons, ignore_index=True)
@@ -199,6 +229,10 @@ def mostrar_modulo_contabilidad():
                             st.session_state['cols_dict'] = {'cta': c_map_cta, 'nom': c_map_nom, 'tipo': c_map_tipo, 'est': c_map_est, 'cat': c_map_cat, 'sld': "SALDO_FINAL_GLOBAL"}
                             st.session_state['sync_flag'] = True 
                             st.success("✅ Procesado para Simulador Global.")
+                        else:
+                            st.error("❌ Ningún archivo pudo ser procesado. Verifica el formato de la exportación.")
+                    except Exception as e:
+                        st.error(f"🚨 Ocurrió un error técnico general: {e}")
 
     # ==========================================
     # PESTAÑA 2: SIMULADOR GLOBAL
@@ -223,7 +257,6 @@ def mostrar_modulo_contabilidad():
             if filtro_cat != "Todas": df_filtro = df_filtro[df_filtro[cd['cat']] == filtro_cat]
                 
             with col_f3:
-                # Blindaje extra para asegurar que es un texto puro y no una tabla anidada
                 serie_cta = df_filtro[cd['cta']].iloc[:, 0] if isinstance(df_filtro[cd['cta']], pd.DataFrame) else df_filtro[cd['cta']]
                 serie_nom = df_filtro[cd['nom']].iloc[:, 0] if isinstance(df_filtro[cd['nom']], pd.DataFrame) else df_filtro[cd['nom']]
                 
@@ -288,60 +321,61 @@ def mostrar_modulo_contabilidad():
                 
             if st.button("🔄 Armar Matriz Histórica", type="primary"):
                 with st.spinner("Construyendo matriz y prorrateando Gerencias..."):
-                    df_map_m = obtener_dataframe("Balance_Mapeado")
-                    # BALA DE PLATA 3
-                    df_map_m.columns = df_map_m.columns.astype(str).str.strip().str.upper()
-                    df_map_m = df_map_m.loc[:, ~df_map_m.columns.duplicated()].copy()
-                    
-                    cm_cta = buscar_columna(df_map_m, ["CUENTA", "ID"])
-                    cm_nom = buscar_columna(df_map_m, ["NOMBRE", "DESCRIP", "CUENTA"]) 
-                    cm_tipo = buscar_columna(df_map_m, ["TIPO"])
-                    cm_est = buscar_columna(df_map_m, ["ESTADO"])
-                    
-                    if cm_nom is None:
-                        df_map_m["NOMBRE DE CUENTA"] = df_map_m[cm_est]
-                        cm_nom = "NOMBRE DE CUENTA"
-
-                    df_map_m[cm_cta] = df_map_m[cm_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                    df_map_m[cm_tipo] = df_map_m[cm_tipo].apply(limpiar_texto)
-                    
-                    df_base_m4 = df_map_m.copy()
-                    
-                    for u in unidades_oficiales: df_base_m4[u] = 0.0
-
-                    for nombre_arch, info in mapeo_m4.items():
-                        df_tm = pd.read_excel(info["file"], dtype=str)
-                        # BALA DE PLATA 4
-                        df_tm.columns = df_tm.columns.astype(str).str.strip().str.upper()
-                        df_tm = df_tm.loc[:, ~df_tm.columns.duplicated()].copy()
+                    try:
+                        df_map_m = obtener_dataframe("Balance_Mapeado")
+                        df_map_m.columns = df_map_m.columns.astype(str).str.strip().str.upper()
+                        df_map_m = df_map_m.loc[:, ~df_map_m.columns.duplicated()].copy()
                         
-                        c_a_cta = buscar_columna(df_tm, ["CUENTA", "ID"])
-                        c_a_sld = buscar_columna(df_tm, ["SALDO", "FINAL"], todas=True)
+                        cm_cta = buscar_columna(df_map_m, ["CUENTA", "ID"])
+                        cm_nom = buscar_columna(df_map_m, ["NOMBRE", "DESCRIP", "CUENTA"]) 
+                        cm_tipo = buscar_columna(df_map_m, ["TIPO"])
+                        cm_est = buscar_columna(df_map_m, ["ESTADO"])
                         
-                        if c_a_sld and c_a_cta:
-                            df_tm[c_a_cta] = df_tm[c_a_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
-                            df_tm[c_a_sld] = pd.to_numeric(df_tm[c_a_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True), errors='coerce').fillna(0)
-                            df_ag = df_tm.groupby(c_a_cta, as_index=False)[c_a_sld].sum()
+                        if cm_nom is None:
+                            df_map_m["NOMBRE DE CUENTA"] = df_map_m[cm_est]
+                            cm_nom = "NOMBRE DE CUENTA"
+
+                        df_map_m[cm_cta] = df_map_m[cm_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                        df_map_m[cm_tipo] = df_map_m[cm_tipo].apply(limpiar_texto)
+                        
+                        df_base_m4 = df_map_m.copy()
+                        
+                        for u in unidades_oficiales: df_base_m4[u] = 0.0
+
+                        for nombre_arch, info in mapeo_m4.items():
+                            df_tm = cargar_archivo_contable(info["file"])
                             
-                            u_obj = info["unidad"]
-                            for _, row in df_ag.iterrows():
-                                idx_c = df_base_m4[df_base_m4[cm_cta] == row[c_a_cta]].index
-                                if not idx_c.empty: df_base_m4.loc[idx_c, u_obj] += row[c_a_sld]
+                            c_a_cta = buscar_columna(df_tm, ["CUENTA", "ID"])
+                            c_a_sld = buscar_columna(df_tm, ["SALDO", "FINAL"], todas=True)
+                            if not c_a_sld:
+                                c_a_sld = buscar_columna(df_tm, ["SALDO"])
+                            
+                            if c_a_sld and c_a_cta:
+                                df_tm[c_a_cta] = df_tm[c_a_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
+                                df_tm[c_a_sld] = pd.to_numeric(df_tm[c_a_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True), errors='coerce').fillna(0)
+                                df_ag = df_tm.groupby(c_a_cta, as_index=False)[c_a_sld].sum()
+                                
+                                u_obj = info["unidad"]
+                                for _, row in df_ag.iterrows():
+                                    idx_c = df_base_m4[df_base_m4[cm_cta] == row[c_a_cta]].index
+                                    if not idx_c.empty: df_base_m4.loc[idx_c, u_obj] += row[c_a_sld]
 
-                    df_base_m4['TOTAL CONSOLIDADO'] = df_base_m4[unidades_oficiales].sum(axis=1)
-                    st.session_state['matriz_2025_cruda'] = df_base_m4.copy()
-                    
-                    mask_excluir = (
-                        df_base_m4[cm_tipo].str.upper().isin(["NO APLICA", ""]) |
-                        df_base_m4[cm_est].str.upper().isin(["CUENTA DE MAYOR", "CUENTA DE MENOR", "CUENTA GENERAL"])
-                    )
-                    df_base_prorrateo = df_base_m4[~mask_excluir].copy()
-                    
-                    df_prorrateada, pct = procesar_prorrateo_matriz(df_base_prorrateo, cm_cta, cm_nom, cm_est, cm_tipo, unidades_oficiales)
-                    st.session_state['matriz_2025_prorrateada'] = df_prorrateada
-                    st.session_state['cols_matriz'] = {'cta': cm_cta, 'nom': cm_nom, 'est': cm_est, 'tipo': cm_tipo}
-                    
-                    st.success("✅ Matriz 2025 generada.")
+                        df_base_m4['TOTAL CONSOLIDADO'] = df_base_m4[unidades_oficiales].sum(axis=1)
+                        st.session_state['matriz_2025_cruda'] = df_base_m4.copy()
+                        
+                        mask_excluir = (
+                            df_base_m4[cm_tipo].str.upper().isin(["NO APLICA", ""]) |
+                            df_base_m4[cm_est].str.upper().isin(["CUENTA DE MAYOR", "CUENTA DE MENOR", "CUENTA GENERAL"])
+                        )
+                        df_base_prorrateo = df_base_m4[~mask_excluir].copy()
+                        
+                        df_prorrateada, pct = procesar_prorrateo_matriz(df_base_prorrateo, cm_cta, cm_nom, cm_est, cm_tipo, unidades_oficiales)
+                        st.session_state['matriz_2025_prorrateada'] = df_prorrateada
+                        st.session_state['cols_matriz'] = {'cta': cm_cta, 'nom': cm_nom, 'est': cm_est, 'tipo': cm_tipo}
+                        
+                        st.success("✅ Matriz 2025 generada de manera exitosa.")
+                    except Exception as e:
+                        st.error(f"🚨 Ocurrió un error en el armado de la matriz: {e}")
 
         if 'matriz_2025_prorrateada' in st.session_state:
             df_m4_disp = st.session_state['matriz_2025_prorrateada'].copy()
@@ -355,7 +389,7 @@ def mostrar_modulo_contabilidad():
             }
             
             st.download_button(
-                label="📥 Descargar Reporte Completo 2025 (Excel 2 Pestañas)", 
+                label="📥 Descargar Reporte Completo 2025 (Excel)", 
                 data=generar_excel_multi(dict_export_2025), 
                 file_name='Matriz_Directiva_2025.xlsx',
                 use_container_width=True
@@ -460,7 +494,7 @@ def mostrar_modulo_contabilidad():
                 }
                 
                 st.download_button(
-                    label="📥 Descargar Proyección 2026 (Excel 2 Pestañas)", 
+                    label="📥 Descargar Proyección 2026 (Excel)", 
                     data=generar_excel_multi(dict_export_2026), 
                     file_name='Proyeccion_Directiva_2026.xlsx',
                     use_container_width=True
