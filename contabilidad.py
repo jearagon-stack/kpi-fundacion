@@ -257,10 +257,19 @@ def mostrar_modulo_contabilidad():
             if filtro_cat != "Todas": df_filtro = df_filtro[df_filtro[cd['cat']] == filtro_cat]
                 
             with col_f3:
-                serie_cta = df_filtro[cd['cta']].iloc[:, 0] if isinstance(df_filtro[cd['cta']], pd.DataFrame) else df_filtro[cd['cta']]
-                serie_nom = df_filtro[cd['nom']].iloc[:, 0] if isinstance(df_filtro[cd['nom']], pd.DataFrame) else df_filtro[cd['nom']]
+                # SOLUCIÓN BLINDADA: Usar listas de Python puro para evitar errores de DataFrames anidados de Pandas
+                def extraer_columna_segura(df_obj, nombre_columna):
+                    obj = df_obj[nombre_columna]
+                    if isinstance(obj, pd.DataFrame):
+                        return obj.iloc[:, 0].astype(str).tolist()
+                    return obj.astype(str).tolist()
+
+                lista_ctas = extraer_columna_segura(df_filtro, cd['cta'])
+                lista_noms = extraer_columna_segura(df_filtro, cd['nom'])
                 
-                df_filtro['display_name'] = serie_cta.astype(str) + " - " + serie_nom.astype(str)
+                # Asignación segura con lista nativa de Python
+                df_filtro['display_name'] = [f"{c} - {n}" for c, n in zip(lista_ctas, lista_noms)]
+                
                 cuenta_sel = st.selectbox("C. Seleccionar Cuenta:", options=["Seleccione una cuenta..."] + df_filtro['display_name'].tolist())
 
             if cuenta_sel != "Seleccione una cuenta...":
