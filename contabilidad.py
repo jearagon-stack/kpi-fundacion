@@ -8,15 +8,22 @@ from utils import obtener_dataframe
 def limpiar_texto(texto):
     return str(texto).strip().upper()
 
-def buscar_columna(df, palabras_clave, todas=False, excluir=None):
-    """Busca columnas de forma inteligente, garantizando que nunca devuelva una columna ya en uso."""
+def buscar_columna(df, palabras_clave, todas=False, excluir=None, anti_palabras=None):
+    """Busca columnas de forma inteligente y permite bloquear palabras específicas (ej. 'INICIAL')."""
     if excluir is None:
         excluir = []
+    if anti_palabras is None:
+        anti_palabras = []
         
     # 1. Búsqueda por coincidencia exacta normalizada (ignora espacios y guiones)
     for col in df.columns:
         if col in excluir: continue
         c_norm = str(col).strip().upper().replace(' ', '').replace('_', '').replace('-', '')
+        
+        # Filtro de bloqueo de anti-palabras
+        if any(ap.strip().upper() in c_norm for ap in anti_palabras):
+            continue
+            
         if any(c_norm == p.strip().upper().replace(' ', '').replace('_', '').replace('-', '') for p in palabras_clave):
             return col
             
@@ -24,6 +31,11 @@ def buscar_columna(df, palabras_clave, todas=False, excluir=None):
     for col in df.columns:
         if col in excluir: continue
         c_norm = str(col).strip().upper().replace(' ', '').replace('_', '').replace('-', '')
+        
+        # Filtro de bloqueo de anti-palabras
+        if any(ap.strip().upper() in c_norm for ap in anti_palabras):
+            continue
+            
         if todas:
             if all(p.strip().upper().replace(' ', '').replace('_', '').replace('-', '') in c_norm for p in palabras_clave):
                 return col
@@ -207,9 +219,12 @@ def mostrar_modulo_contabilidad():
                             df_temp = cargar_archivo_contable(arch)
 
                             c_arch_cta = buscar_columna(df_temp, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
-                            # Forzado estricto para que busque Saldo Final (Columna J) y descarte Saldo Inicial (Columna F)
-                            c_arch_sld = buscar_columna(df_temp, ["SALDOFINAL", "FINAL", "SALDO_FINAL", "TOTALFINAL"], excluir=[c_arch_cta])
-
+                            # Exclusión estricta de palabras INICIAL y ANTERIOR
+                            c_arch_sld = buscar_columna(df_temp, ["SALDOFINAL", "FINAL", "SALDO_FINAL", "TOTALFINAL"], anti_palabras=["INICIAL", "ANTERIOR"], excluir=[c_arch_cta])
+                            
+                            if not c_arch_sld:
+                                c_arch_sld = buscar_columna(df_temp, ["SALDO"], anti_palabras=["INICIAL", "ANTERIOR"], excluir=[c_arch_cta])
+                                
                             if c_arch_sld and c_arch_cta:
                                 df_temp[c_arch_cta] = df_temp[c_arch_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                 df_temp[c_arch_sld] = pd.to_numeric(df_temp[c_arch_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True), errors='coerce').fillna(0)
@@ -342,8 +357,11 @@ def mostrar_modulo_contabilidad():
                             df_tm = cargar_archivo_contable(info["file"])
                             
                             c_a_cta = buscar_columna(df_tm, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
-                            # Forzado estricto para que la matriz busque Saldo Final (Columna J) y no Saldo Inicial
-                            c_a_sld = buscar_columna(df_tm, ["SALDOFINAL", "FINAL", "SALDO_FINAL", "TOTALFINAL"], excluir=[c_a_cta])
+                            # Exclusión estricta de palabras INICIAL y ANTERIOR
+                            c_a_sld = buscar_columna(df_tm, ["SALDOFINAL", "FINAL", "SALDO_FINAL", "TOTALFINAL"], anti_palabras=["INICIAL", "ANTERIOR"], excluir=[c_a_cta])
+                            
+                            if not c_a_sld:
+                                c_a_sld = buscar_columna(df_tm, ["SALDO"], anti_palabras=["INICIAL", "ANTERIOR"], excluir=[c_a_cta])
                             
                             if c_a_sld and c_a_cta:
                                 df_tm[c_a_cta] = df_tm[c_a_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
