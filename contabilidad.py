@@ -13,20 +13,22 @@ def buscar_columna(df, palabras_clave, todas=False, excluir=None):
     if excluir is None:
         excluir = []
         
-    # 1. Búsqueda por coincidencia exacta primero
+    # 1. Búsqueda por coincidencia exacta normalizada (ignora espacios y guiones)
     for col in df.columns:
         if col in excluir: continue
-        if any(str(col).strip().upper() == p for p in palabras_clave):
+        c_norm = str(col).strip().upper().replace(' ', '').replace('_', '').replace('-', '')
+        if any(c_norm == p.strip().upper().replace(' ', '').replace('_', '').replace('-', '') for p in palabras_clave):
             return col
             
-    # 2. Búsqueda por coincidencia parcial
+    # 2. Búsqueda por coincidencia parcial normalizada
     for col in df.columns:
         if col in excluir: continue
+        c_norm = str(col).strip().upper().replace(' ', '').replace('_', '').replace('-', '')
         if todas:
-            if all(p in str(col).upper() for p in palabras_clave):
+            if all(p.strip().upper().replace(' ', '').replace('_', '').replace('-', '') in c_norm for p in palabras_clave):
                 return col
         else:
-            if any(p in str(col).upper() for p in palabras_clave):
+            if any(p.strip().upper().replace(' ', '').replace('_', '').replace('-', '') in c_norm for p in palabras_clave):
                 return col
     return None
 
@@ -185,7 +187,6 @@ def mostrar_modulo_contabilidad():
                         df_map.columns = df_map.columns.astype(str).str.strip().str.upper()
                         df_map = df_map.loc[:, ~df_map.columns.duplicated()].copy()
 
-                        # MATEMÁTICA ANTI-CLONES: Bloquear cada columna una vez asignada
                         c_map_cta = buscar_columna(df_map, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
                         c_map_nom = buscar_columna(df_map, ["NOMBRE", "DESCRIP"], excluir=[c_map_cta]) 
                         c_map_tipo = buscar_columna(df_map, ["TIPO", "CLASIFICACION"], excluir=[c_map_cta, c_map_nom])
@@ -206,11 +207,9 @@ def mostrar_modulo_contabilidad():
                             df_temp = cargar_archivo_contable(arch)
 
                             c_arch_cta = buscar_columna(df_temp, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
-                            c_arch_sld = buscar_columna(df_temp, ["SALDO FINAL", "FINAL"], todas=True, excluir=[c_arch_cta])
-                            
-                            if not c_arch_sld:
-                                c_arch_sld = buscar_columna(df_temp, ["SALDO"], excluir=[c_arch_cta])
-                                
+                            # Forzado estricto para que busque Saldo Final (Columna J) y descarte Saldo Inicial (Columna F)
+                            c_arch_sld = buscar_columna(df_temp, ["SALDOFINAL", "FINAL", "SALDO_FINAL", "TOTALFINAL"], excluir=[c_arch_cta])
+
                             if c_arch_sld and c_arch_cta:
                                 df_temp[c_arch_cta] = df_temp[c_arch_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
                                 df_temp[c_arch_sld] = pd.to_numeric(df_temp[c_arch_sld].astype(str).str.replace(r'[^\d\.\-]', '', regex=True), errors='coerce').fillna(0)
@@ -218,7 +217,7 @@ def mostrar_modulo_contabilidad():
                                 df_agrup.rename(columns={c_arch_sld: "SALDO_FINAL_GLOBAL"}, inplace=True)
                                 dfs_cons.append(df_agrup)
                             else:
-                                st.warning(f"⚠️ El archivo {arch.name} no posee encabezados de 'CUENTA' y 'SALDO' identificables.")
+                                st.warning(f"⚠️ El archivo {arch.name} no posee encabezados de 'SALDO FINAL' identificables.")
 
                         if dfs_cons:
                             df_total = pd.concat(dfs_cons, ignore_index=True)
@@ -228,7 +227,7 @@ def mostrar_modulo_contabilidad():
                             st.session_state['cont_df'] = df_final
                             st.session_state['cols_dict'] = {'cta': c_map_cta, 'nom': c_map_nom, 'tipo': c_map_tipo, 'est': c_map_est, 'cat': c_map_cat, 'sld': "SALDO_FINAL_GLOBAL"}
                             st.session_state['sync_flag'] = True 
-                            st.success("✅ Procesado para Simulador Global sin errores de duplicidad.")
+                            st.success("✅ Procesado para Simulador Global.")
                         else:
                             st.error("❌ Ningún archivo pudo ser procesado. Verifica el formato de la exportación.")
                     except Exception as e:
@@ -323,7 +322,6 @@ def mostrar_modulo_contabilidad():
                         df_map_m.columns = df_map_m.columns.astype(str).str.strip().str.upper()
                         df_map_m = df_map_m.loc[:, ~df_map_m.columns.duplicated()].copy()
                         
-                        # MATEMÁTICA ANTI-CLONES (Tab 4)
                         cm_cta = buscar_columna(df_map_m, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
                         cm_nom = buscar_columna(df_map_m, ["NOMBRE", "DESCRIP"], excluir=[cm_cta]) 
                         cm_tipo = buscar_columna(df_map_m, ["TIPO", "CLASIFICACION"], excluir=[cm_cta, cm_nom])
@@ -344,9 +342,8 @@ def mostrar_modulo_contabilidad():
                             df_tm = cargar_archivo_contable(info["file"])
                             
                             c_a_cta = buscar_columna(df_tm, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
-                            c_a_sld = buscar_columna(df_tm, ["SALDO FINAL", "FINAL"], todas=True, excluir=[c_a_cta])
-                            if not c_a_sld:
-                                c_a_sld = buscar_columna(df_tm, ["SALDO"], excluir=[c_a_cta])
+                            # Forzado estricto para que la matriz busque Saldo Final (Columna J) y no Saldo Inicial
+                            c_a_sld = buscar_columna(df_tm, ["SALDOFINAL", "FINAL", "SALDO_FINAL", "TOTALFINAL"], excluir=[c_a_cta])
                             
                             if c_a_sld and c_a_cta:
                                 df_tm[c_a_cta] = df_tm[c_a_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
