@@ -8,8 +8,20 @@ from utils import obtener_dataframe
 def limpiar_texto(texto):
     return str(texto).strip().upper()
 
-def buscar_columna(df, palabras_clave, todas=False):
+def buscar_columna(df, palabras_clave, todas=False, excluir=None):
+    """Busca columnas de forma inteligente, garantizando que nunca devuelva una columna ya en uso."""
+    if excluir is None:
+        excluir = []
+        
+    # 1. Búsqueda por coincidencia exacta primero
     for col in df.columns:
+        if col in excluir: continue
+        if any(str(col).strip().upper() == p for p in palabras_clave):
+            return col
+            
+    # 2. Búsqueda por coincidencia parcial
+    for col in df.columns:
+        if col in excluir: continue
         if todas:
             if all(p in str(col).upper() for p in palabras_clave):
                 return col
@@ -38,7 +50,6 @@ def cargar_archivo_contable(archivo):
         try:
             df = pd.read_excel(archivo, dtype=str)
         except Exception:
-            # Respaldo en caso de que sea un archivo HTML disfrazado de XLS
             archivo.seek(0)
             dfs = pd.read_html(archivo.read().decode('utf-8'))
             df = dfs[0].astype(str)
@@ -46,7 +57,6 @@ def cargar_archivo_contable(archivo):
     df.columns = df.columns.astype(str).str.strip().str.upper().str.replace('\ufeff', '')
     cols_upper = df.columns.str.replace(' ', '').str.replace('.', '')
     
-    # Búsqueda dinámica del encabezado real
     if not (any('CUENTA' in c or 'ID' in c for c in cols_upper) and any('SALDO' in c for c in cols_upper)):
         for i in range(min(20, len(df))):
             row_str = df.iloc[i].astype(str).str.upper().str.replace(' ', '').str.replace('.', '')
@@ -55,18 +65,12 @@ def cargar_archivo_contable(archivo):
                 df = df.iloc[i+1:].reset_index(drop=True)
                 break
                 
-    # Eliminar columnas duplicadas para evitar errores de seteo en Pandas
     df = df.loc[:, ~df.columns.duplicated()].copy()
     return df
 
 def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unidades_oficiales, unidad_gerencia="Gerencias"):
-    """
-    Calcula porcentajes de venta INCLUYENDO Gerencias, prorratea el gasto
-    y genera el bloque de Punto de Equilibrio al final.
-    """
     df_res = df_base.copy()
     
-    # 1. Calcular Ingresos por Unidad
     ventas = {}
     total_ventas = 0
     for u in unidades_oficiales:
@@ -74,13 +78,8 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
         ventas[u] = v
         total_ventas += v
         
-    # 2. Porcentajes de Participación
     pct_ventas = {u: (ventas[u] / total_ventas if total_ventas > 0 else 0) for u in unidades_oficiales}
-    
-    # 3. Determinar Gasto Total de Gerencias a repartir
     gasto_gerencia = df_res[df_res[col_tipo].isin(["COSTO FIJO", "COSTO VARIABLE"])][unidad_gerencia].sum()
-    
-    # 4. Construir filas de resumen financiero
     resumen_data = []
     
     def crear_fila(nombre_etiqueta, tipo_indicador="RESUMEN"):
@@ -176,7 +175,7 @@ def mostrar_modulo_contabilidad():
 
         if st.button("🔄 Procesar Consolidado Global", type="primary", use_container_width=True):
             if archivos_subidos:
-                with st.spinner("Procesando datos..."):
+                with st.spinner("Procesando datos y asegurando columnas..."):
                     try:
                         df_map = obtener_dataframe("Balance_Mapeado")
                         if df_map is None or df_map.empty:
@@ -186,14 +185,15 @@ def mostrar_modulo_contabilidad():
                         df_map.columns = df_map.columns.astype(str).str.strip().str.upper()
                         df_map = df_map.loc[:, ~df_map.columns.duplicated()].copy()
 
-                        c_map_cta = buscar_columna(df_map, ["CUENTA", "ID"])
-                        c_map_nom = buscar_columna(df_map, ["NOMBRE", "DESCRIP", "CUENTA"]) 
-                        c_map_tipo = buscar_columna(df_map, ["TIPO"])
-                        c_map_est = buscar_columna(df_map, ["ESTADO"])
-                        c_map_cat = buscar_columna(df_map, ["CATEGOR"])
+                        # MATEMÁTICA ANTI-CLONES: Bloquear cada columna una vez asignada
+                        c_map_cta = buscar_columna(df_map, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
+                        c_map_nom = buscar_columna(df_map, ["NOMBRE", "DESCRIP"], excluir=[c_map_cta]) 
+                        c_map_tipo = buscar_columna(df_map, ["TIPO", "CLASIFICACION"], excluir=[c_map_cta, c_map_nom])
+                        c_map_est = buscar_columna(df_map, ["ESTADO", "GRUPO"], excluir=[c_map_cta, c_map_nom, c_map_tipo])
+                        c_map_cat = buscar_columna(df_map, ["CATEGORIA", "CATEGOR"], excluir=[c_map_cta, c_map_nom, c_map_tipo, c_map_est])
                         
                         if c_map_nom is None:
-                            df_map["NOMBRE DE CUENTA"] = df_map[c_map_est]
+                            df_map["NOMBRE DE CUENTA"] = df_map[c_map_est] if c_map_est else df_map[c_map_cta]
                             c_map_nom = "NOMBRE DE CUENTA"
 
                         df_map[c_map_cta] = df_map[c_map_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -205,11 +205,11 @@ def mostrar_modulo_contabilidad():
                         for arch in archivos_subidos:
                             df_temp = cargar_archivo_contable(arch)
 
-                            c_arch_cta = buscar_columna(df_temp, ["CUENTA", "ID"])
-                            c_arch_sld = buscar_columna(df_temp, ["SALDO", "FINAL"], todas=True)
+                            c_arch_cta = buscar_columna(df_temp, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
+                            c_arch_sld = buscar_columna(df_temp, ["SALDO FINAL", "FINAL"], todas=True, excluir=[c_arch_cta])
                             
                             if not c_arch_sld:
-                                c_arch_sld = buscar_columna(df_temp, ["SALDO"])
+                                c_arch_sld = buscar_columna(df_temp, ["SALDO"], excluir=[c_arch_cta])
                                 
                             if c_arch_sld and c_arch_cta:
                                 df_temp[c_arch_cta] = df_temp[c_arch_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -228,7 +228,7 @@ def mostrar_modulo_contabilidad():
                             st.session_state['cont_df'] = df_final
                             st.session_state['cols_dict'] = {'cta': c_map_cta, 'nom': c_map_nom, 'tipo': c_map_tipo, 'est': c_map_est, 'cat': c_map_cat, 'sld': "SALDO_FINAL_GLOBAL"}
                             st.session_state['sync_flag'] = True 
-                            st.success("✅ Procesado para Simulador Global.")
+                            st.success("✅ Procesado para Simulador Global sin errores de duplicidad.")
                         else:
                             st.error("❌ Ningún archivo pudo ser procesado. Verifica el formato de la exportación.")
                     except Exception as e:
@@ -257,19 +257,7 @@ def mostrar_modulo_contabilidad():
             if filtro_cat != "Todas": df_filtro = df_filtro[df_filtro[cd['cat']] == filtro_cat]
                 
             with col_f3:
-                # SOLUCIÓN BLINDADA: Usar listas de Python puro para evitar errores de DataFrames anidados de Pandas
-                def extraer_columna_segura(df_obj, nombre_columna):
-                    obj = df_obj[nombre_columna]
-                    if isinstance(obj, pd.DataFrame):
-                        return obj.iloc[:, 0].astype(str).tolist()
-                    return obj.astype(str).tolist()
-
-                lista_ctas = extraer_columna_segura(df_filtro, cd['cta'])
-                lista_noms = extraer_columna_segura(df_filtro, cd['nom'])
-                
-                # Asignación segura con lista nativa de Python
-                df_filtro['display_name'] = [f"{c} - {n}" for c, n in zip(lista_ctas, lista_noms)]
-                
+                df_filtro['display_name'] = df_filtro[cd['cta']].astype(str) + " - " + df_filtro[cd['nom']].astype(str)
                 cuenta_sel = st.selectbox("C. Seleccionar Cuenta:", options=["Seleccione una cuenta..."] + df_filtro['display_name'].tolist())
 
             if cuenta_sel != "Seleccione una cuenta...":
@@ -335,13 +323,14 @@ def mostrar_modulo_contabilidad():
                         df_map_m.columns = df_map_m.columns.astype(str).str.strip().str.upper()
                         df_map_m = df_map_m.loc[:, ~df_map_m.columns.duplicated()].copy()
                         
-                        cm_cta = buscar_columna(df_map_m, ["CUENTA", "ID"])
-                        cm_nom = buscar_columna(df_map_m, ["NOMBRE", "DESCRIP", "CUENTA"]) 
-                        cm_tipo = buscar_columna(df_map_m, ["TIPO"])
-                        cm_est = buscar_columna(df_map_m, ["ESTADO"])
+                        # MATEMÁTICA ANTI-CLONES (Tab 4)
+                        cm_cta = buscar_columna(df_map_m, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
+                        cm_nom = buscar_columna(df_map_m, ["NOMBRE", "DESCRIP"], excluir=[cm_cta]) 
+                        cm_tipo = buscar_columna(df_map_m, ["TIPO", "CLASIFICACION"], excluir=[cm_cta, cm_nom])
+                        cm_est = buscar_columna(df_map_m, ["ESTADO", "GRUPO"], excluir=[cm_cta, cm_nom, cm_tipo])
                         
                         if cm_nom is None:
-                            df_map_m["NOMBRE DE CUENTA"] = df_map_m[cm_est]
+                            df_map_m["NOMBRE DE CUENTA"] = df_map_m[cm_est] if cm_est else df_map_m[cm_cta]
                             cm_nom = "NOMBRE DE CUENTA"
 
                         df_map_m[cm_cta] = df_map_m[cm_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
@@ -354,10 +343,10 @@ def mostrar_modulo_contabilidad():
                         for nombre_arch, info in mapeo_m4.items():
                             df_tm = cargar_archivo_contable(info["file"])
                             
-                            c_a_cta = buscar_columna(df_tm, ["CUENTA", "ID"])
-                            c_a_sld = buscar_columna(df_tm, ["SALDO", "FINAL"], todas=True)
+                            c_a_cta = buscar_columna(df_tm, ["IDCUENTA", "CUENTA", "CODIGO", "ID"])
+                            c_a_sld = buscar_columna(df_tm, ["SALDO FINAL", "FINAL"], todas=True, excluir=[c_a_cta])
                             if not c_a_sld:
-                                c_a_sld = buscar_columna(df_tm, ["SALDO"])
+                                c_a_sld = buscar_columna(df_tm, ["SALDO"], excluir=[c_a_cta])
                             
                             if c_a_sld and c_a_cta:
                                 df_tm[c_a_cta] = df_tm[c_a_cta].astype(str).str.replace(r'\.0$', '', regex=True).str.strip()
