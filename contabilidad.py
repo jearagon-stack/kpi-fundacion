@@ -169,13 +169,14 @@ def procesar_prorrateo_matriz(df_base, col_cta, col_nom, col_est, col_tipo, unid
 def mostrar_modulo_contabilidad():
     st.title("📊 Análisis Financiero y Punto de Equilibrio")
     
-    tab_carga, tab_pe, tab_dash, tab_matriz, tab_proy, tab_comp = st.tabs([
+    tab_carga, tab_pe, tab_dash, tab_matriz, tab_proy, tab_comp, tab_cxp = st.tabs([
         "📥 1. Carga", 
         "🎛️ 2. Simulador", 
         "📊 3. Dashboard",
         "📑 4. Matriz 2025",
         "🚀 5. Proyecciones 26",
-        "⚖️ 6. Comparativo"
+        "⚖️ 6. Comparativo",
+        "🧾 7. Validación CXP"
     ])
 
     unidades_oficiales = ["Cafetería", "Librería", "Centro Soho", "CID Campus", "Talleres Gráfico", "Despensa", "Terraza", "Servicios Generales", "Gerencias"]
@@ -567,3 +568,14 @@ def mostrar_modulo_contabilidad():
             )
         elif 'matriz_2025_cruda' not in st.session_state or 'matriz_2026_cruda' not in st.session_state:
             st.info("👈 Debes generar la Matriz 2025 (Pestaña 4) y la Proyección 2026 (Pestaña 5) antes de comparar.")
+
+    # ==========================================
+    # PESTAÑA 7: VALIDACIÓN CXP (CUENTAS POR PAGAR)
+    # La lógica vive en el archivo validacion_cxp.py
+    # ==========================================
+    with tab_cxp:
+        try:
+            from validacion_cxp import mostrar_tab_cxp
+            mostrar_tab_cxp()
+        except Exception as e:
+            st.error(f"🚨 Error técnico al cargar Validación CXP: {e}")
