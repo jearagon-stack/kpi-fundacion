@@ -101,7 +101,7 @@ if not st.session_state.logged_in:
 with st.sidebar:
     st.title("Menú Principal")
     
-    todos_los_modulos = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS", "PEDIDOS CAFETERÍA", "CONTABILIDAD"]
+    todos_los_modulos = ["KPI DE REGISTROS", "KPI DE VENTAS", "CONTABILIDAD DE COSTOS", "VALIDACIÓN DE COSTOS", "PRODUCCIÓN", "AUDITORÍA DE CUENTAS", "PEDIDOS CAFETERÍA", "CONTABILIDAD", "RESULTADOS POR UNIDAD"]
     
     if st.session_state.rol_actual == "ADMIN":
         opciones_menu = todos_los_modulos + ["CONFIGURACIÓN"]
@@ -179,7 +179,19 @@ elif opcion == "CONFIGURACIÓN":
         st.warning("El archivo 'configuracion.py' aún no ha sido creado.")
 elif opcion == "CONTABILIDAD":
     try:
-        from contabilidad import mostrar_modulo_contabilidad
-        mostrar_modulo_contabilidad()
+        # Recarga para que los cambios de Validación CXP se vean sin reiniciar la app
+        import validacion_cxp, contabilidad
+        importlib.reload(validacion_cxp)
+        importlib.reload(contabilidad)
+        contabilidad.mostrar_modulo_contabilidad()
     except Exception as e:
         st.error(f"Error técnico al cargar el módulo contabilidad: {e}")
+elif opcion == "RESULTADOS POR UNIDAD":
+    try:
+        # Recarga para que los cambios se vean sin reiniciar la app
+        import validacion_cxp, resultados_unidad
+        importlib.reload(validacion_cxp)
+        importlib.reload(resultados_unidad)
+        resultados_unidad.mostrar_modulo_resultados()
+    except Exception as e:
+        st.error(f"Error técnico al cargar el módulo Resultados por Unidad: {e}")
