@@ -362,9 +362,24 @@ def _mostrar(r, unidad, sucursales_sel):
 
 def mostrar_modulo_resultados():
     st.title("📈 Resultados por Unidad")
-    st.caption("Ingresos contra compras y nómina de una unidad, con su IVA. Solo consulta: no guarda nada en la base.")
+    st.caption("Ingresos contra compras y nómina de una unidad, con su IVA, y monitoreo de compras. "
+               "Solo consulta: no guarda nada en la base.")
 
     unidad = st.selectbox("1. Unidad:", UNIDADES, key="ru_unidad")
+    tab_resultado, tab_monitoreo = st.tabs(["📈 Resultado del mes", "🔍 Monitoreo de compras"])
+    with tab_resultado:
+        _tab_resultado(unidad)
+    with tab_monitoreo:
+        try:
+            import importlib
+            import monitoreo_compras
+            importlib.reload(monitoreo_compras)  # para ver los cambios sin reiniciar la app
+            monitoreo_compras.mostrar_tab_monitoreo(unidad)
+        except Exception as e:
+            st.error(f"🚨 Error técnico al cargar el Monitoreo de compras: {e}")
+
+
+def _tab_resultado(unidad):
     c1, c2, c3 = st.columns(3)
     with c1:
         arch_ventas = st.file_uploader("2. Ventas por forma de pago (VentasFormaPago):", type=["xlsx", "xls", "csv"], key="ru_up_ventas")
